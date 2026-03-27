@@ -25,6 +25,20 @@ const LINKEDIN_PASSWORD_SELECTORS = [
   "input#password",
   "input[autocomplete='current-password']",
 ];
+const LINKEDIN_SIGNED_IN_SELECTORS = [
+  "nav[aria-label='Primary Navigation']",
+  ".global-nav",
+  ".jobs-search-results-list",
+  ".jobs-unified-top-card",
+];
+const LINKEDIN_CHALLENGE_MARKERS = [
+  "verify your identity",
+  "security verification",
+  "checkpoint",
+  "two-step verification",
+  "confirm your identity",
+  "enter the code",
+];
 
 async function firstVisibleLocator(page: Page, selectors: string[]) {
   for (const selector of selectors) {
@@ -69,6 +83,60 @@ export async function isLinkedInSignInWall(page: Page): Promise<boolean> {
 
   const bodyText = (await page.locator("body").innerText().catch(() => "")).toLowerCase();
   return bodyText.includes("sign in") && bodyText.includes("linkedin");
+}
+
+async function hasAnyLocator(page: Page, selectors: string[]): Promise<boolean> {
+  for (const selector of selectors) {
+    const locator = page.locator(selector).first();
+    if ((await locator.count().catch(() => 0)) > 0) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+type LinkedInAuthState = "authenticated" | "login" | "challenge";
+
+async function getLinkedInAuthState(page: Page): Promise<LinkedInAuthState> {
+  if (await hasAnyLocator(page, LINKEDIN_SIGNED_IN_SELECTORS)) {
+    return "authenticated";
+  }
+
+  const currentUrl = page.url().toLowerCase();
+  const title = (await page.title().catch(() => "")).toLowerCase();
+  const bodyText = (await page.locator("body").innerText().catch(() => "")).toLowerCase();
+
+  if (
+    currentUrl.includes("/checkpoint") ||
+    LINKEDIN_CHALLENGE_MARKERS.some((marker) => bodyText.includes(marker) || title.includes(marker))
+  ) {
+    return "challenge";
+  }
+
+  if (await isLinkedInSignInWall(page)) {
+    return "login";
+  }
+
+  return "authenticated";
+}
+
+async function waitForLinkedInAuthResolution(
+  page: Page,
+  timeoutMs = 15_000,
+): Promise<LinkedInAuthState> {
+  const attempts = Math.max(1, Math.ceil(timeoutMs / 500));
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const state = await getLinkedInAuthState(page);
+    if (state !== "login") {
+      return state;
+    }
+
+    await page.waitForTimeout(500);
+  }
+
+  return getLinkedInAuthState(page);
 }
 
 export class LinkedInAdapter implements JobAdapter {
@@ -195,7 +263,8 @@ export class LinkedInAdapter implements JobAdapter {
 export async function ensureLinkedInAuthenticated(page: Page, url: string): Promise<void> {
     await gotoJobPage(page, url);
 
-    if (!(await isLinkedInSignInWall(page))) {
+    const initialState = await getLinkedInAuthState(page);
+    if (initialState === "authenticated") {
       return;
     }
 
@@ -231,10 +300,30 @@ export async function ensureLinkedInAuthenticated(page: Page, url: string): Prom
     await usernameInput.fill(env.LINKEDIN_USERNAME);
     await passwordInput.fill(env.LINKEDIN_PASSWORD);
     await submitButton.click();
-    await page.waitForTimeout(3_000);
+    const postSubmitState = await waitForLinkedInAuthResolution(page);
+
+    if (postSubmitState === "challenge") {
+      throw new AppError({
+        message: "LinkedIn login reached a verification challenge. Manual verification is required before automation can continue.",
+        phase: "linkedin_auth",
+        code: "LINKEDIN_AUTHENTICATION_CHALLENGE",
+        details: { url: page.url(), title: await page.title() },
+      });
+    }
+
     await gotoJobPage(page, url);
 
-    if (await isLinkedInSignInWall(page)) {
+    const finalState = await waitForLinkedInAuthResolution(page, 5_000);
+    if (finalState === "challenge") {
+      throw new AppError({
+        message: "LinkedIn redirected to a verification challenge after login. Manual verification is required before automation can continue.",
+        phase: "linkedin_auth",
+        code: "LINKEDIN_AUTHENTICATION_CHALLENGE",
+        details: { url: page.url(), title: await page.title() },
+      });
+    }
+
+    if (finalState !== "authenticated") {
       throw new AppError({
         message: "LinkedIn authentication did not unlock the job page. The session may need manual verification.",
         phase: "linkedin_auth",

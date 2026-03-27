@@ -69,6 +69,18 @@ async function loadIndexModule() {
   };
 }
 
+function mockWithPageSuccess(mock: ReturnType<typeof vi.fn>) {
+  mock.mockImplementation(
+    async (
+      optionsOrFn: unknown,
+      maybeFn?: (page: unknown) => Promise<unknown>,
+    ) => {
+      const fn = typeof optionsOrFn === "function" ? optionsOrFn : maybeFn;
+      return fn?.({ fake: "page" });
+    },
+  );
+}
+
 describe("index entrypoint", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -118,9 +130,7 @@ describe("index entrypoint", () => {
       openQuestionsCount: 0,
     };
 
-    deps.withPageMock.mockImplementation(async (fn: (page: unknown) => Promise<unknown>) =>
-      fn({ fake: "page" }),
-    );
+    mockWithPageSuccess(deps.withPageMock);
     deps.getConfiguredProviderInfoMock.mockReturnValue({
       provider: "local",
       model: "openai/gpt-oss-20b",
@@ -249,11 +259,80 @@ describe("index entrypoint", () => {
     stderrWriteSpy.mockRestore();
   });
 
+  it("disconnects prisma after a successful CLI run", async () => {
+    const { module, deps, runtimeDeps } = await loadIndexModule();
+    const originalArgv = process.argv;
+    process.argv = ["node", "index.js", "https://jobs.example.com/1"];
+    try {
+      mockWithPageSuccess(deps.withPageMock);
+      deps.getConfiguredProviderInfoMock.mockReturnValue({
+        provider: "local",
+        model: "openai/gpt-oss-20b",
+      });
+      deps.loadCandidateProfileMock.mockResolvedValue({ yearsOfExperience: 3 });
+      deps.extractJobTextMock.mockResolvedValue({
+        rawText: "Raw body",
+        title: "Adapter Title",
+        company: "Adapter Company",
+        location: "Adapter Location",
+        platform: "greenhouse",
+      });
+      deps.formatJobForLLMMock.mockReturnValue("Formatted prompt");
+      deps.parseJobMock.mockResolvedValue({
+        parsed: {
+          title: "Adapter Title",
+          company: "Adapter Company",
+          location: "Adapter Location",
+          platform: "greenhouse",
+          seniority: "Senior",
+          mustHaveSkills: [],
+          niceToHaveSkills: [],
+          technologies: [],
+          yearsRequired: null,
+          remoteType: null,
+          visaSponsorship: null,
+          workAuthorization: null,
+        },
+        provider: "local",
+        model: "openai/gpt-oss-20b",
+        rawText: "{}",
+      });
+      deps.normalizeParsedJobMock.mockReturnValue({
+        title: "Adapter Title",
+        company: "Adapter Company",
+        location: "Adapter Location",
+        remoteType: "unknown",
+        seniority: "senior",
+        mustHaveSkills: [],
+        niceToHaveSkills: [],
+        technologies: [],
+        yearsRequired: null,
+        platform: "greenhouse",
+        visaSponsorship: null,
+        workAuthorization: null,
+        openQuestionsCount: 0,
+      });
+      deps.scoreJobMock.mockReturnValue({
+        totalScore: 50,
+        breakdown: { skill: 10, seniority: 10, location: 10, tech: 10, bonus: 10 },
+      });
+      deps.evaluatePolicyMock.mockReturnValue({ allowed: true, reasons: [] });
+      deps.decideJobMock.mockReturnValue({ decision: "MAYBE", reason: "Borderline fit." });
+      deps.upsertMock.mockResolvedValue({ id: "job_1" });
+      deps.createDecisionMock.mockResolvedValue({ id: "decision_1" });
+
+      await module.runCli(runtimeDeps);
+
+      expect(deps.disconnectMock).toHaveBeenCalledTimes(1);
+      expect(deps.exitMock).not.toHaveBeenCalled();
+    } finally {
+      process.argv = originalArgv;
+    }
+  });
+
   it("wraps database save failures with a database phase error", async () => {
     const { module, deps, runtimeDeps } = await loadIndexModule();
-    deps.withPageMock.mockImplementation(async (fn: (page: unknown) => Promise<unknown>) =>
-      fn({ fake: "page" }),
-    );
+    mockWithPageSuccess(deps.withPageMock);
     deps.getConfiguredProviderInfoMock.mockReturnValue({
       provider: "local",
       model: "openai/gpt-oss-20b",

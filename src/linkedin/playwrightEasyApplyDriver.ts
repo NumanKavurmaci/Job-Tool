@@ -142,6 +142,10 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
     await this.page.waitForTimeout(2_000);
   }
 
+  async openCollection(url: string): Promise<void> {
+    await this.open(url);
+  }
+
   async ensureAuthenticated(url: string): Promise<void> {
     await ensureLinkedInAuthenticated(this.page, url);
   }
@@ -149,6 +153,18 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
   async isEasyApplyAvailable(): Promise<boolean> {
     const locator = this.page.locator(EASY_APPLY_TRIGGER_SELECTOR).first();
     return (await locator.count()) > 0;
+  }
+
+  async isAlreadyApplied(): Promise<boolean> {
+    const badge = this.page.locator(
+      [
+        "#jobs-apply-see-application-link",
+        ".jobs-s-apply__application-link",
+        ".artdeco-inline-feedback__message:has-text('Applied')",
+      ].join(", "),
+    ).first();
+
+    return (await badge.count()) > 0;
   }
 
   async openEasyApply(): Promise<void> {
@@ -159,6 +175,69 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
 
   async collectQuestions(): Promise<EasyApplyQuestionView[]> {
     return annotateQuestions(this.page);
+  }
+
+  async collectVisibleJobs() {
+    const cards = await this.page.locator(".jobs-search-results__list-item, li.scaffold-layout__list-item")
+      .evaluateAll((elements) =>
+        elements.map((element) => {
+          const anchor = element.querySelector(
+            "a[href*='/jobs/view/'], .job-card-container__link, .job-card-list__title",
+          );
+          const href = anchor?.getAttribute("href") ?? "";
+          const text = (element.textContent ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+          return {
+            href,
+            alreadyApplied: text.includes("applied") || text.includes("see application"),
+          };
+        }),
+      );
+
+    const normalized = new Map<string, { url: string; alreadyApplied: boolean }>();
+    for (const card of cards) {
+      if (!card.href || !card.href.includes("/jobs/view/")) {
+        continue;
+      }
+
+      try {
+        const url = new URL(card.href, this.page.url());
+        const match = url.pathname.match(/\/jobs\/view\/(\d+)/);
+        if (!match) {
+          continue;
+        }
+
+        const normalizedUrl = `${url.origin}/jobs/view/${match[1]}`;
+        const existing = normalized.get(normalizedUrl);
+        normalized.set(normalizedUrl, {
+          url: normalizedUrl,
+          alreadyApplied: existing?.alreadyApplied === true || card.alreadyApplied,
+        });
+      } catch {
+        continue;
+      }
+    }
+
+    return Array.from(normalized.values());
+  }
+
+  async goToNextResultsPage(): Promise<boolean> {
+    const locator = this.page
+      .locator(
+        "button[aria-label='View next page'], button.jobs-search-pagination__button--next",
+      )
+      .first();
+
+    if ((await locator.count()) === 0) {
+      return false;
+    }
+
+    if (await locator.isDisabled().catch(() => false)) {
+      return false;
+    }
+
+    await locator.click();
+    await this.page.waitForTimeout(2_000);
+    return true;
   }
 
   async fillAnswer(
@@ -195,15 +274,17 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
     const locator = this.page.locator(`[data-job-tool-field-key="${question.fieldKey}"]`).first();
 
     if (question.inputType === "select") {
-      const value = typeof resolved.answer === "string" ? resolved.answer : String(resolved.answer ?? "");
-      if (!value) {
-        return { filled: false, details: "No value available for select input." };
+      const optionLabel = chooseRadioValue(question.options ?? [], resolved.answer);
+      if (!optionLabel) {
+        return { filled: false, details: "Could not match a select option." };
       }
 
-      await locator.selectOption({ label: value }).catch(async () => {
-        await locator.selectOption({ index: 1 });
-      });
-      return { filled: true };
+      try {
+        await locator.selectOption({ label: optionLabel });
+        return { filled: true };
+      } catch {
+        return { filled: false, details: "Could not select the requested option." };
+      }
     }
 
     if (question.inputType === "checkbox") {
@@ -285,5 +366,23 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
         .first();
     await locator.click();
     await this.page.waitForTimeout(1_500);
+  }
+
+  async dismissCompletionModal(): Promise<boolean> {
+    const notNow = this.page.locator(
+      [
+        "button:has-text('Not now')",
+        ".job-seeker-nba--modal-footer button.artdeco-button--secondary",
+        "[data-view-name='seeker-next-best-action-card-cta-with-impression']",
+      ].join(", "),
+    ).filter({ hasText: "Not now" }).first();
+
+    if ((await notNow.count()) === 0) {
+      return false;
+    }
+
+    await notNow.click();
+    await this.page.waitForTimeout(1_000);
+    return true;
   }
 }

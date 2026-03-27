@@ -91,6 +91,24 @@ $env:LOCAL_LLM_MODEL='openai/gpt-oss-20b'
 npm run dev -- easy-apply-dry-run
 ```
 
+Run a batch dry run for 10 matching jobs from the default collection:
+
+```powershell
+$env:LLM_PROVIDER='local'
+$env:LOCAL_LLM_BASE_URL='http://127.0.0.1:1234/v1'
+$env:LOCAL_LLM_MODEL='openai/gpt-oss-20b'
+npm run dev -- easy-apply-dry-run 10
+```
+
+Run a batch dry run against a specific LinkedIn collection URL:
+
+```powershell
+$env:LLM_PROVIDER='local'
+$env:LOCAL_LLM_BASE_URL='http://127.0.0.1:1234/v1'
+$env:LOCAL_LLM_MODEL='openai/gpt-oss-20b'
+npm run dev -- easy-apply-dry-run "https://www.linkedin.com/jobs/collections/easy-apply" 10
+```
+
 ## Print Full Dry Run JSON
 
 Use this when you want the full result object in the terminal:
@@ -121,6 +139,32 @@ await appDeps.prisma.$disconnect();
 '@ | npx tsx -
 ```
 
+Print the full batch result for 10 jobs from the default collection:
+
+```powershell
+$env:LLM_PROVIDER='local'
+$env:LOCAL_LLM_BASE_URL='http://127.0.0.1:1234/v1'
+$env:LOCAL_LLM_MODEL='openai/gpt-oss-20b'
+@'
+import { main, appDeps } from "./src/index.ts";
+const result = await main(["easy-apply-dry-run", "10"], appDeps);
+console.log(JSON.stringify(result.easyApply, null, 2));
+await appDeps.prisma.$disconnect();
+'@ | npx tsx -
+```
+
+## LinkedIn Session Reuse
+
+Use a dedicated saved LinkedIn session file:
+
+```powershell
+$env:LLM_PROVIDER='local'
+$env:LOCAL_LLM_BASE_URL='http://127.0.0.1:1234/v1'
+$env:LOCAL_LLM_MODEL='openai/gpt-oss-20b'
+$env:LINKEDIN_SESSION_STATE_PATH='.auth/linkedin-session.json'
+npm run dev -- easy-apply-dry-run 5
+```
+
 ## Run Tests
 
 Run the normal mocked test suite:
@@ -142,5 +186,9 @@ npm run test:local-llm
 
 - `easy-apply-dry-run` stops before final submission.
 - The default Easy Apply root URL is `https://www.linkedin.com/jobs/collections/easy-apply`.
+- In batch mode, the tool evaluates jobs first and only attempts jobs that score as `APPLY`.
+- Already-applied LinkedIn jobs are skipped automatically.
+- LinkedIn session state is persisted at `.auth/linkedin-session.json` by default.
+- If LinkedIn returns a security verification challenge, the app now reports that explicitly.
 - If a command fails right after dotenv output, that dotenv line is informational, not the actual error.
 - If LM Studio is not running, local-provider commands will fail during LLM calls.

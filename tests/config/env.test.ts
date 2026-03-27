@@ -26,6 +26,7 @@ describe("env config", () => {
       DATABASE_URL: "file:./dev.db",
       LINKEDIN_USERNAME: "user@example.com",
       LINKEDIN_PASSWORD: "secret",
+      LINKEDIN_SESSION_STATE_PATH: ".auth/linkedin-session.json",
     });
   });
 
@@ -49,6 +50,7 @@ describe("env config", () => {
       DATABASE_URL: "file:./dev.db",
       LINKEDIN_USERNAME: undefined,
       LINKEDIN_PASSWORD: undefined,
+      LINKEDIN_SESSION_STATE_PATH: ".auth/linkedin-session.json",
     });
   });
 

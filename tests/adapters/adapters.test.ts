@@ -292,6 +292,90 @@ describe("LinkedInAdapter", () => {
     );
   });
 
+  it("reuses an already authenticated linkedin session without requiring credentials", async () => {
+    vi.doMock("../../src/config/env.js", () => ({
+      env: {
+        LINKEDIN_USERNAME: undefined,
+        LINKEDIN_PASSWORD: undefined,
+      },
+    }));
+
+    const { LinkedInAdapter } = await import("../../src/adapters/LinkedInAdapter.js");
+    const jobUrl = "https://www.linkedin.com/jobs/view/1234567890/";
+    const page = createMockPage({
+      currentUrl: jobUrl,
+      title: "Backend Engineer | LinkedIn",
+      selectors: {
+        ".jobs-unified-top-card": { text: "Signed in card" },
+        ".job-details-jobs-unified-top-card__job-title": { text: "Backend Engineer" },
+        ".job-details-jobs-unified-top-card__company-name": { text: "Acme" },
+        ".job-details-jobs-unified-top-card__bullet": { text: "Remote" },
+        "button.jobs-apply-button": { text: "Easy Apply" },
+        ".jobs-description-content__text": { text: "Build APIs." },
+        body: { text: "Backend Engineer\nAcme\nRemote\nEasy Apply\nBuild APIs." },
+      },
+    });
+
+    const result = await new LinkedInAdapter().extract(page as never, jobUrl);
+
+    expect(result.platform).toBe("linkedin");
+    expect(result.title).toBe("Backend Engineer");
+  });
+
+  it("fails with a specific challenge error when linkedin redirects to security verification", async () => {
+    vi.doMock("../../src/config/env.js", () => ({
+      env: {
+        LINKEDIN_USERNAME: "user@example.com",
+        LINKEDIN_PASSWORD: "secret",
+      },
+    }));
+
+    const { LinkedInAdapter } = await import("../../src/adapters/LinkedInAdapter.js");
+    const jobUrl = "https://www.linkedin.com/jobs/view/1234567890/";
+    const page = createMockPage({
+      currentUrl: jobUrl,
+      routes: {
+        [jobUrl]: {
+          currentUrl: jobUrl,
+          title: "Sign in | LinkedIn",
+          selectors: {
+            body: { text: "LinkedIn Sign in to continue" },
+          },
+        },
+        "https://www.linkedin.com/login": {
+          currentUrl: "https://www.linkedin.com/login",
+          title: "Login | LinkedIn",
+          selectors: {
+            "input[name='session_key']": { text: "" },
+            "input[name='session_password']": { text: "" },
+            "button[type='submit']": { text: "Sign in" },
+            body: { text: "LinkedIn Sign in" },
+          },
+        },
+      },
+      onClick(selector, context) {
+        if (selector === "button[type='submit']") {
+          context.setState({
+            currentUrl: "https://www.linkedin.com/checkpoint/challenge/abc",
+            title: "Security Verification | LinkedIn",
+            selectors: {
+              body: { text: "Security verification checkpoint" },
+            },
+          });
+        }
+      },
+      onFill(selector, value, context) {
+        context.filledValues[selector] = value;
+      },
+    });
+
+    await expect(new LinkedInAdapter().extract(page as never, jobUrl)).rejects.toMatchObject({
+      name: "AppError",
+      phase: "linkedin_auth",
+      code: "LINKEDIN_AUTHENTICATION_CHALLENGE",
+    });
+  });
+
   it("marks linkedin external-apply pages as external", async () => {
     const { LinkedInAdapter } = await import("../../src/adapters/LinkedInAdapter.js");
     const page = createMockPage({
