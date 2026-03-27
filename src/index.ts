@@ -19,6 +19,8 @@ import { scoreJob } from "./scoring/scoreJob.js";
 import { logger } from "./utils/logger.js";
 
 export const PARSE_VERSION = "phase-5";
+export const DEFAULT_LINKEDIN_EASY_APPLY_URL =
+  "https://www.linkedin.com/jobs/collections/easy-apply";
 
 function findDefaultResumePath(): string | undefined {
   const match = readdirSync(process.cwd()).find((entry) => /CV Resume\.pdf$/i.test(entry));
@@ -123,11 +125,7 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
     const resumePath = (second === "--resume" ? rest[0] : getFlag("--resume")) ?? DEFAULT_RESUME_PATH;
     const url = second && !second.startsWith("--")
       ? second
-      : rest.find((value) => !value.startsWith("--"));
-
-    if (!url) {
-      throw new Error("--url or a LinkedIn job URL is required for easy-apply-dry-run.");
-    }
+      : rest.find((value) => !value.startsWith("--")) ?? DEFAULT_LINKEDIN_EASY_APPLY_URL;
 
     if (!resumePath) {
       throw new Error("--resume is required for easy-apply-dry-run when no default CV is available.");

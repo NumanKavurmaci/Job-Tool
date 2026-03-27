@@ -6,6 +6,16 @@ export function extractJsonText(text: string): string {
     return fencedMatch[1].trim();
   }
 
+  const objectMatch = trimmed.match(/\{[\s\S]*\}/);
+  if (objectMatch?.[0]) {
+    return objectMatch[0].trim();
+  }
+
+  const arrayMatch = trimmed.match(/\[[\s\S]*\]/);
+  if (arrayMatch?.[0]) {
+    return arrayMatch[0].trim();
+  }
+
   return trimmed;
 }
 

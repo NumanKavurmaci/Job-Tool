@@ -199,6 +199,71 @@ describe("LinkedInAdapter", () => {
     expect(result.applicationType).toBe("easy_apply");
   });
 
+  it("accepts alternate linkedin login field selectors", async () => {
+    vi.doMock("../../src/config/env.js", () => ({
+      env: {
+        LINKEDIN_USERNAME: "user@example.com",
+        LINKEDIN_PASSWORD: "secret",
+      },
+    }));
+
+    const { LinkedInAdapter } = await import("../../src/adapters/LinkedInAdapter.js");
+    let isAuthenticated = false;
+    const jobUrl = "https://www.linkedin.com/jobs/view/987654321/";
+    const page = createMockPage({
+      currentUrl: jobUrl,
+      routes: {
+        [jobUrl]: () =>
+          isAuthenticated
+            ? {
+                currentUrl: jobUrl,
+                title: "Backend Engineer | LinkedIn",
+                selectors: {
+                  ".job-details-jobs-unified-top-card__job-title": { text: "Backend Engineer" },
+                  ".job-details-jobs-unified-top-card__company-name": { text: "Acme" },
+                  ".job-details-jobs-unified-top-card__bullet": { text: "Remote" },
+                  "button.jobs-apply-button": { text: "Easy Apply" },
+                  ".jobs-description-content__text": { text: "Build APIs." },
+                  body: { text: "Backend Engineer\nAcme\nRemote\nEasy Apply\nBuild APIs." },
+                },
+              }
+            : {
+                currentUrl: jobUrl,
+                title: "Sign in | LinkedIn",
+                selectors: {
+                  body: { text: "LinkedIn Sign in to continue" },
+                },
+              },
+        "https://www.linkedin.com/login": {
+          currentUrl: "https://www.linkedin.com/login",
+          title: "Login | LinkedIn",
+          selectors: {
+            "input#username": { text: "" },
+            "input#password": { text: "" },
+            "button[type='submit']": { text: "Sign in" },
+            body: { text: "LinkedIn Sign in" },
+          },
+        },
+      },
+      onClick(selector, context) {
+        if (
+          selector === "button[type='submit']"
+          && context.filledValues["input#username"] === "user@example.com"
+          && context.filledValues["input#password"] === "secret"
+        ) {
+          isAuthenticated = true;
+        }
+      },
+      onFill(selector, value, context) {
+        context.filledValues[selector] = value;
+      },
+    });
+
+    const result = await new LinkedInAdapter().extract(page as never, jobUrl);
+    expect(result.platform).toBe("linkedin");
+    expect(result.title).toBe("Backend Engineer");
+  });
+
   it("fails clearly when linkedin still requires authentication and no credentials exist", async () => {
     vi.doMock("../../src/config/env.js", () => ({
       env: {

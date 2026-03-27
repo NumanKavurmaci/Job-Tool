@@ -3,6 +3,9 @@ import { completePrompt } from "../../llm/completePrompt.js";
 import { parseJsonResponse } from "../../llm/json.js";
 import type { ParsedResume } from "../types.js";
 
+const nullableArray = <T extends z.ZodTypeAny>(schema: T) =>
+  z.preprocess((value) => (value == null ? [] : value), z.array(schema).default([]));
+
 const ResumeSchema = z.object({
   fullName: z.string().nullable(),
   email: z.string().nullable(),
@@ -12,44 +15,38 @@ const ResumeSchema = z.object({
   portfolioUrl: z.string().nullable(),
   summary: z.string().nullable(),
   currentTitle: z.string().nullable(),
-  skills: z.array(z.string()).default([]),
-  languages: z.array(z.string()).default([]),
+  skills: nullableArray(z.string()),
+  languages: nullableArray(z.string()),
   workAuthorization: z.string().nullable(),
   requiresSponsorship: z.boolean().nullable(),
   willingToRelocate: z.boolean().nullable(),
   remotePreference: z.string().nullable(),
-  education: z
-    .array(
-      z.object({
-        institution: z.string(),
-        degree: z.string().nullable(),
-        fieldOfStudy: z.string().nullable(),
-        startDate: z.string().nullable(),
-        endDate: z.string().nullable(),
-      }),
-    )
-    .default([]),
-  experience: z
-    .array(
-      z.object({
-        company: z.string(),
-        title: z.string(),
-        summary: z.string().nullable(),
-        technologies: z.array(z.string()).default([]),
-        startDate: z.string().nullable(),
-        endDate: z.string().nullable(),
-      }),
-    )
-    .default([]),
-  projects: z
-    .array(
-      z.object({
-        name: z.string(),
-        summary: z.string().nullable(),
-        technologies: z.array(z.string()).default([]),
-      }),
-    )
-    .default([]),
+  education: nullableArray(
+    z.object({
+      institution: z.string(),
+      degree: z.string().nullable(),
+      fieldOfStudy: z.string().nullable(),
+      startDate: z.string().nullable(),
+      endDate: z.string().nullable(),
+    }),
+  ),
+  experience: nullableArray(
+    z.object({
+      company: z.string(),
+      title: z.string(),
+      summary: z.string().nullable(),
+      technologies: nullableArray(z.string()),
+      startDate: z.string().nullable(),
+      endDate: z.string().nullable(),
+    }),
+  ),
+  projects: nullableArray(
+    z.object({
+      name: z.string(),
+      summary: z.string().nullable(),
+      technologies: nullableArray(z.string()),
+    }),
+  ),
   yearsOfExperienceTotal: z.number().nullable(),
 });
 

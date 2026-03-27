@@ -1,0 +1,45 @@
+{
+  "answers": {
+    "deselect resume numan kavurmacı jan 26 resume cv.pdf deselect resume numan kavurmacı jan 26 resume cv.pdf": {
+      "normalizedQuestion": "deselect resume numan kavurmacı jan 26 resume cv.pdf deselect resume numan kavurmacı jan 26 resume cv.pdf",
+      "label": "Deselect resume Numan Kavurmacı Jan 26 Resume CV.pdf",
+      "questionType": "unknown",
+      "strategy": "generated",
+      "answer": "false",
+      "confidenceLabel": "medium",
+      "source": "llm",
+      "notes": [
+        "Resolved through AI fallback using candidate profile and resume evidence.",
+        "The candidate profile indicates that the resume should remain selected; no evidence suggests it should be deselected."
+      ],
+      "updatedAt": "2026-03-27T13:29:04.699Z"
+    },
+    "select resume numan kavurmacı cv june.pdf select resume numan kavurmacı cv june.pdf": {
+      "normalizedQuestion": "select resume numan kavurmacı cv june.pdf select resume numan kavurmacı cv june.pdf",
+      "label": "Select resume Numan Kavurmacı CV June.pdf",
+      "questionType": "unknown",
+      "strategy": "generated",
+      "answer": "Select resume Numan Kavurmacı CV June.pdf",
+      "confidenceLabel": "medium",
+      "source": "llm",
+      "notes": [
+        "Resolved through AI fallback using candidate profile and resume evidence."
+      ],
+      "updatedAt": "2026-03-27T13:29:07.318Z"
+    },
+    "upload resume": {
+      "normalizedQuestion": "upload resume",
+      "label": "Upload resume",
+      "questionType": "unknown",
+      "strategy": "generated",
+      "answer": true,
+      "confidenceLabel": "medium",
+      "source": "llm",
+      "notes": [
+        "Resolved through AI fallback using candidate profile and resume evidence.",
+        "Resume file provided and contains detailed work experience, skills, and contact information."
+      ],
+      "updatedAt": "2026-03-27T13:26:18.047Z"
+    }
+  }
+}

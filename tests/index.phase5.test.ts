@@ -154,6 +154,12 @@ describe("phase 5 index flows", () => {
         url: "https://www.linkedin.com/jobs/view/1",
         resumePath: expect.any(String),
       });
+
+    expect(module.parseCliArgs(["easy-apply-dry-run"])).toEqual({
+      mode: "easy-apply-dry-run",
+      url: "https://www.linkedin.com/jobs/collections/easy-apply",
+      resumePath: expect.any(String),
+    });
   });
 
   it("rejects missing candidate prep flags", async () => {
@@ -161,9 +167,6 @@ describe("phase 5 index flows", () => {
 
     expect(() => module.parseCliArgs(["answer-questions", "--resume", "./resume.txt"])).toThrow(
       "--questions is required",
-    );
-    expect(() => module.parseCliArgs(["easy-apply-dry-run"])).toThrow(
-      "--url or a LinkedIn job URL is required",
     );
   });
 

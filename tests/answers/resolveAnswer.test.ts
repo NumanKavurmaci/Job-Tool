@@ -1,10 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const resolveGeneratedAnswerMock = vi.fn();
+const resolveAiFallbackAnswerMock = vi.fn();
 const persistResolvedAnswerMock = vi.fn();
 
 vi.mock("../../src/questions/strategies/generated.js", () => ({
   resolveGeneratedAnswer: resolveGeneratedAnswerMock,
+}));
+
+vi.mock("../../src/questions/strategies/aiFallback.js", () => ({
+  resolveAiFallbackAnswer: resolveAiFallbackAnswerMock,
 }));
 
 vi.mock("../../src/answers/cache.js", () => ({
@@ -70,6 +75,7 @@ describe("resolveAnswer", () => {
   beforeEach(() => {
     vi.resetModules();
     resolveGeneratedAnswerMock.mockReset();
+    resolveAiFallbackAnswerMock.mockReset();
     persistResolvedAnswerMock.mockReset();
   });
 
@@ -185,7 +191,16 @@ describe("resolveAnswer", () => {
     expect(hybrid.answer).toBe(false);
   });
 
-  it("routes disability questions to manual review when disclosure is manual", async () => {
+  it("routes disability questions to the AI fallback when deterministic logic used to require manual review", async () => {
+    resolveAiFallbackAnswerMock.mockResolvedValue({
+      questionType: "accessibility",
+      strategy: "generated",
+      answer: "Prefer not to say",
+      confidence: 0.56,
+      confidenceLabel: "low",
+      source: "llm",
+    });
+
     const { resolveAnswer } = await import("../../src/answers/resolveAnswer.js");
     const result = await resolveAnswer({
       question: {
@@ -195,8 +210,9 @@ describe("resolveAnswer", () => {
       candidateProfile: profile,
     });
 
-    expect(result.strategy).toBe("needs-review");
-    expect(result.confidenceLabel).toBe("manual_review");
+    expect(result.strategy).toBe("generated");
+    expect(result.source).toBe("llm");
+    expect(resolveAiFallbackAnswerMock).toHaveBeenCalled();
   });
 
   it("returns resume-derived answers for skill years questions", async () => {
@@ -226,7 +242,7 @@ describe("resolveAnswer", () => {
     expect(result.answer).toBe("0");
   });
 
-  it("does not invent years for unsupported technologies", async () => {
+  it("returns zero years for unsupported technologies", async () => {
     const { resolveAnswer } = await import("../../src/answers/resolveAnswer.js");
     const result = await resolveAnswer({
       question: {
@@ -237,8 +253,8 @@ describe("resolveAnswer", () => {
     });
 
     expect(result.strategy).toBe("resume-derived");
-    expect(result.answer).toBeNull();
-    expect(result.confidenceLabel).toBe("manual_review");
+    expect(result.answer).toBe("0");
+    expect(result.confidenceLabel).toBe("medium");
   });
 
   it("routes motivation questions to the generated path", async () => {
@@ -296,6 +312,16 @@ describe("resolveAnswer", () => {
   });
 
   it("points back to candidate-profile.json when a required salary field is missing", async () => {
+    resolveAiFallbackAnswerMock.mockResolvedValue({
+      questionType: "salary",
+      strategy: "generated",
+      answer: "Negotiable",
+      confidence: 0.55,
+      confidenceLabel: "low",
+      source: "llm",
+      notes: ["Profile salary field was missing."],
+    });
+
     const { resolveAnswer } = await import("../../src/answers/resolveAnswer.js");
     const result = await resolveAnswer({
       question: {
@@ -311,8 +337,9 @@ describe("resolveAnswer", () => {
       },
     });
 
-    expect(result.strategy).toBe("needs-review");
-    expect(result.notes?.some((note) => note.includes("candidate-profile.json"))).toBe(true);
+    expect(result.strategy).toBe("generated");
+    expect(result.answer).toBe("Negotiable");
+    expect(resolveAiFallbackAnswerMock).toHaveBeenCalled();
   });
 
   it("uses the generic salary expectation when no currency is specified", async () => {
@@ -329,7 +356,16 @@ describe("resolveAnswer", () => {
     expect(result.answer).toBe("Open to market-rate mid-level backend roles");
   });
 
-  it("routes notice period questions to manual review", async () => {
+  it("routes notice period questions to AI fallback", async () => {
+    resolveAiFallbackAnswerMock.mockResolvedValue({
+      questionType: "availability",
+      strategy: "generated",
+      answer: "Available with standard notice.",
+      confidence: 0.52,
+      confidenceLabel: "low",
+      source: "llm",
+    });
+
     const { resolveAnswer } = await import("../../src/answers/resolveAnswer.js");
     const result = await resolveAnswer({
       question: {
@@ -339,11 +375,11 @@ describe("resolveAnswer", () => {
       candidateProfile: profile,
     });
 
-    expect(result.strategy).toBe("needs-review");
-    expect(result.confidenceLabel).toBe("manual_review");
+    expect(result.strategy).toBe("generated");
+    expect(result.source).toBe("llm");
   });
 
-  it("persists manual-review answers to the cache layer", async () => {
+  it("persists zero-year unsupported technology answers to the cache layer", async () => {
     const { resolveAnswer } = await import("../../src/answers/resolveAnswer.js");
     await resolveAnswer({
       question: {
@@ -359,10 +395,35 @@ describe("resolveAnswer", () => {
           label: "How many years of professional experience do you have working with Angular?",
         }),
         resolved: expect.objectContaining({
-          answer: null,
-          confidenceLabel: "manual_review",
+          answer: "0",
+          confidenceLabel: "medium",
         }),
       }),
     );
+  });
+
+  it("falls back to AI when no other strategy resolves the question", async () => {
+    resolveAiFallbackAnswerMock.mockResolvedValue({
+      questionType: "unknown",
+      strategy: "generated",
+      answer: "No",
+      confidence: 0.51,
+      confidenceLabel: "low",
+      source: "llm",
+    });
+
+    const { resolveAnswer } = await import("../../src/answers/resolveAnswer.js");
+    const result = await resolveAnswer({
+      question: {
+        label: "Can you work night shifts if needed?",
+        inputType: "radio",
+        options: ["Yes", "No"],
+      },
+      candidateProfile: profile,
+    });
+
+    expect(result.strategy).toBe("generated");
+    expect(result.answer).toBe("No");
+    expect(resolveAiFallbackAnswerMock).toHaveBeenCalled();
   });
 });

@@ -136,4 +136,80 @@ describe("LM Studio live integration", () => {
     expect(result.text.length).toBeGreaterThan(0);
     expect(result.text.length).toBeLessThanOrEqual(220);
   }, 20000);
+
+  it("resolves a fallback application answer through the real local provider path", async () => {
+    const { resolveAiFallbackAnswer } = await import(
+      "../../src/questions/strategies/aiFallback.js"
+    );
+
+    const result = await resolveAiFallbackAnswer({
+      question: {
+        label: "How many years of experience do you have with C++?",
+        inputType: "text",
+      },
+      classified: {
+        type: "years_of_experience",
+        normalizedText: "how many years of experience do you have with c++",
+        confidence: 0.4,
+      },
+      candidateProfile: {
+        fullName: "Jane Doe",
+        email: "jane@example.com",
+        phone: "123",
+        location: "Berlin",
+        linkedinUrl: "https://linkedin.com/in/jane",
+        githubUrl: null,
+        portfolioUrl: null,
+        summary: "Backend engineer focused on TypeScript and Node.js.",
+        gpa: null,
+        yearsOfExperienceTotal: 4,
+        currentTitle: "Backend Engineer",
+        preferredRoles: ["Backend Engineer"],
+        preferredTechStack: ["TypeScript", "Node.js", "React"],
+        skills: ["TypeScript", "Node.js", "React"],
+        languages: ["English"],
+        salaryExpectations: { usd: null, eur: null, try: null },
+        salaryExpectation: null,
+        experienceOverrides: {},
+        workAuthorization: "authorized",
+        requiresSponsorship: false,
+        willingToRelocate: false,
+        remotePreference: "remote",
+        remoteOnly: true,
+        disability: {
+          hasVisualDisability: false,
+          disabilityPercentage: null,
+          requiresAccommodation: null,
+          accommodationNotes: null,
+          disclosurePreference: "manual-review",
+        },
+        education: [],
+        experience: [
+          {
+            company: "Acme",
+            title: "Backend Engineer",
+            summary: "Built TypeScript APIs and React dashboards",
+            technologies: ["TypeScript", "Node.js", "React"],
+            startDate: null,
+            endDate: null,
+          },
+        ],
+        projects: [],
+        resumeText: "resume text",
+        sourceMetadata: {},
+      },
+      previousAttempt: {
+        questionType: "years_of_experience",
+        strategy: "needs-review",
+        answer: null,
+        confidence: 0,
+        confidenceLabel: "manual_review",
+        source: "manual",
+      },
+    });
+
+    expect(result.strategy).toBe("generated");
+    expect(result.source).toBe("llm");
+    expect(result.answer === "0" || result.answer === 0 || result.answer === null || typeof result.answer === "string").toBe(true);
+  }, 20000);
 });

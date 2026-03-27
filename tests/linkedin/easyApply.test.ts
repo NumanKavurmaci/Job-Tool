@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   chooseRadioValue,
+  isAutoHandledQuestion,
   isManualReviewAnswer,
   isSubmitButtonLabel,
   runEasyApplyDryRun,
@@ -61,6 +62,17 @@ describe("easy apply helpers", () => {
     expect(chooseRadioValue(["Remote", "Hybrid"], "remote")).toBe("Remote");
     expect(chooseRadioValue(["Prefer not to say", "No"], "prefer")).toBe("Prefer not to say");
     expect(chooseRadioValue(["Yes", "No"], null)).toBeNull();
+  });
+
+  it("detects auto-handled resume/document fields", () => {
+    expect(
+      isAutoHandledQuestion({
+        fieldKey: "file-1",
+        label: "Upload resume",
+        inputType: "file",
+        required: true,
+      }),
+    ).toBe(true);
   });
 });
 
@@ -151,23 +163,62 @@ describe("runEasyApplyDryRun", () => {
     expect(driver.fillAnswer).not.toHaveBeenCalled();
   });
 
-  it("stops when a required question needs manual review", async () => {
+  it("skips file upload fields so resume-only steps can continue", async () => {
     const driver = {
       open: vi.fn(),
       ensureAuthenticated: vi.fn(),
       isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
       openEasyApply: vi.fn(),
-      collectQuestions: vi.fn().mockResolvedValue([
-        {
-          fieldKey: "q1",
-          label: "Do you require any reasonable accommodation?",
-          inputType: "radio",
-          options: ["Yes", "No"],
-          required: true,
-        },
-      ]),
+      collectQuestions: vi
+        .fn()
+        .mockResolvedValueOnce([
+          {
+            fieldKey: "q1",
+            label: "Upload resume",
+            inputType: "file",
+            required: true,
+          },
+        ])
+        .mockResolvedValueOnce([]),
       fillAnswer: vi.fn(),
-      getPrimaryAction: vi.fn().mockResolvedValue("next"),
+      getPrimaryAction: vi.fn().mockResolvedValueOnce("next").mockResolvedValueOnce("submit"),
+      advance: vi.fn(),
+    };
+
+    const resolveAnswerMock = vi.fn();
+
+    const result = await runEasyApplyDryRun({
+      driver,
+      url: "https://www.linkedin.com/jobs/view/1",
+      candidateProfile: profile,
+      resolveAnswer: resolveAnswerMock,
+    });
+
+    expect(result.status).toBe("ready_to_submit");
+    expect(resolveAnswerMock).not.toHaveBeenCalled();
+    expect(driver.fillAnswer).not.toHaveBeenCalled();
+  });
+
+  it("continues when a required question is answered through AI fallback", async () => {
+    const driver = {
+      open: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi
+        .fn()
+        .mockResolvedValueOnce([
+          {
+            fieldKey: "q1",
+            label: "Do you require any reasonable accommodation?",
+            inputType: "radio",
+            options: ["Yes", "No"],
+            required: true,
+          },
+        ])
+        .mockResolvedValueOnce([]),
+      fillAnswer: vi.fn().mockResolvedValue({ filled: true }),
+      getPrimaryAction: vi.fn().mockResolvedValueOnce("next").mockResolvedValueOnce("submit"),
       advance: vi.fn(),
     };
 
@@ -177,16 +228,17 @@ describe("runEasyApplyDryRun", () => {
       candidateProfile: profile,
       resolveAnswer: async () => ({
         questionType: "accessibility",
-        strategy: "needs-review",
-        answer: null,
-        confidence: 0.2,
-        confidenceLabel: "manual_review",
-        source: "manual",
+        strategy: "generated",
+        answer: "No",
+        confidence: 0.52,
+        confidenceLabel: "low",
+        source: "llm",
       }),
     });
 
-    expect(result.status).toBe("stopped_manual_review");
-    expect(driver.advance).not.toHaveBeenCalled();
+    expect(result.status).toBe("ready_to_submit");
+    expect(driver.fillAnswer).toHaveBeenCalled();
+    expect(driver.advance).toHaveBeenCalledWith("next");
   });
 
   it("stops when a required field fails validation after filling", async () => {
@@ -229,7 +281,7 @@ describe("runEasyApplyDryRun", () => {
     expect(result.steps[0]?.questions[0]?.details).toContain("decimal number");
   });
 
-  it("can advance to review even when review-only questions need manual review", async () => {
+  it("can advance to review when a formerly manual-review question gets an AI answer", async () => {
     const driver = {
       open: vi.fn(),
       ensureAuthenticated: vi.fn(),
@@ -246,7 +298,7 @@ describe("runEasyApplyDryRun", () => {
           },
         ])
         .mockResolvedValueOnce([]),
-      fillAnswer: vi.fn(),
+      fillAnswer: vi.fn().mockResolvedValue({ filled: true }),
       getPrimaryAction: vi.fn().mockResolvedValueOnce("review").mockResolvedValueOnce("submit"),
       advance: vi.fn(),
     };
@@ -257,11 +309,11 @@ describe("runEasyApplyDryRun", () => {
       candidateProfile: profile,
       resolveAnswer: async () => ({
         questionType: "education",
-        strategy: "needs-review",
-        answer: null,
-        confidence: 0.2,
-        confidenceLabel: "manual_review",
-        source: "manual",
+        strategy: "generated",
+        answer: "2.4",
+        confidence: 0.55,
+        confidenceLabel: "low",
+        source: "llm",
       }),
     });
 

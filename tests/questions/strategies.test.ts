@@ -287,20 +287,20 @@ describe("question strategies", () => {
     ).toBeNull();
   });
 
-  it("handles unmatched resume-aware data conservatively", async () => {
+  it("keeps broad unmatched experience questions conservative when total experience is unknown", async () => {
     const { resolveResumeAwareAnswer } = await import(
       "../../src/questions/strategies/resumeAware.js"
     );
 
     const result = resolveResumeAwareAnswer(
-      { type: "years_of_experience", normalizedText: "how many years with kubernetes", confidence: 0.9 },
+      { type: "years_of_experience", normalizedText: "how many years of work experience do you have with full-stack development", confidence: 0.9 },
       { ...profile, yearsOfExperienceTotal: null },
     );
 
     expect(result?.confidenceLabel).toBe("manual_review");
   });
 
-  it("does not map unsupported technologies to total experience", async () => {
+  it("returns zero years for unsupported technologies", async () => {
     const { resolveResumeAwareAnswer } = await import(
       "../../src/questions/strategies/resumeAware.js"
     );
@@ -310,8 +310,8 @@ describe("question strategies", () => {
       profile,
     );
 
-    expect(result?.answer).toBeNull();
-    expect(result?.confidenceLabel).toBe("manual_review");
+    expect(result?.answer).toBe("0");
+    expect(result?.confidenceLabel).toBe("medium");
   });
 
   it("generates answers for short-text questions", async () => {

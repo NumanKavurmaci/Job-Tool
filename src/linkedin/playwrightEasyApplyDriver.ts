@@ -176,7 +176,16 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
           `[data-job-tool-field-key="${question.fieldKey}"][data-job-tool-option-label="${optionLabel}"]`,
         )
         .first();
-      await locator.click();
+      try {
+        await locator.click({ force: true });
+      } catch {
+        await locator.evaluate((element) => {
+          const input = element as HTMLInputElement;
+          input.checked = true;
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+      }
       return { filled: true };
     }
 

@@ -3,9 +3,9 @@ import type { CandidateProfile } from "../candidate/types.js";
 import { buildAnswerBank } from "./answerBank.js";
 import { persistResolvedAnswer } from "./cache.js";
 import { classifyQuestion } from "../questions/classifyQuestion.js";
+import { resolveAiFallbackAnswer } from "../questions/strategies/aiFallback.js";
 import { resolveDeterministicAnswer } from "../questions/strategies/deterministic.js";
 import { resolveGeneratedAnswer } from "../questions/strategies/generated.js";
-import { resolveManualReview } from "../questions/strategies/manualReview.js";
 import { resolveResumeAwareAnswer } from "../questions/strategies/resumeAware.js";
 import type { InputQuestion } from "../questions/types.js";
 import type { ResolvedAnswer } from "./types.js";
@@ -25,6 +25,10 @@ async function finalizeResolvedAnswer(input: {
   return input.resolved;
 }
 
+function needsAiFallback(answer: ResolvedAnswer | null | undefined): boolean {
+  return answer?.strategy === "needs-review" || answer?.confidenceLabel === "manual_review";
+}
+
 export async function resolveAnswer(input: {
   question: InputQuestion;
   candidateProfile: CandidateProfile;
@@ -34,7 +38,7 @@ export async function resolveAnswer(input: {
   const answerBank = buildAnswerBank(input.candidateProfile);
 
   const bankHit = answerBank[classified.type];
-  if (bankHit) {
+  if (bankHit && !needsAiFallback(bankHit)) {
     return finalizeResolvedAnswer({
       ...input,
       classified,
@@ -43,7 +47,7 @@ export async function resolveAnswer(input: {
   }
 
   const deterministic = resolveDeterministicAnswer(classified, input.candidateProfile);
-  if (deterministic) {
+  if (deterministic && !needsAiFallback(deterministic)) {
     return finalizeResolvedAnswer({
       ...input,
       classified,
@@ -52,7 +56,7 @@ export async function resolveAnswer(input: {
   }
 
   const resumeAware = resolveResumeAwareAnswer(classified, input.candidateProfile);
-  if (resumeAware) {
+  if (resumeAware && !needsAiFallback(resumeAware)) {
     return finalizeResolvedAnswer({
       ...input,
       classified,
@@ -69,9 +73,17 @@ export async function resolveAnswer(input: {
     });
   }
 
+  const aiFallback = await resolveAiFallbackAnswer({
+    question: input.question,
+    classified,
+    candidateProfile: input.candidateProfile,
+    previousAttempt: bankHit ?? deterministic ?? resumeAware ?? null,
+    ...(input.job !== undefined ? { job: input.job } : {}),
+  });
+
   return finalizeResolvedAnswer({
     ...input,
     classified,
-    resolved: resolveManualReview(classified),
+    resolved: aiFallback,
   });
 }

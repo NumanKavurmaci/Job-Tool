@@ -12,6 +12,48 @@ import {
 } from "./helpers.js";
 
 const LINKEDIN_LOGIN_URL = "https://www.linkedin.com/login";
+const LINKEDIN_USERNAME_SELECTORS = [
+  "input[name='session_key']",
+  "input[name='username']",
+  "input#username",
+  "input[autocomplete='username']",
+];
+const LINKEDIN_PASSWORD_SELECTORS = [
+  "input[name='session_password']",
+  "input[name='password']",
+  "input#password",
+  "input[autocomplete='current-password']",
+];
+
+async function firstVisibleLocator(page: Page, selectors: string[]) {
+  for (const selector of selectors) {
+    const locator = page.locator(selector).first();
+    if ((await locator.count()) > 0) {
+      return locator;
+    }
+  }
+
+  return null;
+}
+
+async function waitForLocator(
+  page: Page,
+  selectors: string[],
+  timeoutMs = 10_000,
+): Promise<ReturnType<typeof page.locator> | null> {
+  const attempts = Math.max(1, Math.ceil(timeoutMs / 500));
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const locator = await firstVisibleLocator(page, selectors);
+    if (locator) {
+      return locator;
+    }
+
+    await page.waitForTimeout(500);
+  }
+
+  return null;
+}
 
 export async function isLinkedInSignInWall(page: Page): Promise<boolean> {
   const currentUrl = page.url().toLowerCase();
@@ -162,15 +204,22 @@ export async function ensureLinkedInAuthenticated(page: Page, url: string): Prom
       );
     }
 
-    await page.goto(LINKEDIN_LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
-    await page.waitForTimeout(1_000);
+    let usernameInput = await waitForLocator(page, LINKEDIN_USERNAME_SELECTORS, 5_000);
+    let passwordInput = await waitForLocator(page, LINKEDIN_PASSWORD_SELECTORS, 5_000);
 
-    const usernameInput = page.locator("input[name='session_key']").first();
-    const passwordInput = page.locator("input[name='session_password']").first();
+    if (!usernameInput || !passwordInput) {
+      await page.goto(LINKEDIN_LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
+      await page.waitForTimeout(1_000);
+      usernameInput = await waitForLocator(page, LINKEDIN_USERNAME_SELECTORS, 10_000);
+      passwordInput = await waitForLocator(page, LINKEDIN_PASSWORD_SELECTORS, 10_000);
+    }
+
     const submitButton = page.locator("button[type='submit']").first();
 
-    if ((await usernameInput.count()) === 0 || (await passwordInput.count()) === 0) {
-      throw new Error("LinkedIn login form was not detected.");
+    if (!usernameInput || !passwordInput) {
+      throw new Error(
+        `LinkedIn login form was not detected. url=${page.url()} title=${await page.title()}`,
+      );
     }
 
     await usernameInput.fill(env.LINKEDIN_USERNAME);

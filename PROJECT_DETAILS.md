@@ -20,7 +20,7 @@ The project currently supports:
 - Candidate master profile generation
 - LinkedIn URL support inside the candidate profile
 - Question classification for Easy Apply style prompts
-- Deterministic, resume-derived, generated, and manual-review answer strategies
+- Deterministic, resume-derived, generated, and AI-fallback answer strategies
 - Prepared answer set persistence
 - Prisma and SQLite persistence
 - Automated tests with enforced coverage thresholds
@@ -248,7 +248,8 @@ Strategies:
 - `deterministic`
 - `resume-derived`
 - `generated`
-- `needs-review`
+
+When deterministic and resume-derived logic cannot answer safely, the system now uses an AI fallback grounded in the candidate profile and resume instead of stopping at a manual-review dead end.
 
 ## Persistence
 
@@ -354,4 +355,5 @@ Coverage thresholds:
 - Playwright currently runs with `headless: false`
 - Local and OpenAI parsing use the same prompt contract and schema
 - Deterministic answers do not call the LLM
+- Questions that previously became manual review now go through an AI fallback answer path
 - LinkedIn Easy Apply support is still being hardened through live dry runs

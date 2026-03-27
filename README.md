@@ -27,6 +27,7 @@ That lets the system decide whether a role is a fit and prepare safe, structured
 - candidate-profile-based scoring and policy rules
 - resume ingestion and candidate master profile building
 - Easy Apply question classification and answer preparation
+- AI fallback for questions that are not resolved deterministically
 - LinkedIn Easy Apply dry-run support that stops before final submit
 - Prisma + SQLite persistence
 - automated tests with coverage enforcement
@@ -66,7 +67,10 @@ npm run dev -- score "https://job-link-here"
 npm run dev -- build-profile --resume "./cv.pdf" --linkedin "https://linkedin.com/in/your-handle"
 npm run dev -- answer-questions --resume "./cv.pdf" --questions "./questions.json"
 npm run dev -- easy-apply-dry-run "https://www.linkedin.com/jobs/view/123"
+npm run dev -- easy-apply-dry-run
 ```
+
+`easy-apply-dry-run` defaults to [LinkedIn Easy Apply jobs](https://www.linkedin.com/jobs/collections/easy-apply) when no URL is provided.
 
 ## Testing
 

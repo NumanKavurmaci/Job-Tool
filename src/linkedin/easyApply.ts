@@ -56,6 +56,10 @@ export function isSubmitButtonLabel(label: string): boolean {
   return label.trim().toLowerCase() === "submit application";
 }
 
+export function isAutoHandledQuestion(question: EasyApplyQuestionView): boolean {
+  return question.inputType === "file";
+}
+
 export function chooseRadioValue(options: string[], answer: ResolvedAnswer["answer"]): string | null {
   const normalizedOptions = options.map((option) => option.trim());
   if (typeof answer === "boolean") {
@@ -121,6 +125,24 @@ export async function runEasyApplyDryRun(input: {
     let hasRequiredManualReview = false;
 
     for (const question of questions) {
+      if (isAutoHandledQuestion(question)) {
+        answeredQuestions.push({
+          question,
+          resolved: {
+            questionType: "contact_info",
+            strategy: "deterministic",
+            answer: question.currentValue ?? null,
+            confidence: 0.99,
+            confidenceLabel: "high",
+            source: "candidate-profile",
+            notes: ["Skipped because LinkedIn handles resume/document selection on this step."],
+          },
+          filled: true,
+          details: "Skipped because LinkedIn already manages the resume/document field.",
+        });
+        continue;
+      }
+
       if (question.isPrefilled) {
         answeredQuestions.push({
           question,
