@@ -299,6 +299,20 @@ describe("runEasyApplyDryRun", () => {
       ensureAuthenticated: vi.fn(),
       isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
       openEasyApply: vi.fn(),
+      collectStepState: vi
+        .fn()
+        .mockResolvedValueOnce({
+          modalTitle: "Additional questions",
+          headingText: "Step 1",
+          primaryAction: "review",
+          buttonLabels: ["Review"],
+        })
+        .mockResolvedValueOnce({
+          modalTitle: "Review your application",
+          headingText: "Review",
+          primaryAction: "submit",
+          buttonLabels: ["Submit application"],
+        }),
       collectQuestions: vi
         .fn()
         .mockResolvedValueOnce([
@@ -500,6 +514,26 @@ describe("runEasyApplyDryRun", () => {
       ensureAuthenticated: vi.fn(),
       isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
       openEasyApply: vi.fn(),
+      collectReviewDiagnostics: vi.fn().mockResolvedValue({
+        validationMessages: ["Please complete this required field."],
+        blockingFields: [
+          {
+            fieldKey: "q1",
+            label: "Portfolio URL",
+            validationMessage: "Please complete this required field.",
+            currentValue: "",
+            required: false,
+          },
+        ],
+        buttonStates: [
+          {
+            action: "review",
+            visible: true,
+            disabled: false,
+            label: "Review",
+          },
+        ],
+      }),
       collectQuestions: vi.fn().mockResolvedValue([
         {
           fieldKey: "q1",
@@ -530,6 +564,10 @@ describe("runEasyApplyDryRun", () => {
 
     expect(result.status).toBe("stopped_unknown_action");
     expect(result.stopReason).toContain("repeated without advancing");
+    expect(result.reviewDiagnostics?.validationMessages).toContain(
+      "Please complete this required field.",
+    );
+    expect(result.reviewDiagnostics?.blockingFields[0]?.fieldKey).toBe("q1");
   });
 
   it("stops when the step limit is exceeded", async () => {
@@ -1249,6 +1287,18 @@ describe("runEasyApply", () => {
       ensureAuthenticated: vi.fn(),
       isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
       openEasyApply: vi.fn(),
+      collectReviewDiagnostics: vi.fn().mockResolvedValue({
+        validationMessages: ["Hidden validation blocker"],
+        blockingFields: [],
+        buttonStates: [
+          {
+            action: "review",
+            visible: true,
+            disabled: false,
+            label: "Review",
+          },
+        ],
+      }),
       collectQuestions: vi.fn().mockResolvedValue([
         {
           fieldKey: "q1",
@@ -1279,5 +1329,8 @@ describe("runEasyApply", () => {
 
     expect(result.status).toBe("stopped_unknown_action");
     expect(result.stopReason).toContain("repeated without advancing");
+    expect(result.reviewDiagnostics?.validationMessages).toContain(
+      "Hidden validation blocker",
+    );
   });
 });

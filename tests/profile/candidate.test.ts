@@ -28,6 +28,7 @@ describe("candidate profile loader", () => {
         excludedRoles: ["Staff"],
         preferredLocations: ["Remote"],
         excludedLocations: ["Istanbul onsite"],
+        allowedHybridLocations: ["Ankara", "Izmir"],
         remotePreference: "remote",
         remoteOnly: true,
         visaRequirement: "not-required",
@@ -57,6 +58,7 @@ describe("candidate profile loader", () => {
     expect(profile.yearsOfExperience).toBe(5);
     expect(profile.preferredTechStack).toEqual(["TypeScript", "Node.js"]);
     expect(profile.remoteOnly).toBe(true);
+    expect(profile.allowedHybridLocations).toEqual(["Ankara", "Izmir"]);
     expect(profile.experienceOverrides.linux).toBe(0);
     expect(profile.salaryExpectations.eur).toContain("EUR");
     expect(profile.disability.hasVisualDisability).toBe(true);
@@ -75,6 +77,7 @@ describe("candidate profile loader", () => {
         excludedRoles: [],
         preferredLocations: [],
         excludedLocations: [],
+        allowedHybridLocations: [],
         remotePreference: "remote",
         remoteOnly: true,
         visaRequirement: "not-required",

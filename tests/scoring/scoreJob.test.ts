@@ -8,6 +8,7 @@ const profile = {
   excludedRoles: ["Senior", "Staff", "Lead"],
   preferredLocations: ["Remote", "Europe"],
   excludedLocations: ["Istanbul onsite"],
+  allowedHybridLocations: ["Ankara", "Izmir", "Eskişehir", "Eskisehir", "Samsun"],
   remotePreference: "remote",
   remoteOnly: true,
   visaRequirement: "not-required",
@@ -157,7 +158,7 @@ describe("scoreJob", () => {
     expect(principalResult.breakdown.seniority).toBe(0);
   });
 
-  it("covers hybrid, onsite, and preferred-location scoring branches", () => {
+  it("covers hybrid, onsite, and unknown-location scoring branches", () => {
     const flexibleProfile = { ...profile, remoteOnly: false };
     const hybridResult = scoreJob(
       {
@@ -214,13 +215,32 @@ describe("scoreJob", () => {
       flexibleProfile,
     );
 
-    expect(hybridResult.breakdown.location).toBe(12);
+    expect(hybridResult.breakdown.location).toBe(2);
     expect(onsiteResult.breakdown.location).toBe(0);
-    expect(preferredLocationResult.breakdown.location).toBe(16);
+    expect(preferredLocationResult.breakdown.location).toBe(8);
   });
 
-  it("enforces remote-only scoring when configured", () => {
+  it("rewards hybrid roles only in configured cities", () => {
     const hybridResult = scoreJob(
+      {
+        title: "Backend Engineer",
+        company: "Acme",
+        location: "Ankara",
+        remoteType: "hybrid",
+        seniority: "mid",
+        mustHaveSkills: [],
+        niceToHaveSkills: [],
+        technologies: [],
+        yearsRequired: 3,
+        platform: "generic",
+        applicationType: "unknown",
+        visaSponsorship: "yes",
+        workAuthorization: "authorized",
+        openQuestionsCount: 0,
+      },
+      profile,
+    );
+    const blockedHybridResult = scoreJob(
       {
         title: "Backend Engineer",
         company: "Acme",
@@ -240,7 +260,8 @@ describe("scoreJob", () => {
       profile,
     );
 
-    expect(hybridResult.breakdown.location).toBe(0);
+    expect(hybridResult.breakdown.location).toBe(14);
+    expect(blockedHybridResult.breakdown.location).toBe(2);
   });
 
   it("covers junior and intern scoring branches", () => {

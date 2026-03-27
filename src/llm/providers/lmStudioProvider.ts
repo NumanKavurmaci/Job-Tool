@@ -19,7 +19,7 @@ export class LMStudioProvider implements LlmProvider {
   constructor(
     baseUrl = env.LOCAL_LLM_BASE_URL ?? "",
     model = env.LOCAL_LLM_MODEL ?? "",
-    timeoutMs = 30_000,
+    timeoutMs = env.LOCAL_LLM_TIMEOUT_MS,
   ) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
     this.model = model;

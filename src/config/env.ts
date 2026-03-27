@@ -17,6 +17,20 @@ function optional(name: string): string | undefined {
   return value?.trim() ? value : undefined;
 }
 
+function optionalPositiveInteger(name: string, fallback: number): number {
+  const value = optional(name);
+  if (!value) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+
+  return parsed;
+}
+
 export function createEnv() {
   const LLM_PROVIDER = (optional("LLM_PROVIDER") ?? "openai") as LlmProviderName;
   const DATABASE_URL = required("DATABASE_URL");
@@ -24,6 +38,7 @@ export function createEnv() {
   const OPENAI_API_KEY = optional("OPENAI_API_KEY");
   const LOCAL_LLM_BASE_URL = optional("LOCAL_LLM_BASE_URL");
   const LOCAL_LLM_MODEL = optional("LOCAL_LLM_MODEL");
+  const LOCAL_LLM_TIMEOUT_MS = optionalPositiveInteger("LOCAL_LLM_TIMEOUT_MS", 120_000);
   const LINKEDIN_USERNAME = optional("LINKEDIN_USERNAME");
   const LINKEDIN_PASSWORD = optional("LINKEDIN_PASSWORD");
   const LINKEDIN_SESSION_STATE_PATH =
@@ -61,6 +76,7 @@ export function createEnv() {
     OPENAI_MODEL,
     LOCAL_LLM_BASE_URL,
     LOCAL_LLM_MODEL,
+    LOCAL_LLM_TIMEOUT_MS,
     DATABASE_URL,
       LINKEDIN_USERNAME,
       LINKEDIN_PASSWORD,

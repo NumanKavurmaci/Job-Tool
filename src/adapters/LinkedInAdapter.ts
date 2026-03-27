@@ -49,6 +49,254 @@ const LINKEDIN_CHALLENGE_MARKERS = [
   "confirm your identity",
   "enter the code",
 ];
+const LINKEDIN_TITLE_SELECTORS = [
+  ".job-details-jobs-unified-top-card__job-title",
+  ".jobs-unified-top-card__job-title",
+  ".top-card-layout__title",
+  "h1",
+  "[data-test-id='job-title']",
+  "p[data-test-id='job-title']",
+];
+const LINKEDIN_COMPANY_SELECTORS = [
+  ".job-details-jobs-unified-top-card__company-name",
+  ".jobs-unified-top-card__company-name",
+  ".topcard__org-name-link",
+  "[data-test-id='job-company-name']",
+];
+const LINKEDIN_LOCATION_SELECTORS = [
+  ".job-details-jobs-unified-top-card__bullet",
+  ".topcard__flavor--bullet",
+  ".job-details-jobs-unified-top-card__primary-description-container",
+  "[data-test-id='job-location']",
+];
+const LINKEDIN_ABOUT_TEXT_SELECTORS = [
+  "[data-testid='expandable-text-box']",
+  ".jobs-description-content__text",
+  ".show-more-less-html__markup",
+  ".jobs-box__html-content",
+];
+const LINKEDIN_ABOUT_EXPAND_BUTTON_SELECTORS = [
+  "[data-testid='expandable-text-button']",
+  "button[data-testid='expandable-text-button']",
+  "button:has-text('more')",
+  "button:has-text('Show more')",
+];
+const LINKEDIN_BADGE_SELECTORS = [
+  ".jobs-unified-top-card__job-insight",
+  ".jobs-unified-top-card__job-insight span",
+  ".job-details-jobs-unified-top-card__job-insight",
+  ".job-details-jobs-unified-top-card__job-insight span",
+  "a[href*='linkedin.com/jobs/view'] span",
+];
+const LINKEDIN_ABOUT_COMPANY_SELECTORS = [
+  "[data-testid='about-company-module']",
+  "[data-test-id='about-company']",
+  ".jobs-company__box",
+];
+
+function parseLinkedInPageTitle(
+  pageTitle: string | null,
+): { title: string | null; company: string | null; location: string | null } {
+  const cleaned = optionalText(pageTitle?.replace(/\|\s*LinkedIn$/i, ""));
+  if (!cleaned) {
+    return {
+      title: null,
+      company: null,
+      location: null,
+    };
+  }
+
+  const parts = cleaned
+    .split("|")
+    .map((part) => optionalText(part))
+    .filter((part): part is string => Boolean(part));
+
+  return {
+    title: parts[0] ?? null,
+    location: parts.length > 2 ? parts[1] ?? null : null,
+    company: parts.length > 1 ? parts[parts.length - 1] ?? null : null,
+  };
+}
+
+function cleanLinkedInTitle(
+  value: string | null | undefined,
+  location: string | null | undefined,
+): string | null {
+  const normalized = optionalText(value);
+  if (!normalized) {
+    return null;
+  }
+
+  const normalizedLocation = optionalText(location)?.toLowerCase();
+  const parts = normalized
+    .split("|")
+    .map((part) => optionalText(part))
+    .filter((part): part is string => Boolean(part));
+
+  if (parts.length <= 1) {
+    return normalized;
+  }
+
+  const filtered = parts.filter((part, index) => {
+    if (index === 0) {
+      return true;
+    }
+
+    if (normalizedLocation && part.toLowerCase() === normalizedLocation) {
+      return false;
+    }
+
+    return !/\b(remote|hybrid|onsite|on-site)\b/i.test(part);
+  });
+
+  return filtered[0] ?? normalized;
+}
+
+function uniqueText(values: Array<string | null | undefined>): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const value of values) {
+    const normalized = optionalText(value);
+    if (!normalized) {
+      continue;
+    }
+
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    result.push(normalized);
+  }
+
+  return result;
+}
+
+function flattenTextLines(values: string[]): string[] {
+  return uniqueText(
+    values.flatMap((value) =>
+      value
+        .split("\n")
+        .map((line) => optionalText(line))
+        .filter((line): line is string => Boolean(line)),
+    ),
+  );
+}
+
+function inferLocationFromBodyText(bodyText: string): string | null {
+  const lines = flattenTextLines([bodyText]);
+
+  for (const line of lines) {
+    if (
+      /\b(remote|hybrid|on-site|onsite)\b/i.test(line) &&
+      /[a-zA-ZğüşöçıİĞÜŞÖÇ]/.test(line)
+    ) {
+      return line;
+    }
+
+    if (/\b(türkiye|turkey|ankara|izmir|eskişehir|eskisehir|samsun|istanbul)\b/i.test(line)) {
+      return line;
+    }
+  }
+
+  return null;
+}
+
+async function getTextsBySelectors(page: Page, selectors: string[]): Promise<string[]> {
+  const values: string[] = [];
+
+  for (const selector of selectors) {
+    const locator = page.locator(selector).first();
+    if ((await locator.count().catch(() => 0)) === 0) {
+      continue;
+    }
+
+    const text = optionalText(await locator.innerText().catch(() => null));
+    if (text) {
+      values.push(text);
+    }
+  }
+
+  return uniqueText(values);
+}
+
+async function expandLinkedInAboutSection(page: Page): Promise<void> {
+  const button = await firstVisibleLocator(page, LINKEDIN_ABOUT_EXPAND_BUTTON_SELECTORS);
+  if (!button) {
+    return;
+  }
+
+  await button.click().catch(() => undefined);
+  await page.waitForTimeout(500);
+}
+
+function parseLinkedInAboutSections(text: string | null): {
+  descriptionText: string | null;
+  requirementsText: string | null;
+  benefitsText: string | null;
+} {
+  const normalized = compactText(text);
+  if (!normalized) {
+    return {
+      descriptionText: null,
+      requirementsText: null,
+      benefitsText: null,
+    };
+  }
+
+  const lines = normalized
+    .split("\n")
+    .map((line) => optionalText(line))
+    .filter((line): line is string => Boolean(line));
+
+  const headings = {
+    requirements: /^(requirements|qualifications|what you bring|skills required)$/i,
+    benefits: /^(benefits|perks|what we offer|why join us)$/i,
+    stop: /^(application process|how to apply|about the company)$/i,
+  };
+
+  const description: string[] = [];
+  const requirements: string[] = [];
+  const benefits: string[] = [];
+  let current: "description" | "requirements" | "benefits" = "description";
+
+  for (const line of lines) {
+    if (headings.requirements.test(line)) {
+      current = "requirements";
+      continue;
+    }
+
+    if (headings.benefits.test(line)) {
+      current = "benefits";
+      continue;
+    }
+
+    if (headings.stop.test(line)) {
+      current = "description";
+      continue;
+    }
+
+    if (current === "requirements") {
+      requirements.push(line);
+      continue;
+    }
+
+    if (current === "benefits") {
+      benefits.push(line);
+      continue;
+    }
+
+    description.push(line);
+  }
+
+  return {
+    descriptionText: compactText(description.join("\n")) || null,
+    requirementsText: compactText(requirements.join("\n")) || null,
+    benefitsText: compactText(benefits.join("\n")) || null,
+  };
+}
 
 async function firstVisibleLocator(page: Page, selectors: string[]) {
   for (const selector of selectors) {
@@ -224,30 +472,22 @@ export class LinkedInAdapter implements JobAdapter {
   async extract(page: Page, url: string): Promise<ExtractedJobContent> {
     await this.ensureAuthenticated(page, url);
     const pageBodyText = await page.locator("body").innerText().catch(() => "");
+    const titleParts = parseLinkedInPageTitle(await page.title().catch(() => null));
+    await expandLinkedInAboutSection(page);
 
-    const title =
-      (await getTextBySelectors(page, [
-        ".job-details-jobs-unified-top-card__job-title",
-        ".jobs-unified-top-card__job-title",
-        ".top-card-layout__title",
-        "h1",
-      ])) ?? optionalText(await page.title());
+    const rawTitle = (await getTextBySelectors(page, LINKEDIN_TITLE_SELECTORS)) ?? titleParts.title;
+    const company =
+      (await getTextBySelectors(page, LINKEDIN_COMPANY_SELECTORS)) ?? titleParts.company;
 
-    const company = await getTextBySelectors(page, [
-      ".job-details-jobs-unified-top-card__company-name",
-      ".jobs-unified-top-card__company-name",
-      ".topcard__org-name-link",
-      "[class*='company-name']",
-      "[class*='company']",
-    ]);
-
-    const location = await getTextBySelectors(page, [
-      ".job-details-jobs-unified-top-card__bullet",
-      ".topcard__flavor--bullet",
-      ".job-details-jobs-unified-top-card__primary-description-container",
-      "[class*='job-location']",
-      "[class*='location']",
-    ]);
+    const badgeTexts = flattenTextLines(await getTextsBySelectors(page, LINKEDIN_BADGE_SELECTORS));
+    const inferredBadgeLocation =
+      badgeTexts.find((value) => /\b(remote|hybrid|onsite|on-site)\b/i.test(value)) ??
+      inferLocationFromBodyText(pageBodyText) ??
+      titleParts.location;
+    const location =
+      (await getTextBySelectors(page, LINKEDIN_LOCATION_SELECTORS)) ?? inferredBadgeLocation ?? null;
+    const title = cleanLinkedInTitle(rawTitle, location) ?? titleParts.title;
+    const aboutCompanyText = await extractSectionText(page, LINKEDIN_ABOUT_COMPANY_SELECTORS);
 
     const applyUrl =
       (await getAttributeBySelectors(
@@ -260,25 +500,26 @@ export class LinkedInAdapter implements JobAdapter {
         "href",
       )) ?? (await getCurrentUrl(page));
 
-    const descriptionText = await extractSectionText(page, [
-      ".jobs-description-content__text",
-      ".show-more-less-html__markup",
-      ".jobs-box__html-content",
-      "main",
-      "article",
-      "body",
-    ]);
+    const aboutText =
+      (await extractSectionText(page, LINKEDIN_ABOUT_TEXT_SELECTORS)) ??
+      (await extractSectionText(page, ["main", "article", "body"]));
+    const aboutSections = parseLinkedInAboutSections(aboutText);
 
-    const requirementsText = await extractSectionText(page, [
+    const requirementsText =
+      aboutSections.requirementsText ??
+      (await extractSectionText(page, [
       "[class*='qualification']",
       "[class*='requirement']",
       "[data-testid='job-details-how-you-match-card']",
-    ]);
+    ]));
 
-    const benefitsText = await extractSectionText(page, [
+    const benefitsText =
+      aboutSections.benefitsText ??
+      (await extractSectionText(page, [
       "[class*='benefit']",
       "[class*='perk']",
-    ]);
+    ]));
+    const descriptionText = aboutSections.descriptionText ?? aboutText;
 
     const easyApplyText = [
       pageBodyText,
@@ -297,7 +538,9 @@ export class LinkedInAdapter implements JobAdapter {
     const bodyLower = pageBodyText.toLowerCase();
     const applicationType = easyApplyText.includes("easy apply")
       ? "easy_apply"
-      : bodyLower.includes("apply on company website") || bodyLower.includes("apply on company site")
+      : bodyLower.includes("company website") ||
+          bodyLower.includes("company site") ||
+          bodyLower.includes("external apply")
         ? "external"
         : "unknown";
 
@@ -307,9 +550,11 @@ export class LinkedInAdapter implements JobAdapter {
         company ? `Company: ${company}` : null,
         location ? `Location: ${location}` : null,
         `Application Type: ${applicationType}`,
+        badgeTexts.length > 0 ? `Badges:\n${badgeTexts.join("\n")}` : null,
         descriptionText ? `Description:\n${descriptionText}` : null,
         requirementsText ? `Requirements:\n${requirementsText}` : null,
         benefitsText ? `Benefits:\n${benefitsText}` : null,
+        aboutCompanyText ? `About Company:\n${aboutCompanyText}` : null,
       ]
         .filter(Boolean)
         .join("\n\n"),

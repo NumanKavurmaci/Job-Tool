@@ -32,6 +32,7 @@ async function loadIndexModule(readFileMock?: ReturnType<typeof vi.fn>) {
   const createEasyApplyDriverMock = vi.fn();
   const createSnapshotMock = vi.fn();
   const createPreparedAnswerSetMock = vi.fn();
+  const writeRunReportMock = vi.fn().mockResolvedValue("artifacts/batch-runs/report.json");
   const upsertMock = vi.fn();
   const createDecisionMock = vi.fn();
   const disconnectMock = vi.fn();
@@ -61,6 +62,7 @@ async function loadIndexModule(readFileMock?: ReturnType<typeof vi.fn>) {
       createEasyApplyDriverMock,
       createSnapshotMock,
       createPreparedAnswerSetMock,
+      writeRunReportMock,
       upsertMock,
       createDecisionMock,
       disconnectMock,
@@ -86,6 +88,7 @@ async function loadIndexModule(readFileMock?: ReturnType<typeof vi.fn>) {
       runEasyApplyDryRun: runEasyApplyDryRunMock,
       runEasyApplyBatchDryRun: runEasyApplyBatchDryRunMock,
       createEasyApplyDriver: createEasyApplyDriverMock,
+      writeRunReport: writeRunReportMock,
       prisma: {
         jobPosting: { upsert: upsertMock },
         applicationDecision: { create: createDecisionMock },
@@ -354,7 +357,7 @@ describe("phase 5 index flows", () => {
         resumePath: expect.any(String),
         count: 1,
         disableAiEvaluation: false,
-        scoreThreshold: 75,
+        scoreThreshold: 60,
       });
 
     expect(module.parseCliArgs(["easy-apply-dry-run"])).toEqual({
@@ -363,7 +366,7 @@ describe("phase 5 index flows", () => {
       resumePath: expect.any(String),
       count: 1,
       disableAiEvaluation: false,
-      scoreThreshold: 75,
+      scoreThreshold: 60,
     });
 
     expect(module.parseCliArgs(["easy-apply-dry-run", "--count", "3"])).toEqual({
@@ -372,7 +375,7 @@ describe("phase 5 index flows", () => {
       resumePath: expect.any(String),
       count: 3,
       disableAiEvaluation: false,
-      scoreThreshold: 75,
+      scoreThreshold: 60,
     });
 
     expect(module.parseCliArgs(["easy-apply-dry-run", "2"])).toEqual({
@@ -381,7 +384,7 @@ describe("phase 5 index flows", () => {
       resumePath: expect.any(String),
       count: 2,
       disableAiEvaluation: false,
-      scoreThreshold: 75,
+      scoreThreshold: 60,
     });
 
     expect(
@@ -413,7 +416,7 @@ describe("phase 5 index flows", () => {
       resumePath: expect.any(String),
       count: 1,
       disableAiEvaluation: false,
-      scoreThreshold: 75,
+      scoreThreshold: 60,
     });
 
     expect(
@@ -570,10 +573,17 @@ describe("phase 5 index flows", () => {
     );
 
     expect(result.easyApply.status).toBe("completed");
+    expect(result.reportPath).toBe("artifacts/batch-runs/report.json");
     expect(mocks.runEasyApplyBatchMock).toHaveBeenCalledWith(
       expect.objectContaining({
         url: "https://www.linkedin.com/jobs/collections/easy-apply",
         targetCount: 2,
+      }),
+    );
+    expect(mocks.writeRunReportMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: "batch-runs",
+        prefix: "easy-apply-batch",
       }),
     );
     expect(mocks.runEasyApplyDryRunMock).not.toHaveBeenCalled();
@@ -769,6 +779,7 @@ describe("phase 5 index flows", () => {
     );
 
     expect(result.easyApply.status).toBe("completed");
+    expect(result.reportPath).toBe("artifacts/batch-runs/report.json");
     expect(mocks.runEasyApplyBatchDryRunMock).toHaveBeenCalledWith(
       expect.objectContaining({
         url: "https://www.linkedin.com/jobs/collections/easy-apply",
@@ -776,6 +787,12 @@ describe("phase 5 index flows", () => {
       }),
     );
     expect(mocks.runEasyApplyDryRunMock).not.toHaveBeenCalled();
+    expect(mocks.writeRunReportMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: "batch-runs",
+        prefix: "easy-apply-dry-run",
+      }),
+    );
     expect(mocks.infoMock).toHaveBeenCalledWith(
       expect.objectContaining({
         status: "completed",
@@ -902,7 +919,7 @@ describe("phase 5 index flows", () => {
       shouldApply: true,
       finalDecision: "APPLY",
       score: 81,
-      reason: "Score 81 meets the configured threshold of 75.",
+      reason: "Score 81 meets the configured threshold of 60.",
       policyAllowed: true,
     });
     expect(deps.extractJobText).toHaveBeenCalled();
@@ -917,7 +934,7 @@ describe("phase 5 index flows", () => {
         url: "https://www.linkedin.com/jobs/view/1",
         finalDecision: "APPLY",
         totalScore: 81,
-        scoreThreshold: 75,
+        scoreThreshold: 60,
       }),
       "LinkedIn Easy Apply job evaluated",
     );
@@ -1442,6 +1459,76 @@ describe("phase 5 index flows", () => {
       expect(mocks.exitMock).not.toHaveBeenCalled();
     } finally {
       process.argv = originalArgv;
+    }
+  });
+
+  it("prints a terminal summary for successful batch dry runs", async () => {
+    const { module, mocks, deps } = await loadIndexModule();
+    const stdoutWriteSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+    const originalArgv = process.argv;
+    process.argv = ["node", "index.js", "easy-apply-dry-run", "--count", "2"];
+
+    try {
+      mocks.loadCandidateMasterProfileMock.mockResolvedValue({
+        fullName: "Jane Doe",
+        linkedinUrl: "https://linkedin.com/in/jane",
+        sourceMetadata: { resumePath: "./resume.txt" },
+      });
+      mocks.loadCandidateProfileMock.mockResolvedValue({
+        yearsOfExperience: 3,
+        preferredRoles: [],
+        preferredTechStack: [],
+        excludedRoles: [],
+        preferredLocations: [],
+        excludedLocations: [],
+        allowedHybridLocations: ["Ankara"],
+        remotePreference: "remote",
+        remoteOnly: true,
+        visaRequirement: "not-required",
+        languages: [],
+        salaryExpectation: null,
+        salaryExpectations: { usd: null, eur: null, try: null },
+        gpa: null,
+        linkedinUrl: null,
+        workAuthorizationStatus: "authorized",
+        requiresSponsorship: false,
+        willingToRelocate: false,
+        disability: {
+          hasVisualDisability: false,
+          disabilityPercentage: null,
+          requiresAccommodation: null,
+          accommodationNotes: null,
+          disclosurePreference: "manual-review",
+        },
+      });
+      mocks.createEasyApplyDriverMock.mockReturnValue({ driver: true });
+      mockWithPageSuccess(mocks.withPageMock);
+      mocks.runEasyApplyBatchDryRunMock.mockResolvedValue({
+        status: "completed",
+        collectionUrl: "https://www.linkedin.com/jobs/collections/easy-apply",
+        requestedCount: 2,
+        attemptedCount: 1,
+        evaluatedCount: 4,
+        skippedCount: 3,
+        pagesVisited: 2,
+        jobs: [],
+        stopReason: "Processed 1 LinkedIn Easy Apply job(s).",
+      });
+
+      await module.runCli(deps);
+
+      expect(stdoutWriteSpy).toHaveBeenCalledWith(
+        expect.stringContaining("LinkedIn Easy Apply dry run finished"),
+      );
+      expect(stdoutWriteSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Report: artifacts/batch-runs/report.json"),
+      );
+      expect(mocks.disconnectMock).toHaveBeenCalledTimes(1);
+    } finally {
+      process.argv = originalArgv;
+      stdoutWriteSpy.mockRestore();
     }
   });
 

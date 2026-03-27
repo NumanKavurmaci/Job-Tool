@@ -2,6 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { GenericAdapter } from "../../src/adapters/GenericAdapter.js";
 import { GreenhouseAdapter } from "../../src/adapters/GreenhouseAdapter.js";
 import { LeverAdapter } from "../../src/adapters/LeverAdapter.js";
+import {
+  linkedInCrossingHurdlesFixture,
+  linkedInExternalApplyFixture,
+} from "../fixtures/linkedin.js";
 import { createMockPage } from "../utils/fakePage.js";
 
 afterEach(() => {
@@ -543,6 +547,73 @@ describe("LinkedInAdapter", () => {
 
     const result = await new LinkedInAdapter().extract(page as never, page.url());
     expect(result.applicationType).toBe("external");
+  });
+
+  it("extracts linkedin about-the-job content without relying on noisy full-page body text", async () => {
+    const { LinkedInAdapter } = await import("../../src/adapters/LinkedInAdapter.js");
+    let expanded = false;
+    const page = createMockPage({
+      currentUrl: "https://www.linkedin.com/jobs/view/4386852533/",
+      title: linkedInCrossingHurdlesFixture.pageTitle,
+      selectors: {
+        "[data-testid='expandable-text-button']": { text: "more" },
+        "p[data-test-id='job-title']": { text: linkedInCrossingHurdlesFixture.titleText },
+        "[data-testid='expandable-text-box']": { text: linkedInCrossingHurdlesFixture.aboutCollapsed },
+        "a[href*='linkedin.com/jobs/view'] span": { text: linkedInCrossingHurdlesFixture.badges },
+        body: { text: linkedInCrossingHurdlesFixture.noisyBody },
+        "[data-testid='about-company-module']": {
+          text: "Crossing Hurdles\nStaffing and Recruiting\n11-50 employees",
+        },
+      },
+      onClick(selector) {
+        if (selector === "[data-testid='expandable-text-button']") {
+          expanded = true;
+        }
+      },
+    });
+
+    const result = await new LinkedInAdapter().extract(page as never, page.url());
+
+    expect(expanded).toBe(true);
+    expect(result.title).toBe("Software Engineer (Fullstack)");
+    expect(result.company).toBe("Crossing Hurdles");
+    expect(result.location).toBe("Remote");
+    expect(result.applicationType).toBe("unknown");
+    expect(result.descriptionText).toContain("Fullstack Developer (Python/React)");
+    expect(result.descriptionText).toContain("Build and maintain scalable backend APIs");
+    expect(result.requirementsText).toContain("React");
+    expect(result.rawText).toContain("Badges:");
+    expect(result.rawText).toContain("Contract");
+    expect(result.rawText).toContain("About Company:");
+    expect(result.rawText).toContain("Staffing and Recruiting");
+  });
+
+  it("marks linkedin company-site apply buttons as external while keeping structured sections", async () => {
+    const { LinkedInAdapter } = await import("../../src/adapters/LinkedInAdapter.js");
+    const page = createMockPage({
+      currentUrl: "https://www.linkedin.com/jobs/view/7777777777/",
+      title: linkedInExternalApplyFixture.pageTitle,
+      selectors: {
+        ".job-details-jobs-unified-top-card__job-title": {
+          text: linkedInExternalApplyFixture.titleText,
+        },
+        ".job-details-jobs-unified-top-card__company-name": {
+          text: linkedInExternalApplyFixture.companyText,
+        },
+        "[data-testid='expandable-text-box']": { text: linkedInExternalApplyFixture.aboutExpanded },
+        "button.jobs-apply-button": { text: "Apply" },
+        body: { text: linkedInExternalApplyFixture.bodyText },
+      },
+    });
+
+    const result = await new LinkedInAdapter().extract(page as never, page.url());
+
+    expect(result.title).toBe("Senior Fullstack Developer");
+    expect(result.company).toBe("Proxify");
+    expect(result.applicationType).toBe("external");
+    expect(result.descriptionText).toContain("Build remote-first fullstack applications.");
+    expect(result.requirementsText).toContain("Strong TypeScript experience.");
+    expect(result.rawText).toContain("Application Type: external");
   });
 });
 

@@ -70,28 +70,24 @@ function scoreSeniority(job: NormalizedJob, profile: CandidateProfile): number {
 function scoreLocation(job: NormalizedJob, profile: CandidateProfile): number {
   const location = `${job.location ?? ""} ${job.remoteType}`.toLowerCase();
 
-  if (profile.remoteOnly) {
-    if (job.remoteType === "remote") {
-      return 20;
-    }
+  if (job.remoteType === "remote") {
+    return 20;
+  }
 
-    if (job.remoteType === "hybrid" || job.remoteType === "onsite") {
-      return 0;
-    }
+  if (job.remoteType === "onsite") {
+    return 0;
+  }
+
+  if (job.remoteType === "hybrid") {
+    const allowedHybridLocation = profile.allowedHybridLocations.some((preferred) =>
+      location.includes(preferred.toLowerCase()),
+    );
+
+    return allowedHybridLocation ? 14 : 2;
   }
 
   if (profile.remotePreference === "remote") {
-    if (job.remoteType === "remote") {
-      return 20;
-    }
-
-    if (job.remoteType === "hybrid") {
-      return 12;
-    }
-
-    if (job.remoteType === "onsite") {
-      return 0;
-    }
+    return 8;
   }
 
   const preferredLocationMatch = profile.preferredLocations.some((preferred) =>

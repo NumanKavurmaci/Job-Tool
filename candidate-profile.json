@@ -16,6 +16,7 @@
   "excludedRoles": ["Senior", "Lead", "Staff", "Principal"],
   "preferredLocations": ["Remote", "Europe", "Turkey"],
   "excludedLocations": ["Istanbul onsite"],
+  "allowedHybridLocations": ["Ankara", "Izmir", "İzmir", "Eskişehir", "Eskisehir", "Samsun"],
   "remotePreference": "remote",
   "remoteOnly": true,
   "visaRequirement": "not-required",

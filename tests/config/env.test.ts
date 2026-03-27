@@ -23,6 +23,7 @@ describe("env config", () => {
       OPENAI_MODEL: "gpt-4.1-mini",
       LOCAL_LLM_BASE_URL: "http://127.0.0.1:1234/v1",
       LOCAL_LLM_MODEL: "openai/gpt-oss-20b",
+      LOCAL_LLM_TIMEOUT_MS: 120000,
       DATABASE_URL: "file:./dev.db",
       LINKEDIN_USERNAME: "user@example.com",
       LINKEDIN_PASSWORD: "secret",
@@ -48,6 +49,7 @@ describe("env config", () => {
       OPENAI_MODEL: "gpt-4.1-mini",
       LOCAL_LLM_BASE_URL: "http://127.0.0.1:1234/v1",
       LOCAL_LLM_MODEL: "openai/gpt-oss-20b",
+      LOCAL_LLM_TIMEOUT_MS: 120000,
       DATABASE_URL: "file:./dev.db",
       LINKEDIN_USERNAME: undefined,
       LINKEDIN_PASSWORD: undefined,
@@ -94,6 +96,31 @@ describe("env config", () => {
 
     await expect(import("../../src/config/env.js")).rejects.toThrow(
       "LINKEDIN_USERNAME and LINKEDIN_PASSWORD must be provided together",
+    );
+  });
+
+  it("accepts a custom local timeout and rejects invalid values", async () => {
+    process.env.LLM_PROVIDER = "local";
+    process.env.DATABASE_URL = "file:./dev.db";
+    process.env.LOCAL_LLM_BASE_URL = "http://127.0.0.1:1234/v1";
+    process.env.LOCAL_LLM_MODEL = "openai/gpt-oss-20b";
+    process.env.LOCAL_LLM_TIMEOUT_MS = "180000";
+
+    let module = await import("../../src/config/env.js");
+    expect(module.createEnv().LOCAL_LLM_TIMEOUT_MS).toBe(180000);
+
+    vi.resetModules();
+    process.env = {
+      ...originalEnv,
+      LLM_PROVIDER: "local",
+      DATABASE_URL: "file:./dev.db",
+      LOCAL_LLM_BASE_URL: "http://127.0.0.1:1234/v1",
+      LOCAL_LLM_MODEL: "openai/gpt-oss-20b",
+      LOCAL_LLM_TIMEOUT_MS: "0",
+    };
+
+    await expect(import("../../src/config/env.js")).rejects.toThrow(
+      "LOCAL_LLM_TIMEOUT_MS must be a positive integer",
     );
   });
 });

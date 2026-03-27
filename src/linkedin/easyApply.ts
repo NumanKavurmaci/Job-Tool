@@ -25,6 +25,31 @@ export interface EasyApplyStepReport {
   stepIndex: number;
   questions: EasyApplyAnsweredQuestion[];
   action: EasyApplyPrimaryAction;
+  stateSnapshot?: EasyApplyStepStateSnapshot;
+}
+
+export interface EasyApplyStepStateSnapshot {
+  modalTitle: string | null;
+  headingText: string | null;
+  primaryAction: EasyApplyPrimaryAction;
+  buttonLabels: string[];
+}
+
+export interface EasyApplyReviewDiagnostics {
+  validationMessages: string[];
+  blockingFields: Array<{
+    fieldKey: string;
+    label: string;
+    validationMessage?: string | null;
+    currentValue?: string | null;
+    required: boolean;
+  }>;
+  buttonStates: Array<{
+    action: "next" | "review" | "submit";
+    visible: boolean;
+    disabled: boolean;
+    label: string | null;
+  }>;
 }
 
 export interface EasyApplyRunResult {
@@ -39,6 +64,7 @@ export interface EasyApplyRunResult {
   stopReason: string;
   url: string;
   externalApplyUrl?: string;
+  reviewDiagnostics?: EasyApplyReviewDiagnostics;
 }
 
 export interface EasyApplyJobEvaluation {
@@ -85,6 +111,8 @@ export interface EasyApplyDriver {
   collectVisibleJobs?(): Promise<EasyApplyCollectionJob[]>;
   collectVisibleJobUrls?(): Promise<string[]>;
   goToNextResultsPage(): Promise<boolean>;
+  collectStepState?(): Promise<EasyApplyStepStateSnapshot>;
+  collectReviewDiagnostics?(): Promise<EasyApplyReviewDiagnostics>;
   fillAnswer(
     question: EasyApplyQuestionView,
     resolved: ResolvedAnswer,
@@ -368,13 +396,6 @@ async function executeStep(args: {
   stepIndex: number;
 }): Promise<StepExecutionResult> {
   const questions = await args.input.driver.collectQuestions();
-  const stepSignature = JSON.stringify(
-    questions.map((question) => ({
-      key: question.fieldKey,
-      label: question.label,
-      required: question.required,
-    })),
-  );
   const answeredQuestions: EasyApplyAnsweredQuestion[] = [];
   let hasRequiredManualReview = false;
 
@@ -388,13 +409,24 @@ async function executeStep(args: {
       hasRequiredManualReview || prepared.hasRequiredManualReview;
   }
 
-  const action = await args.input.driver.getPrimaryAction();
+  const stateSnapshot = await args.input.driver.collectStepState?.();
+  const action = stateSnapshot?.primaryAction ?? await args.input.driver.getPrimaryAction();
+  const stepSignature = JSON.stringify({
+    questions: questions.map((question) => ({
+      key: question.fieldKey,
+      label: question.label,
+      required: question.required,
+    })),
+    stateSnapshot: stateSnapshot ?? null,
+    action,
+  });
 
   return {
     report: {
       stepIndex: args.stepIndex,
       questions: answeredQuestions,
       action,
+      ...(stateSnapshot ? { stateSnapshot } : {}),
     },
     hasRequiredManualReview,
     stepSignature,
@@ -461,6 +493,8 @@ async function runEasyApplyInternal(
 
     if (step.report.action === "review") {
       if (lastStepSignature === step.stepSignature) {
+        const reviewDiagnostics =
+          await input.driver.collectReviewDiagnostics?.();
         return {
           status: step.hasRequiredManualReview
             ? "stopped_manual_review"
@@ -470,6 +504,7 @@ async function runEasyApplyInternal(
             ? "Review step did not advance because required questions still need review or valid input."
             : "Review step repeated without advancing.",
           url: input.url,
+          ...(reviewDiagnostics ? { reviewDiagnostics } : {}),
         };
       }
 

@@ -3,6 +3,8 @@ import { ensureLinkedInAuthenticated } from "../adapters/LinkedInAdapter.js";
 import type {
   EasyApplyDriver,
   EasyApplyPrimaryAction,
+  EasyApplyReviewDiagnostics,
+  EasyApplyStepStateSnapshot,
   EasyApplyQuestionView,
 } from "./easyApply.js";
 import { chooseRadioValue } from "./easyApply.js";
@@ -265,6 +267,196 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
     await locator.click();
     await this.page.waitForTimeout(2_000);
     return true;
+  }
+
+  async collectStepState(): Promise<EasyApplyStepStateSnapshot> {
+    const dialog = this.page.locator(".jobs-easy-apply-modal, [role='dialog']").first();
+    const script = `
+      const normalize = (value) => (value ?? "").replace(/\\s+/g, " ").trim();
+      const buttons = Array.from(modal.querySelectorAll("button"));
+      const describeButton = (button) => ({
+        label: normalize(button.textContent),
+        ariaLabel: normalize(button.getAttribute("aria-label")).toLowerCase(),
+        text: normalize(button.textContent).toLowerCase(),
+        disabled: Boolean(button.disabled || button.getAttribute("aria-disabled") === "true"),
+      });
+      const buttonDetails = buttons.map(describeButton);
+      const findAction = () => {
+        if (buttonDetails.some((button) =>
+          button.ariaLabel.includes("submit application") || button.text === "submit application"
+        )) {
+          return "submit";
+        }
+        if (buttonDetails.some((button) =>
+          button.ariaLabel.includes("review your application") || button.text === "review"
+        )) {
+          return "review";
+        }
+        if (buttonDetails.some((button) =>
+          button.ariaLabel.includes("continue to next step") || button.text === "next"
+        )) {
+          return "next";
+        }
+        return "unknown";
+      };
+
+      const titleCandidates = [
+        ".jobs-easy-apply-modal__header h2",
+        ".jobs-easy-apply-modal__header h3",
+        "h1",
+        "h2",
+      ];
+      const headingCandidates = [
+        ".jobs-easy-apply-content__title",
+        ".jobs-easy-apply-repeatable-groupings__groupings h3",
+        ".jobs-easy-apply-form-section__grouping h3",
+        ".ph5 h3",
+        "h3",
+        "legend",
+      ];
+
+      const findText = (selectors) => {
+        for (const selector of selectors) {
+          const element = modal.querySelector(selector);
+          const text = normalize(element && element.textContent);
+          if (text) {
+            return text;
+          }
+        }
+        return null;
+      };
+
+      return {
+        modalTitle: findText(titleCandidates),
+        headingText: findText(headingCandidates),
+        primaryAction: findAction(),
+        buttonLabels: buttonDetails.map((button) => button.label).filter(Boolean),
+      };
+    `;
+
+    return dialog.evaluate(
+      (modal, source) => new Function("modal", source)(modal),
+      script,
+    );
+  }
+
+  async collectReviewDiagnostics(): Promise<EasyApplyReviewDiagnostics> {
+    const dialog = this.page.locator(".jobs-easy-apply-modal, [role='dialog']").first();
+    const script = `
+      const normalize = (value) => (value ?? "").replace(/\\s+/g, " ").trim();
+      const getLabel = (modal, element) => {
+        const id = element.getAttribute("id");
+        const byFor = id ? modal.querySelector('label[for="' + id + '"]') : null;
+        const wrappingLabel = element.closest("label");
+        const fieldset = element.closest("fieldset");
+        const legend = fieldset ? fieldset.querySelector("legend") : null;
+        return normalize(
+          (byFor && byFor.textContent) ||
+            (wrappingLabel && wrappingLabel.textContent) ||
+            (legend && legend.textContent) ||
+            element.getAttribute("aria-label") ||
+            "",
+        );
+      };
+
+      const validationMessages = Array.from(
+        modal.querySelectorAll(
+          [
+            "[role='alert']",
+            ".artdeco-inline-feedback__message",
+            ".fb-form-element__error",
+            ".jobs-easy-apply-form-section__grouping .t-12.t-black--light",
+          ].join(", "),
+        ),
+      ).map((element) => normalize(element.textContent)).filter(Boolean);
+
+      const blockingFields = Array.from(modal.querySelectorAll("input, textarea, select"))
+        .map((element) => {
+          const validationMessage = normalize(
+            "validationMessage" in element ? element.validationMessage : "",
+          );
+          const currentValue =
+            element.tagName === "SELECT"
+              ? normalize(element.selectedOptions[0] ? element.selectedOptions[0].textContent : "")
+              : normalize(element.value);
+          const required =
+            element.required || element.getAttribute("aria-required") === "true";
+          const invalid =
+            element.getAttribute("aria-invalid") === "true" || Boolean(validationMessage);
+
+          if (!required && !invalid) {
+            return null;
+          }
+
+          return {
+            fieldKey: element.getAttribute("data-job-tool-field-key") || "",
+            label: getLabel(modal, element),
+            validationMessage: validationMessage || null,
+            currentValue: currentValue || null,
+            required,
+          };
+        })
+        .filter(Boolean);
+
+      const buttons = Array.from(modal.querySelectorAll("button"));
+      const findButton = (matcher) => buttons.find((button) => matcher(button)) || null;
+      const buttonStates = [
+        {
+          action: "next",
+          button: findButton((button) => {
+            const ariaLabel = normalize(button.getAttribute("aria-label")).toLowerCase();
+            const text = normalize(button.textContent).toLowerCase();
+            return (
+              button.hasAttribute("data-live-test-easy-apply-next-button") ||
+              button.hasAttribute("data-easy-apply-next-button") ||
+              ariaLabel.includes("continue to next step") ||
+              text === "next"
+            );
+          }),
+        },
+        {
+          action: "review",
+          button: findButton((button) => {
+            const ariaLabel = normalize(button.getAttribute("aria-label")).toLowerCase();
+            const text = normalize(button.textContent).toLowerCase();
+            return (
+              button.hasAttribute("data-live-test-easy-apply-review-button") ||
+              ariaLabel.includes("review your application") ||
+              text === "review"
+            );
+          }),
+        },
+        {
+          action: "submit",
+          button: findButton((button) => {
+            const ariaLabel = normalize(button.getAttribute("aria-label")).toLowerCase();
+            const text = normalize(button.textContent).toLowerCase();
+            return (
+              button.hasAttribute("data-live-test-easy-apply-submit-button") ||
+              ariaLabel.includes("submit application") ||
+              text === "submit application"
+            );
+          }),
+        },
+      ].map(({ action, button }) => ({
+        action,
+        visible: Boolean(button),
+        disabled: Boolean(button && (button.disabled || button.getAttribute("aria-disabled") === "true")),
+        label: button ? normalize(button.textContent) || null : null,
+      }));
+
+      return {
+        validationMessages,
+        blockingFields,
+        buttonStates,
+      };
+    `;
+    const diagnostics = await dialog.evaluate(
+      (modal, source) => new Function("modal", source)(modal),
+      script,
+    );
+
+    return diagnostics;
   }
 
   async fillAnswer(

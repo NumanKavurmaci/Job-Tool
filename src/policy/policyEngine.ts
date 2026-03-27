@@ -18,6 +18,21 @@ function includesAny(haystack: string, needles: string[]): string | null {
   return null;
 }
 
+function includesAllowedHybridLocation(
+  location: string | null,
+  allowedHybridLocations: string[],
+): string | null {
+  const normalizedLocation = (location ?? "").toLowerCase();
+
+  for (const allowedLocation of allowedHybridLocations) {
+    if (normalizedLocation.includes(allowedLocation.toLowerCase())) {
+      return allowedLocation;
+    }
+  }
+
+  return null;
+}
+
 export function evaluatePolicy(
   job: NormalizedJob,
   profile: CandidateProfile,
@@ -40,15 +55,21 @@ export function evaluatePolicy(
     reasons.push(`Location excluded by profile: ${excludedLocation}.`);
   }
 
-  if (
-    (job.location ?? "").toLowerCase().includes("istanbul") &&
-    job.remoteType === "onsite"
-  ) {
-    reasons.push("Istanbul onsite roles are blocked by policy.");
+  if (job.remoteType === "onsite") {
+    reasons.push("On-site roles are blocked by profile.");
   }
 
-  if (profile.remoteOnly && job.remoteType !== "remote" && job.remoteType !== "unknown") {
-    reasons.push("Only remote roles are allowed by profile.");
+  if (job.remoteType === "hybrid") {
+    const allowedHybridLocation = includesAllowedHybridLocation(
+      job.location,
+      profile.allowedHybridLocations,
+    );
+
+    if (!allowedHybridLocation) {
+      reasons.push(
+        `Hybrid roles are only allowed in: ${profile.allowedHybridLocations.join(", ")}.`,
+      );
+    }
   }
 
   if (profile.visaRequirement === "required" && job.visaSponsorship === "no") {

@@ -183,6 +183,57 @@ describe("normalizeParsedJob", () => {
     expect(result.seniority).toBe("mid");
   });
 
+  it("does not infer staff from company category wording like staffing and recruiting", () => {
+    const result = normalizeParsedJob(
+      {
+        title: "Software Engineer (Fullstack)",
+        company: "Crossing Hurdles",
+        location: "Remote",
+        platform: "linkedin",
+        seniority: null,
+        mustHaveSkills: ["Python", "React"],
+        niceToHaveSkills: [],
+        technologies: ["Python", "React"],
+        yearsRequired: null,
+        remoteType: "Remote",
+        visaSponsorship: null,
+        workAuthorization: null,
+      },
+      {
+        rawText: [
+          "Title: Software Engineer (Fullstack)",
+          "Company: Crossing Hurdles",
+          "Location: Remote",
+          "Description:",
+          "Position: Fullstack Developer (Python/React)",
+          "Role Responsibilities",
+          "Build backend APIs using Python and FastAPI.",
+          "Requirements",
+          "Strong experience with React and TypeScript.",
+          "About the company",
+          "Crossing Hurdles",
+          "Staffing and Recruiting",
+        ].join("\n"),
+        title: "Software Engineer (Fullstack)",
+        company: "Crossing Hurdles",
+        location: "Remote",
+        platform: "linkedin",
+        applicationType: "easy_apply",
+        applyUrl: "https://www.linkedin.com/jobs/view/4386852533/",
+        currentUrl: "https://www.linkedin.com/jobs/view/4386852533/",
+        descriptionText: [
+          "Position: Fullstack Developer (Python/React)",
+          "Role Responsibilities",
+          "Build backend APIs using Python and FastAPI.",
+        ].join("\n"),
+        requirementsText: "Strong experience with React and TypeScript.",
+        benefitsText: null,
+      },
+    );
+
+    expect(result.seniority).toBe("mid");
+  });
+
   it("does not infer intern from unrelated words in the body", () => {
     const result = normalizeParsedJob(
       {

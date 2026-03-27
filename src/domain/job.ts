@@ -148,6 +148,12 @@ function canonicalizeSeniority(
   return "unknown";
 }
 
+function hasStaffRoleMarker(value: string): boolean {
+  return /\bstaff\s+(engineer|developer|software engineer|backend engineer|frontend engineer|fullstack engineer|full stack engineer|platform engineer)\b/i.test(
+    value,
+  );
+}
+
 function inferSeniorityFromText(
   title: string | null | undefined,
   values: Array<string | null | undefined>,
@@ -163,7 +169,7 @@ function inferSeniorityFromText(
     return "principal";
   }
 
-  if (normalized.includes("staff")) {
+  if (hasStaffRoleMarker(normalizedTitle) || hasStaffRoleMarker(normalized)) {
     return "staff";
   }
 

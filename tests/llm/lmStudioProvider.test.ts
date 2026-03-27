@@ -4,6 +4,7 @@ vi.mock("../../src/config/env.js", () => ({
   env: {
     LOCAL_LLM_BASE_URL: "http://127.0.0.1:1234/v1",
     LOCAL_LLM_MODEL: "openai/gpt-oss-20b",
+    LOCAL_LLM_TIMEOUT_MS: 120000,
   },
 }));
 
@@ -42,6 +43,7 @@ describe("LMStudioProvider", () => {
       expect.objectContaining({
         method: "POST",
         body: expect.stringContaining('"model":"openai/gpt-oss-20b"'),
+        signal: expect.any(AbortSignal),
       }),
     );
     expect(result).toEqual({
@@ -59,6 +61,19 @@ describe("LMStudioProvider", () => {
 
     await expect(provider.parseJob({ prompt: "Prompt text" })).rejects.toThrow(
       "Failed to reach LM Studio",
+    );
+  });
+
+  it("uses the configured timeout by default", async () => {
+    global.fetch = vi.fn().mockRejectedValue(
+      Object.assign(new Error("timeout"), { name: "TimeoutError" }),
+    ) as typeof fetch;
+
+    const { LMStudioProvider } = await import("../../src/llm/providers/lmStudioProvider.js");
+    const provider = new LMStudioProvider();
+
+    await expect(provider.parseJob({ prompt: "Prompt text" })).rejects.toThrow(
+      "Local LLM request timed out after 120000ms.",
     );
   });
 

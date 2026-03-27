@@ -26,6 +26,7 @@ import { AppError } from "./utils/errors.js";
 import { scoreJob } from "./scoring/scoreJob.js";
 import { getErrorMessage, serializeError } from "./utils/errors.js";
 import { logger } from "./utils/logger.js";
+import { formatBatchTerminalSummary, writeRunReport } from "./utils/runReports.js";
 
 export const PARSE_VERSION = "phase-5";
 export const DEFAULT_LINKEDIN_EASY_APPLY_URL =
@@ -76,17 +77,53 @@ export const appDeps = {
       await import("./linkedin/playwrightEasyApplyDriver.js");
     return new PlaywrightLinkedInEasyApplyDriver(page as Page);
   },
+  writeRunReport,
   logger,
   exit: (code: number) => process.exit(code),
 };
 
+function renderCliSummary(result: Awaited<ReturnType<typeof main>>): string | null {
+  if (!("easyApply" in result)) {
+    return null;
+  }
+
+  if ("jobs" in result.easyApply) {
+    const reportPath =
+      "reportPath" in result && typeof result.reportPath === "string"
+        ? result.reportPath
+        : undefined;
+
+    return formatBatchTerminalSummary({
+      label:
+        result.mode === "easy-apply-batch"
+          ? "LinkedIn Easy Apply batch"
+          : "LinkedIn Easy Apply dry run",
+      status: result.easyApply.status,
+      requestedCount: result.easyApply.requestedCount,
+      attemptedCount: result.easyApply.attemptedCount,
+      evaluatedCount: result.easyApply.evaluatedCount,
+      skippedCount: result.easyApply.skippedCount,
+      pagesVisited: result.easyApply.pagesVisited,
+      stopReason: result.easyApply.stopReason,
+      ...(reportPath ? { reportPath } : {}),
+    });
+  }
+
+  return [
+    `LinkedIn Easy Apply finished`,
+    `Status: ${result.easyApply.status}`,
+    `Steps: ${result.easyApply.steps.length}`,
+    `Reason: ${result.easyApply.stopReason}`,
+  ].join("\n") + "\n";
+}
+
 export type CliArgs =
   | { mode: "score" | "decide"; url: string }
   | { mode: "easy-apply"; url: string; resumePath: string }
-  | {
-      mode: "easy-apply-batch";
-      url: string;
-      resumePath: string;
+      | {
+          mode: "easy-apply-batch";
+          url: string;
+          resumePath: string;
       count: number;
       disableAiEvaluation: boolean;
       scoreThreshold: number;
@@ -207,7 +244,7 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
     const resumePath = getFlag("--resume") ?? DEFAULT_RESUME_PATH;
     const positionalArgs = getPositionalTailArgs();
     const countFromFlag = getIntegerFlag("--count");
-    const scoreThreshold = getIntegerFlag("--score-threshold") ?? 75;
+    const scoreThreshold = getIntegerFlag("--score-threshold") ?? 60;
     const disableAiEvaluation = hasFlag("--disable-ai-evaluation");
     const trailingPositional = positionalArgs.at(-1);
     const positionalCount =
@@ -267,7 +304,7 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
     const resumePath = getFlag("--resume") ?? DEFAULT_RESUME_PATH;
     const positionalArgs = getPositionalTailArgs();
     const countFromFlag = getIntegerFlag("--count");
-    const scoreThreshold = getIntegerFlag("--score-threshold") ?? 75;
+    const scoreThreshold = getIntegerFlag("--score-threshold") ?? 60;
     const disableAiEvaluation = hasFlag("--disable-ai-evaluation");
     const trailingPositional = positionalArgs.at(-1);
     const positionalCount =
@@ -653,6 +690,7 @@ async function runEasyApplyDryRunFlow(
   });
 
   let result;
+  let reportPath: string | undefined;
   try {
     result = await deps.withPage(
       LINKEDIN_BROWSER_SESSION_OPTIONS,
@@ -711,14 +749,32 @@ async function runEasyApplyDryRunFlow(
           status: result.status,
           stepCount: result.steps.length,
           stopReason: result.stopReason,
+          ...(result.reviewDiagnostics
+            ? { reviewDiagnostics: result.reviewDiagnostics }
+            : {}),
         },
     "LinkedIn Easy Apply dry run finished",
   );
+
+  if ("jobs" in result) {
+    reportPath = await deps.writeRunReport({
+      category: "batch-runs",
+      prefix: "easy-apply-dry-run",
+      payload: {
+        mode: args.mode,
+        url: args.url,
+        disableAiEvaluation: args.disableAiEvaluation,
+        scoreThreshold: args.scoreThreshold,
+        result,
+      },
+    });
+  }
 
   return {
     mode: args.mode,
     profile,
     easyApply: result,
+    ...(reportPath ? { reportPath } : {}),
   };
 }
 
@@ -730,6 +786,7 @@ async function runEasyApplyFlow(
   const resolveCandidateAnswer = createCandidateAnswerResolver(profile, deps);
 
   let result;
+  let reportPath: string | undefined;
   try {
     result = await deps.withPage(
       LINKEDIN_BROWSER_SESSION_OPTIONS,
@@ -766,6 +823,9 @@ async function runEasyApplyFlow(
       status: result.status,
       stepCount: result.steps.length,
       stopReason: result.stopReason,
+      ...(result.reviewDiagnostics
+        ? { reviewDiagnostics: result.reviewDiagnostics }
+        : {}),
       ...(result.externalApplyUrl
         ? { externalApplyUrl: result.externalApplyUrl }
         : {}),
@@ -795,6 +855,7 @@ async function runEasyApplyBatchFlow(
   });
 
   let result;
+  let reportPath: string;
   try {
     result = await deps.withPage(
       LINKEDIN_BROWSER_SESSION_OPTIONS,
@@ -843,10 +904,23 @@ async function runEasyApplyBatchFlow(
     "LinkedIn Easy Apply batch finished",
   );
 
+  reportPath = await deps.writeRunReport({
+    category: "batch-runs",
+    prefix: "easy-apply-batch",
+    payload: {
+      mode: args.mode,
+      url: args.url,
+      disableAiEvaluation: args.disableAiEvaluation,
+      scoreThreshold: args.scoreThreshold,
+      result,
+    },
+  });
+
   return {
     mode: args.mode,
     profile,
     easyApply: result,
+    reportPath,
   };
 }
 
@@ -888,7 +962,11 @@ export async function main(cliArgs = process.argv.slice(2), deps = appDeps) {
 
 export async function runCli(deps = appDeps): Promise<void> {
   try {
-    await main(undefined, deps);
+    const result = await main(undefined, deps);
+    const summary = renderCliSummary(result);
+    if (summary) {
+      process.stdout.write(summary);
+    }
   } catch (error: unknown) {
     deps.logger.error(
       {
