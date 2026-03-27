@@ -2,9 +2,10 @@ import { performance } from "node:perf_hooks";
 import { withPage } from "./browser/playwright.js";
 import { prisma } from "./db/client.js";
 import { normalizeParsedJob } from "./domain/job.js";
+import { parseJob } from "./llm/parseJob.js";
+import { getConfiguredProviderInfo } from "./llm/providers/resolveProvider.js";
 import { extractJobText } from "./parser/extractJobText.js";
 import { formatJobForLLM } from "./parser/formatJobForLLM.js";
-import { parseJobWithLLM } from "./parser/parseJobWithLLM.js";
 import { evaluatePolicy } from "./policy/policyEngine.js";
 import { loadCandidateProfile } from "./profile/candidate.js";
 import { decideJob } from "./scoring/decision.js";
@@ -18,7 +19,8 @@ export const appDeps = {
   prisma,
   extractJobText,
   formatJobForLLM,
-  parseJobWithLLM,
+  parseJob,
+  getConfiguredProviderInfo,
   normalizeParsedJob,
   loadCandidateProfile,
   scoreJob,
@@ -61,7 +63,15 @@ export async function main(
   const { mode, url } = Array.isArray(cliArgs)
     ? parseCliArgs(cliArgs)
     : parseCliArgs([cliArgs]);
+  const llmProviderInfo = deps.getConfiguredProviderInfo();
 
+  deps.logger.info(
+    {
+      provider: llmProviderInfo.provider,
+      model: llmProviderInfo.model,
+    },
+    `Using LLM provider: ${llmProviderInfo.provider} (${llmProviderInfo.model})`,
+  );
   deps.logger.info({ url }, "Starting job fetch");
   const profile = await deps.loadCandidateProfile();
 
@@ -81,7 +91,8 @@ export async function main(
   );
 
   const llmInput = deps.formatJobForLLM(extracted);
-  const parsed = await deps.parseJobWithLLM(llmInput);
+  const parseResult = await deps.parseJob(llmInput);
+  const parsed = parseResult.parsed;
   const normalized = deps.normalizeParsedJob(parsed, extracted);
   const score = deps.scoreJob(normalized, profile);
   const policy = deps.evaluatePolicy(normalized, profile);
@@ -89,7 +100,15 @@ export async function main(
   const finalDecision = policy.allowed ? decision.decision : "SKIP";
   const finalReasons = policy.allowed ? [decision.reason] : policy.reasons;
 
-  deps.logger.info({ parsed, normalized }, "Job parsed and normalized");
+  deps.logger.info(
+    {
+      parsed,
+      normalized,
+      provider: parseResult.provider,
+      model: parseResult.model,
+    },
+    "Job parsed and normalized",
+  );
   deps.logger.info({ breakdown: score.breakdown, totalScore: score.totalScore }, "Job scored");
   deps.logger.info(
     { policyAllowed: policy.allowed, policyReasons: policy.reasons },

@@ -1,0 +1,74 @@
+import { env } from "../../config/env.js";
+import type { LlmParseResponse, LlmProvider, ParseJobRequest } from "../types.js";
+
+type LmStudioResponse = {
+  choices?: Array<{
+    message?: {
+      content?: string | null;
+    };
+  }>;
+};
+
+export class LMStudioProvider implements LlmProvider {
+  name = "local" as const;
+  private readonly baseUrl: string;
+  private readonly model: string;
+  private readonly timeoutMs: number;
+
+  constructor(
+    baseUrl = env.LOCAL_LLM_BASE_URL ?? "",
+    model = env.LOCAL_LLM_MODEL ?? "",
+    timeoutMs = 30_000,
+  ) {
+    this.baseUrl = baseUrl.replace(/\/$/, "");
+    this.model = model;
+    this.timeoutMs = timeoutMs;
+  }
+
+  async parseJob(request: ParseJobRequest): Promise<LlmParseResponse> {
+    let response: Response;
+
+    try {
+      response = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: this.model,
+          temperature: 0,
+          messages: [
+            {
+              role: "user",
+              content: request.prompt,
+            },
+          ],
+        }),
+        signal: AbortSignal.timeout(this.timeoutMs),
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error && error.name === "TimeoutError"
+          ? `Local LLM request timed out after ${this.timeoutMs}ms.`
+          : `Failed to reach LM Studio at ${this.baseUrl}.`;
+      throw new Error(message, { cause: error });
+    }
+
+    if (!response.ok) {
+      throw new Error(`LM Studio request failed with status ${response.status}.`);
+    }
+
+    const data = (await response.json()) as LmStudioResponse;
+    const text = data.choices?.[0]?.message?.content?.trim();
+
+    if (!text) {
+      throw new Error("LM Studio returned an empty response.");
+    }
+
+    return {
+      text,
+      provider: this.name,
+      model: this.model,
+    };
+  }
+}

@@ -1,61 +1,42 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const createMock = vi.fn();
+const parseJobMock = vi.fn();
 
-vi.mock("../../src/llm/client.js", () => ({
-  openai: {
-    responses: {
-      create: createMock,
-    },
-  },
+vi.mock("../../src/llm/parseJob.js", () => ({
+  parseJob: parseJobMock,
 }));
 
 describe("parseJobWithLLM", () => {
   beforeEach(() => {
-    createMock.mockReset();
+    vi.resetModules();
+    parseJobMock.mockReset();
   });
 
-  it("sends a prompt to OpenAI and parses the JSON response", async () => {
-    createMock.mockResolvedValue({
-      output_text: JSON.stringify({
+  it("acts as a compatibility wrapper over the shared parseJob orchestration", async () => {
+    parseJobMock.mockResolvedValue({
+      parsed: {
         title: "Backend Engineer",
         company: "Acme",
         location: "Remote",
-        platform: "greenhouse",
-        seniority: "Senior",
+        platform: "generic",
+        seniority: "Mid",
         mustHaveSkills: ["TypeScript"],
-        niceToHaveSkills: ["Prisma"],
-        technologies: ["TypeScript", "Node.js"],
-        yearsRequired: 5,
+        niceToHaveSkills: [],
+        technologies: ["TypeScript"],
+        yearsRequired: 3,
         remoteType: "Remote",
         visaSponsorship: "yes",
         workAuthorization: "authorized",
-      }),
-    });
-
-    const { parseJobWithLLM } = await import("../../src/parser/parseJobWithLLM.js");
-    const result = await parseJobWithLLM("Title: Backend Engineer");
-
-    expect(createMock).toHaveBeenCalledTimes(1);
-    expect(createMock.mock.calls[0]?.[0]).toMatchObject({
+      },
+      provider: "openai",
       model: "gpt-4.1-mini",
-    });
-    expect(result.mustHaveSkills).toEqual(["TypeScript"]);
-    expect(result.niceToHaveSkills).toEqual(["Prisma"]);
-    expect(result.technologies).toEqual(["TypeScript", "Node.js"]);
-    expect(result.yearsRequired).toBe(5);
-  });
-
-  it("fails on invalid JSON schema", async () => {
-    createMock.mockResolvedValue({
-      output_text: JSON.stringify({
-        title: "Backend Engineer",
-        mustHaveSkills: "TypeScript",
-      }),
+      rawText: '{"title":"Backend Engineer"}',
     });
 
     const { parseJobWithLLM } = await import("../../src/parser/parseJobWithLLM.js");
+    const result = await parseJobWithLLM("Formatted job text");
 
-    await expect(parseJobWithLLM("Title: Backend Engineer")).rejects.toThrow();
+    expect(parseJobMock).toHaveBeenCalledWith("Formatted job text");
+    expect(result.title).toBe("Backend Engineer");
   });
 });
