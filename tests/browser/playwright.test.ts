@@ -8,10 +8,12 @@ const storageStateMock = vi.fn();
 const newContextMock = vi.fn();
 const closeMock = vi.fn();
 const launchMock = vi.fn();
+const launchPersistentContextMock = vi.fn();
 
 vi.mock("@playwright/test", () => ({
   chromium: {
     launch: launchMock,
+    launchPersistentContext: launchPersistentContextMock,
   },
 }));
 
@@ -22,6 +24,7 @@ describe("withPage", () => {
     newContextMock.mockReset();
     closeMock.mockReset();
     launchMock.mockReset();
+    launchPersistentContextMock.mockReset();
   });
 
   it("opens a browser, creates a page, and closes it after success", async () => {
@@ -80,6 +83,43 @@ describe("withPage", () => {
       expect(storageStateMock).toHaveBeenCalledWith({
         path: storageStatePath,
       });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses a persistent browser profile when requested", async () => {
+    const page = { id: "page" };
+    const persistentContext = {
+      newPage: newPageMock.mockResolvedValue(page),
+      storageState: storageStateMock.mockResolvedValue(undefined),
+      browser: vi.fn().mockReturnValue(null),
+      close: closeMock.mockResolvedValue(undefined),
+    };
+    const dir = mkdtempSync(join(tmpdir(), "job-tool-profile-"));
+    const storageStatePath = join(dir, "linkedin-session.json");
+    const persistentProfilePath = join(dir, "linkedin-profile");
+    launchPersistentContextMock.mockResolvedValue(persistentContext);
+
+    const { withPage } = await import("../../src/browser/playwright.js");
+    try {
+      await withPage(
+        {
+          persistentProfilePath,
+          storageStatePath,
+          persistStorageState: true,
+        },
+        async () => "done",
+      );
+
+      expect(launchPersistentContextMock).toHaveBeenCalledWith(persistentProfilePath, {
+        headless: false,
+      });
+      expect(launchMock).not.toHaveBeenCalled();
+      expect(storageStateMock).toHaveBeenCalledWith({
+        path: storageStatePath,
+      });
+      expect(closeMock).toHaveBeenCalledTimes(1);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

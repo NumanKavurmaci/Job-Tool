@@ -28,6 +28,8 @@ export function createEnv() {
   const LINKEDIN_PASSWORD = optional("LINKEDIN_PASSWORD");
   const LINKEDIN_SESSION_STATE_PATH =
     optional("LINKEDIN_SESSION_STATE_PATH") ?? ".auth/linkedin-session.json";
+  const LINKEDIN_BROWSER_PROFILE_PATH =
+    optional("LINKEDIN_BROWSER_PROFILE_PATH") ?? ".auth/linkedin-profile";
 
   if (LLM_PROVIDER !== "openai" && LLM_PROVIDER !== "local") {
     throw new Error(`Unsupported LLM_PROVIDER: ${LLM_PROVIDER}`);
@@ -60,9 +62,10 @@ export function createEnv() {
     LOCAL_LLM_BASE_URL,
     LOCAL_LLM_MODEL,
     DATABASE_URL,
-    LINKEDIN_USERNAME,
-    LINKEDIN_PASSWORD,
-    LINKEDIN_SESSION_STATE_PATH,
+      LINKEDIN_USERNAME,
+      LINKEDIN_PASSWORD,
+      LINKEDIN_SESSION_STATE_PATH,
+      LINKEDIN_BROWSER_PROFILE_PATH,
   };
 }
 

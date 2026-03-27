@@ -27,6 +27,7 @@ describe("env config", () => {
       LINKEDIN_USERNAME: "user@example.com",
       LINKEDIN_PASSWORD: "secret",
       LINKEDIN_SESSION_STATE_PATH: ".auth/linkedin-session.json",
+      LINKEDIN_BROWSER_PROFILE_PATH: ".auth/linkedin-profile",
     });
   });
 
@@ -51,6 +52,7 @@ describe("env config", () => {
       LINKEDIN_USERNAME: undefined,
       LINKEDIN_PASSWORD: undefined,
       LINKEDIN_SESSION_STATE_PATH: ".auth/linkedin-session.json",
+      LINKEDIN_BROWSER_PROFILE_PATH: ".auth/linkedin-profile",
     });
   });
 

@@ -637,6 +637,7 @@ describe("phase 5 index flows", () => {
     );
     expect(mocks.withPageMock).toHaveBeenCalledWith(
       expect.objectContaining({
+        persistentProfilePath: ".auth/linkedin-profile",
         storageStatePath: ".auth/linkedin-session.json",
         persistStorageState: true,
       }),

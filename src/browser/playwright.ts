@@ -1,11 +1,48 @@
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import { chromium, type Browser, type Page } from "@playwright/test";
+import { chromium, type Browser, type BrowserContext, type Page } from "@playwright/test";
 
 export interface BrowserSessionOptions {
+  persistentProfilePath?: string;
   storageStatePath?: string;
   persistStorageState?: boolean;
+}
+
+interface BrowserRuntime {
+  browser: Browser | null;
+  context: BrowserContext;
+  close: () => Promise<void>;
+}
+
+async function createBrowserRuntime(
+  options: BrowserSessionOptions,
+): Promise<BrowserRuntime> {
+  if (options.persistentProfilePath) {
+    await mkdir(options.persistentProfilePath, { recursive: true });
+    const context = await chromium.launchPersistentContext(options.persistentProfilePath, {
+      headless: false,
+    });
+
+    return {
+      browser: context.browser(),
+      context,
+      close: async () => context.close(),
+    };
+  }
+
+  const browser = await chromium.launch({ headless: false });
+  const context = await browser.newContext({
+    ...(options.storageStatePath && existsSync(options.storageStatePath)
+      ? { storageState: options.storageStatePath }
+      : {}),
+  });
+
+  return {
+    browser,
+    context,
+    close: async () => browser.close(),
+  };
 }
 
 export async function withPage<T>(
@@ -19,21 +56,16 @@ export async function withPage<T>(
     throw new Error("withPage requires a page callback.");
   }
 
-  const browser = await chromium.launch({ headless: false });
-  const context = await browser.newContext({
-    ...(options.storageStatePath && existsSync(options.storageStatePath)
-      ? { storageState: options.storageStatePath }
-      : {}),
-  });
-  const page = await context.newPage();
+  const runtime = await createBrowserRuntime(options);
+  const page = await runtime.context.newPage();
 
   try {
-    return await fn(page, browser);
+    return await fn(page, runtime.browser as Browser);
   } finally {
     if (options.persistStorageState && options.storageStatePath) {
       await mkdir(dirname(options.storageStatePath), { recursive: true });
-      await context.storageState({ path: options.storageStatePath });
+      await runtime.context.storageState({ path: options.storageStatePath });
     }
-    await browser.close();
+    await runtime.close();
   }
 }
