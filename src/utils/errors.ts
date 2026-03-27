@@ -10,6 +10,7 @@ export interface SerializableError {
 export type AppErrorPhase =
   | "cli"
   | "config"
+  | "browser"
   | "resume"
   | "linkedin_auth"
   | "linkedin_easy_apply"

@@ -109,6 +109,15 @@ $env:LOCAL_LLM_MODEL='openai/gpt-oss-20b'
 npm run dev -- easy-apply-dry-run "https://www.linkedin.com/jobs/collections/easy-apply" 10
 ```
 
+Run a batch run against a specific LinkedIn collection URL:
+
+```powershell
+$env:LLM_PROVIDER='local'
+$env:LOCAL_LLM_BASE_URL='http://127.0.0.1:1234/v1'
+$env:LOCAL_LLM_MODEL='openai/gpt-oss-20b'
+npm run dev -- easy-apply "https://www.linkedin.com/jobs/collections/easy-apply" 10
+```
+
 ## Print Full Dry Run JSON
 
 Use this when you want the full result object in the terminal:

@@ -5,7 +5,9 @@ import {
   isManualReviewAnswer,
   isSubmitButtonLabel,
   runEasyApply,
+  runEasyApplyBatch,
   runEasyApplyBatchDryRun,
+  runEasyApplyBatchInternal,
   runEasyApplyDryRun,
 } from "../../src/linkedin/easyApply.js";
 
@@ -883,6 +885,154 @@ describe("runEasyApplyBatchDryRun", () => {
     expect(result.jobs[0]?.evaluation.reason).toContain("already");
     expect(evaluateJob).toHaveBeenCalledTimes(1);
     expect(evaluateJob).toHaveBeenCalledWith("https://www.linkedin.com/jobs/view/2");
+  });
+});
+
+describe("runEasyApplyBatch", () => {
+  it("submits approved jobs in batch mode", async () => {
+    const driver = {
+      open: vi.fn(),
+      openCollection: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn().mockResolvedValue([]),
+      collectVisibleJobUrls: vi.fn().mockResolvedValue([
+        "https://www.linkedin.com/jobs/view/1",
+        "https://www.linkedin.com/jobs/view/2",
+      ]),
+      goToNextResultsPage: vi.fn().mockResolvedValue(false),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn().mockResolvedValue("submit"),
+      advance: vi.fn(),
+      dismissCompletionModal: vi.fn().mockResolvedValue(true),
+    };
+
+    const result = await runEasyApplyBatch({
+      driver,
+      url: "https://www.linkedin.com/jobs/collections/easy-apply",
+      targetCount: 2,
+      candidateProfile: profile,
+      evaluateJob: async () => ({
+        shouldApply: true,
+        finalDecision: "APPLY",
+        score: 82,
+        reason: "Strong fit.",
+        policyAllowed: true,
+      }),
+      resolveAnswer: async () => ({
+        questionType: "contact_info",
+        strategy: "deterministic",
+        answer: "123",
+        confidence: 0.95,
+        confidenceLabel: "high",
+        source: "candidate-profile",
+      }),
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.jobs[0]?.result?.status).toBe("submitted");
+    expect(result.jobs[1]?.result?.status).toBe("submitted");
+    expect(driver.advance).toHaveBeenCalledWith("submit");
+    expect(driver.dismissCompletionModal).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("runEasyApplyBatchInternal", () => {
+  it("uses submit mode to return submitted results for approved jobs", async () => {
+    const driver = {
+      open: vi.fn(),
+      openCollection: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn().mockResolvedValue([]),
+      collectVisibleJobs: vi.fn().mockResolvedValue([
+        { url: "https://www.linkedin.com/jobs/view/1", alreadyApplied: false },
+      ]),
+      goToNextResultsPage: vi.fn().mockResolvedValue(false),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn().mockResolvedValue("submit"),
+      advance: vi.fn(),
+      dismissCompletionModal: vi.fn().mockResolvedValue(true),
+    };
+
+    const result = await runEasyApplyBatchInternal(
+      {
+        driver,
+        url: "https://www.linkedin.com/jobs/collections/easy-apply",
+        targetCount: 1,
+        candidateProfile: profile,
+        evaluateJob: async () => ({
+          shouldApply: true,
+          finalDecision: "APPLY",
+          score: 90,
+          reason: "Excellent fit.",
+          policyAllowed: true,
+        }),
+        resolveAnswer: async () => ({
+          questionType: "contact_info",
+          strategy: "deterministic",
+          answer: "123",
+          confidence: 0.95,
+          confidenceLabel: "high",
+          source: "candidate-profile",
+        }),
+      },
+      "submit",
+    );
+
+    expect(result.status).toBe("completed");
+    expect(result.attemptedCount).toBe(1);
+    expect(result.jobs[0]?.result?.status).toBe("submitted");
+  });
+
+  it("uses dry-run mode to stop at ready_to_submit for approved jobs", async () => {
+    const driver = {
+      open: vi.fn(),
+      openCollection: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn().mockResolvedValue([]),
+      collectVisibleJobs: vi.fn().mockResolvedValue([
+        { url: "https://www.linkedin.com/jobs/view/1", alreadyApplied: false },
+      ]),
+      goToNextResultsPage: vi.fn().mockResolvedValue(false),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn().mockResolvedValue("submit"),
+      advance: vi.fn(),
+      dismissCompletionModal: vi.fn(),
+    };
+
+    const result = await runEasyApplyBatchInternal(
+      {
+        driver,
+        url: "https://www.linkedin.com/jobs/collections/easy-apply",
+        targetCount: 1,
+        candidateProfile: profile,
+        evaluateJob: async () => ({
+          shouldApply: true,
+          finalDecision: "APPLY",
+          score: 90,
+          reason: "Excellent fit.",
+          policyAllowed: true,
+        }),
+        resolveAnswer: async () => ({
+          questionType: "contact_info",
+          strategy: "deterministic",
+          answer: "123",
+          confidence: 0.95,
+          confidenceLabel: "high",
+          source: "candidate-profile",
+        }),
+      },
+      "dry-run",
+    );
+
+    expect(result.status).toBe("completed");
+    expect(result.jobs[0]?.result?.status).toBe("ready_to_submit");
+    expect(driver.advance).not.toHaveBeenCalledWith("submit");
   });
 });
 

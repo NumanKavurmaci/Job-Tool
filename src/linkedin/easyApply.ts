@@ -105,6 +105,19 @@ interface EasyApplyRunInput {
   maxSteps?: number;
 }
 
+export interface EasyApplyBatchRunInput {
+  driver: EasyApplyDriver;
+  url: string;
+  targetCount: number;
+  candidateProfile: CandidateProfile;
+  evaluateJob: (url: string) => Promise<EasyApplyJobEvaluation>;
+  resolveAnswer: (args: {
+    question: InputQuestion;
+    candidateProfile: CandidateProfile;
+  }) => Promise<ResolvedAnswer>;
+  maxSteps?: number;
+}
+
 interface PreparedStepQuestionResult {
   answeredQuestion: EasyApplyAnsweredQuestion;
   hasRequiredManualReview: boolean;
@@ -345,7 +358,10 @@ async function runEasyApplyInternal(
   await input.driver.ensureAuthenticated(input.url);
   await input.driver.open(input.url);
 
-  const unavailableResult = await stopIfApplyUnavailable(input.driver, input.url);
+  const unavailableResult = await stopIfApplyUnavailable(
+    input.driver,
+    input.url,
+  );
   if (unavailableResult) {
     return unavailableResult;
   }
@@ -447,18 +463,10 @@ export async function runEasyApplyDryRun(
   return runEasyApplyInternal(input, "dry-run");
 }
 
-export async function runEasyApplyBatchDryRun(input: {
-  driver: EasyApplyDriver;
-  url: string;
-  targetCount: number;
-  candidateProfile: CandidateProfile;
-  evaluateJob: (url: string) => Promise<EasyApplyJobEvaluation>;
-  resolveAnswer: (args: {
-    question: InputQuestion;
-    candidateProfile: CandidateProfile;
-  }) => Promise<ResolvedAnswer>;
-  maxSteps?: number;
-}): Promise<EasyApplyBatchRunResult> {
+export async function runEasyApplyBatchInternal(
+  input: EasyApplyBatchRunInput,
+  submitMode: SubmitMode,
+): Promise<EasyApplyBatchRunResult> {
   const requestedCount = Math.max(1, Math.floor(input.targetCount));
   const seenUrls = new Set<string>();
   const jobs: EasyApplyBatchJobResult[] = [];
@@ -477,6 +485,7 @@ export async function runEasyApplyBatchDryRun(input: {
           url,
           alreadyApplied: false,
         }));
+
     for (const job of visibleJobs) {
       const { url, alreadyApplied } = job;
       if (seenUrls.has(url)) {
@@ -546,13 +555,16 @@ export async function runEasyApplyBatchDryRun(input: {
   for (const url of approvedUrls) {
     let result: EasyApplyRunResult;
     try {
-      result = await runEasyApplyDryRun({
-        driver: input.driver,
-        url,
-        candidateProfile: input.candidateProfile,
-        resolveAnswer: input.resolveAnswer,
-        ...(input.maxSteps ? { maxSteps: input.maxSteps } : {}),
-      });
+      result = await runEasyApplyInternal(
+        {
+          driver: input.driver,
+          url,
+          candidateProfile: input.candidateProfile,
+          resolveAnswer: input.resolveAnswer,
+          ...(input.maxSteps ? { maxSteps: input.maxSteps } : {}),
+        },
+        submitMode,
+      );
     } catch (error) {
       result = {
         status: "stopped_unknown_action",
@@ -588,6 +600,17 @@ export async function runEasyApplyBatchDryRun(input: {
   };
 }
 
+export async function runEasyApplyBatchDryRun(
+  input: EasyApplyBatchRunInput,
+): Promise<EasyApplyBatchRunResult> {
+  return runEasyApplyBatchInternal(input, "dry-run");
+}
+
+export async function runEasyApplyBatch(
+  input: EasyApplyBatchRunInput,
+): Promise<EasyApplyBatchRunResult> {
+  return runEasyApplyBatchInternal(input, "submit");
+}
 export async function runEasyApply(
   input: EasyApplyRunInput,
 ): Promise<EasyApplyRunResult> {
