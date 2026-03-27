@@ -150,4 +150,45 @@ describe("buildMasterProfile", () => {
 
     expect(normalizeResumeMock).toHaveBeenCalled();
   });
+
+  it("stores an absolute resume path as a portable workspace-relative path in metadata", async () => {
+    extractResumeTextMock.mockResolvedValue("resume text");
+    parseResumeMock.mockResolvedValue({ fullName: "Jane Doe" });
+    normalizeResumeMock.mockReturnValue({
+      fullName: "Jane Doe",
+      preferredRoles: [],
+      preferredTechStack: [],
+      languages: [],
+      experienceOverrides: {},
+      salaryExpectations: {
+        usd: null,
+        eur: null,
+        try: null,
+      },
+      salaryExpectation: null,
+      gpa: null,
+      remotePreference: null,
+      remoteOnly: false,
+      disability: {
+        hasVisualDisability: false,
+        disabilityPercentage: null,
+        requiresAccommodation: null,
+        accommodationNotes: null,
+        disclosurePreference: "manual-review",
+      },
+    });
+
+    const { buildMasterProfile } = await import("../../src/candidate/buildMasterProfile.js");
+    await buildMasterProfile({
+      resumePath: `${process.cwd()}\\Numan Kavurmacı March 2026 CV Resume.pdf`,
+    });
+
+    expect(normalizeResumeMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "resume text",
+      expect.objectContaining({
+        resumePath: "Numan Kavurmacı March 2026 CV Resume.pdf",
+      }),
+    );
+  });
 });

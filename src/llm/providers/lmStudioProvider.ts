@@ -1,4 +1,5 @@
 import { env } from "../../config/env.js";
+import { AppError } from "../../utils/errors.js";
 import type { LlmParseResponse, LlmProvider, ParseJobRequest } from "../types.js";
 
 type LmStudioResponse = {
@@ -51,18 +52,34 @@ export class LMStudioProvider implements LlmProvider {
         error instanceof Error && error.name === "TimeoutError"
           ? `Local LLM request timed out after ${this.timeoutMs}ms.`
           : `Failed to reach LM Studio at ${this.baseUrl}.`;
-      throw new Error(message, { cause: error });
+      throw new AppError({
+        message,
+        phase: "llm",
+        code: "LLM_PROVIDER_UNREACHABLE",
+        cause: error,
+        details: { provider: this.name, baseUrl: this.baseUrl },
+      });
     }
 
     if (!response.ok) {
-      throw new Error(`LM Studio request failed with status ${response.status}.`);
+      throw new AppError({
+        message: `LM Studio request failed with status ${response.status}.`,
+        phase: "llm",
+        code: "LLM_PROVIDER_HTTP_ERROR",
+        details: { provider: this.name, status: response.status },
+      });
     }
 
     const data = (await response.json()) as LmStudioResponse;
     const text = data.choices?.[0]?.message?.content?.trim();
 
     if (!text) {
-      throw new Error("LM Studio returned an empty response.");
+      throw new AppError({
+        message: "LM Studio returned an empty response.",
+        phase: "llm",
+        code: "LLM_EMPTY_RESPONSE",
+        details: { provider: this.name },
+      });
     }
 
     return {

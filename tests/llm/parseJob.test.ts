@@ -64,9 +64,12 @@ describe("parseJob orchestration", () => {
 
     const { parseJob } = await import("../../src/llm/parseJob.js");
 
-    await expect(parseJob("Title: Backend Engineer")).rejects.toThrow(
-      "returned invalid JSON",
-    );
+    await expect(parseJob("Title: Backend Engineer")).rejects.toMatchObject({
+      name: "AppError",
+      phase: "llm",
+      code: "LLM_INVALID_JSON",
+      message: expect.stringContaining("returned invalid JSON"),
+    });
     expect(errorMock).toHaveBeenCalled();
   });
 
@@ -110,9 +113,12 @@ describe("parseJob orchestration", () => {
 
     const { parseJob } = await import("../../src/llm/parseJob.js");
 
-    await expect(parseJob("Title: Backend Engineer")).rejects.toThrow(
-      "failed schema validation",
-    );
+    await expect(parseJob("Title: Backend Engineer")).rejects.toMatchObject({
+      name: "AppError",
+      phase: "llm",
+      code: "LLM_SCHEMA_VALIDATION_FAILED",
+      message: expect.stringContaining("failed schema validation"),
+    });
     expect(errorMock).toHaveBeenCalled();
   });
 
@@ -125,9 +131,12 @@ describe("parseJob orchestration", () => {
 
     const { parseJob } = await import("../../src/llm/parseJob.js");
 
-    await expect(parseJob("Title: Backend Engineer")).rejects.toThrow(
-      "empty response",
-    );
+    await expect(parseJob("Title: Backend Engineer")).rejects.toMatchObject({
+      name: "AppError",
+      phase: "llm",
+      code: "LLM_EMPTY_RESPONSE",
+      message: expect.stringContaining("empty response"),
+    });
     expect(errorMock).toHaveBeenCalled();
   });
 });

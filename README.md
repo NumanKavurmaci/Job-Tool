@@ -90,4 +90,4 @@ The default suite does not require LM Studio or OpenAI access.
 
 ## Documentation
 
-Detailed project notes, architecture, workflows, provider setup, and troubleshooting are in [PROJECT_DETAILS.md](./PROJECT_DETAILS.md).
+Detailed project notes, architecture, workflows, provider setup, and troubleshooting are in `PROJECT_DETAILS.md`.

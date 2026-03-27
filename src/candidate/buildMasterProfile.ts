@@ -1,3 +1,4 @@
+import path from "node:path";
 import { normalizeLinkedinUrl } from "./linkedin.js";
 import { loadCandidateProfile } from "../profile/candidate.js";
 import { extractResumeText } from "./resume/extractResumeText.js";
@@ -30,11 +31,14 @@ export async function buildMasterProfile(input: {
   linkedinUrl?: string;
 }): Promise<CandidateProfile> {
   const linkedinUrl = normalizeLinkedinUrl(input.linkedinUrl);
+  const resumePathForMetadata = path.isAbsolute(input.resumePath)
+    ? path.relative(process.cwd(), input.resumePath) || path.basename(input.resumePath)
+    : input.resumePath;
   const manualProfile = await loadCandidateProfile();
   const resumeText = await extractResumeText(input.resumePath);
   const parsed = await parseResume(resumeText);
   const normalized = normalizeResume(parsed, resumeText, {
-    resumePath: input.resumePath,
+    resumePath: resumePathForMetadata,
     ...(linkedinUrl ? { linkedinUrl } : {}),
   });
 

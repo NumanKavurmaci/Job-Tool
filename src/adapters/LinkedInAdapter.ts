@@ -1,5 +1,6 @@
 import type { Page } from "@playwright/test";
 import { env } from "../config/env.js";
+import { AppError } from "../utils/errors.js";
 import type { ExtractedJobContent, JobAdapter } from "./types.js";
 import {
   compactText,
@@ -199,9 +200,11 @@ export async function ensureLinkedInAuthenticated(page: Page, url: string): Prom
     }
 
     if (!env.LINKEDIN_USERNAME || !env.LINKEDIN_PASSWORD) {
-      throw new Error(
-        "LinkedIn job pages require authentication. Set LINKEDIN_USERNAME and LINKEDIN_PASSWORD to continue.",
-      );
+      throw new AppError({
+        message: "LinkedIn job pages require authentication. Set LINKEDIN_USERNAME and LINKEDIN_PASSWORD to continue.",
+        phase: "linkedin_auth",
+        code: "LINKEDIN_CREDENTIALS_MISSING",
+      });
     }
 
     let usernameInput = await waitForLocator(page, LINKEDIN_USERNAME_SELECTORS, 5_000);
@@ -217,9 +220,12 @@ export async function ensureLinkedInAuthenticated(page: Page, url: string): Prom
     const submitButton = page.locator("button[type='submit']").first();
 
     if (!usernameInput || !passwordInput) {
-      throw new Error(
-        `LinkedIn login form was not detected. url=${page.url()} title=${await page.title()}`,
-      );
+      throw new AppError({
+        message: "LinkedIn login form was not detected.",
+        phase: "linkedin_auth",
+        code: "LINKEDIN_LOGIN_FORM_NOT_FOUND",
+        details: { url: page.url(), title: await page.title() },
+      });
     }
 
     await usernameInput.fill(env.LINKEDIN_USERNAME);
@@ -229,8 +235,11 @@ export async function ensureLinkedInAuthenticated(page: Page, url: string): Prom
     await gotoJobPage(page, url);
 
     if (await isLinkedInSignInWall(page)) {
-      throw new Error(
-        "LinkedIn authentication did not unlock the job page. The session may need manual verification.",
-      );
+      throw new AppError({
+        message: "LinkedIn authentication did not unlock the job page. The session may need manual verification.",
+        phase: "linkedin_auth",
+        code: "LINKEDIN_AUTHENTICATION_FAILED",
+        details: { url: page.url(), title: await page.title() },
+      });
     }
   }

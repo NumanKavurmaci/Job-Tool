@@ -180,7 +180,10 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
         await locator.click({ force: true });
       } catch {
         await locator.evaluate((element) => {
-          const input = element as HTMLInputElement;
+          const input = element as {
+            checked?: boolean;
+            dispatchEvent: (event: Event) => boolean;
+          };
           input.checked = true;
           input.dispatchEvent(new Event("input", { bubbles: true }));
           input.dispatchEvent(new Event("change", { bubbles: true }));

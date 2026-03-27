@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { env } from "../../config/env.js";
+import { AppError } from "../../utils/errors.js";
 import type { LlmParseResponse, LlmProvider, ParseJobRequest } from "../types.js";
 
 export class OpenAIProvider implements LlmProvider {
@@ -16,10 +17,21 @@ export class OpenAIProvider implements LlmProvider {
   }
 
   async parseJob(request: ParseJobRequest): Promise<LlmParseResponse> {
-    const response = await this.client.responses.create({
-      model: this.model,
-      input: request.prompt,
-    });
+    let response;
+    try {
+      response = await this.client.responses.create({
+        model: this.model,
+        input: request.prompt,
+      });
+    } catch (error) {
+      throw new AppError({
+        message: "OpenAI request failed.",
+        phase: "llm",
+        code: "LLM_PROVIDER_REQUEST_FAILED",
+        cause: error,
+        details: { provider: this.name, model: this.model },
+      });
+    }
 
     return {
       text: response.output_text?.trim() ?? "",

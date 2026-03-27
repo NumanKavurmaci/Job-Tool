@@ -1,4 +1,5 @@
 import { ZodError } from "zod";
+import { AppError, ensureAppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
 import { parseJsonResponse } from "./json.js";
 import { buildParseJobPrompt } from "./prompts.js";
@@ -38,17 +39,25 @@ export async function parseJob(formattedJobText: string): Promise<ParseJobResult
     const durationMs = Date.now() - startedAt;
 
     if (!response.text.trim()) {
-      throw new Error("The LLM provider returned an empty response.");
+      throw new AppError({
+        message: "The LLM provider returned an empty response.",
+        phase: "llm",
+        code: "LLM_EMPTY_RESPONSE",
+        details: { provider: response.provider, model: response.model },
+      });
     }
 
     let parsedJson: unknown;
     try {
       parsedJson = parseJsonResponse(response.text);
     } catch (error) {
-      throw new Error(
-        `The ${response.provider} provider returned invalid JSON.`,
-        { cause: error },
-      );
+      throw new AppError({
+        message: `The ${response.provider} provider returned invalid JSON.`,
+        phase: "llm",
+        code: "LLM_INVALID_JSON",
+        cause: error,
+        details: { provider: response.provider, model: response.model },
+      });
     }
 
     let parsed: ParsedJob;
@@ -66,10 +75,13 @@ export async function parseJob(formattedJobText: string): Promise<ParseJobResult
           },
           "LLM response failed schema validation",
         );
-        throw new Error(
-          `The ${response.provider} provider returned JSON that failed schema validation: ${summarizeValidationError(error)}`,
-          { cause: error },
-        );
+        throw new AppError({
+          message: `The ${response.provider} provider returned JSON that failed schema validation: ${summarizeValidationError(error)}`,
+          phase: "llm",
+          code: "LLM_SCHEMA_VALIDATION_FAILED",
+          cause: error,
+          details: { provider: response.provider, model: response.model },
+        });
       }
 
       throw error;
@@ -102,6 +114,11 @@ export async function parseJob(formattedJobText: string): Promise<ParseJobResult
       },
       "LLM parse failed",
     );
-    throw error;
+    throw ensureAppError(error, {
+      message: "LLM parse failed.",
+      phase: "llm",
+      code: "LLM_PARSE_FAILED",
+      details: { provider: provider.name },
+    });
   }
 }

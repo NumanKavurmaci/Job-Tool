@@ -75,4 +75,11 @@ describe("extractResumeText", () => {
     const { extractResumeText } = await import("../../src/candidate/resume/extractResumeText.js");
     await expect(extractResumeText("resume.csv")).rejects.toThrow("Unsupported resume format");
   });
+
+  it("returns a clear error when the resume file does not exist", async () => {
+    const { extractResumeText } = await import("../../src/candidate/resume/extractResumeText.js");
+    await expect(extractResumeText("missing-resume.pdf")).rejects.toThrow(
+      "Resume file was not found: missing-resume.pdf",
+    );
+  });
 });

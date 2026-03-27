@@ -15,7 +15,9 @@ import { evaluatePolicy } from "./policy/policyEngine.js";
 import { loadCandidateProfile } from "./profile/candidate.js";
 import type { InputQuestion } from "./questions/types.js";
 import { decideJob } from "./scoring/decision.js";
+import { AppError } from "./utils/errors.js";
 import { scoreJob } from "./scoring/scoreJob.js";
+import { getErrorMessage, serializeError } from "./utils/errors.js";
 import { logger } from "./utils/logger.js";
 
 export const PARSE_VERSION = "phase-5";
@@ -23,8 +25,10 @@ export const DEFAULT_LINKEDIN_EASY_APPLY_URL =
   "https://www.linkedin.com/jobs/collections/easy-apply";
 
 function findDefaultResumePath(): string | undefined {
-  const match = readdirSync(process.cwd()).find((entry) => /CV Resume\.pdf$/i.test(entry));
-  return match ? `${process.cwd()}\\${match}` : undefined;
+  const match = readdirSync(process.cwd()).find((entry) =>
+    /CV Resume\.pdf$/i.test(entry),
+  );
+  return match;
 }
 
 const DEFAULT_RESUME_PATH = findDefaultResumePath();
@@ -45,9 +49,8 @@ export const appDeps = {
   decideJob,
   runEasyApplyDryRun,
   createEasyApplyDriver: async (page: unknown) => {
-    const { PlaywrightLinkedInEasyApplyDriver } = await import(
-      "./linkedin/playwrightEasyApplyDriver.js"
-    );
+    const { PlaywrightLinkedInEasyApplyDriver } =
+      await import("./linkedin/playwrightEasyApplyDriver.js");
     return new PlaywrightLinkedInEasyApplyDriver(
       page as Parameters<Parameters<typeof withPage>[0]>[0],
     );
@@ -58,6 +61,7 @@ export const appDeps = {
 
 export type CliArgs =
   | { mode: "score" | "decide"; url: string }
+  | { mode: "easy-apply-dry-run"; url: string; resumePath: string }
   | { mode: "easy-apply-dry-run"; url: string; resumePath: string }
   | {
       mode: "build-profile";
@@ -86,7 +90,9 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
   }
 
   if (first === "build-profile") {
-    const resumePath = (second === "--resume" ? rest[0] : getFlag("--resume")) ?? DEFAULT_RESUME_PATH;
+    const resumePath =
+      (second === "--resume" ? rest[0] : getFlag("--resume")) ??
+      DEFAULT_RESUME_PATH;
     const linkedinUrl = getFlag("--linkedin");
 
     if (!resumePath) {
@@ -101,7 +107,9 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
   }
 
   if (first === "answer-questions") {
-    const resumePath = (second === "--resume" ? rest[0] : getFlag("--resume")) ?? DEFAULT_RESUME_PATH;
+    const resumePath =
+      (second === "--resume" ? rest[0] : getFlag("--resume")) ??
+      DEFAULT_RESUME_PATH;
     const linkedinUrl = getFlag("--linkedin");
     const questionsPath = getFlag("--questions");
 
@@ -122,13 +130,19 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
   }
 
   if (first === "easy-apply-dry-run") {
-    const resumePath = (second === "--resume" ? rest[0] : getFlag("--resume")) ?? DEFAULT_RESUME_PATH;
-    const url = second && !second.startsWith("--")
-      ? second
-      : rest.find((value) => !value.startsWith("--")) ?? DEFAULT_LINKEDIN_EASY_APPLY_URL;
+    const resumePath =
+      (second === "--resume" ? rest[0] : getFlag("--resume")) ??
+      DEFAULT_RESUME_PATH;
+    const url =
+      second && !second.startsWith("--")
+        ? second
+        : (rest.find((value) => !value.startsWith("--")) ??
+          DEFAULT_LINKEDIN_EASY_APPLY_URL);
 
     if (!resumePath) {
-      throw new Error("--resume is required for easy-apply-dry-run when no default CV is available.");
+      throw new Error(
+        "--resume is required for easy-apply-dry-run when no default CV is available.",
+      );
     }
 
     return {
@@ -159,7 +173,9 @@ async function runJobFlow(
   deps.logger.info({ url }, "Starting job fetch");
   const profile = await deps.loadCandidateProfile();
 
-  const extracted = await deps.withPage(async (page) => deps.extractJobText(page, url));
+  const extracted = await deps.withPage(async (page) =>
+    deps.extractJobText(page, url),
+  );
 
   deps.logger.info(
     {
@@ -191,46 +207,61 @@ async function runJobFlow(
     },
     "Job parsed and normalized",
   );
-  deps.logger.info({ breakdown: score.breakdown, totalScore: score.totalScore }, "Job scored");
+  deps.logger.info(
+    { breakdown: score.breakdown, totalScore: score.totalScore },
+    "Job scored",
+  );
   deps.logger.info(
     { policyAllowed: policy.allowed, policyReasons: policy.reasons },
     "Policy evaluated",
   );
 
-  const saved = await deps.prisma.jobPosting.upsert({
-    where: { url },
-    update: {
-      rawText: extracted.rawText,
-      title: parsed.title ?? extracted.title,
-      company: parsed.company ?? extracted.company,
-      location: parsed.location ?? extracted.location,
-      platform: parsed.platform ?? extracted.platform,
-      parsedJson: JSON.stringify(parsed),
-      normalizedJson: JSON.stringify(normalized),
-      parseVersion: PARSE_VERSION,
-    },
-    create: {
-      url,
-      rawText: extracted.rawText,
-      title: parsed.title ?? extracted.title,
-      company: parsed.company ?? extracted.company,
-      location: parsed.location ?? extracted.location,
-      platform: parsed.platform ?? extracted.platform,
-      parsedJson: JSON.stringify(parsed),
-      normalizedJson: JSON.stringify(normalized),
-      parseVersion: PARSE_VERSION,
-    },
-  });
+  let saved;
+  let savedDecision;
+  try {
+    saved = await deps.prisma.jobPosting.upsert({
+      where: { url },
+      update: {
+        rawText: extracted.rawText,
+        title: parsed.title ?? extracted.title,
+        company: parsed.company ?? extracted.company,
+        location: parsed.location ?? extracted.location,
+        platform: parsed.platform ?? extracted.platform,
+        parsedJson: JSON.stringify(parsed),
+        normalizedJson: JSON.stringify(normalized),
+        parseVersion: PARSE_VERSION,
+      },
+      create: {
+        url,
+        rawText: extracted.rawText,
+        title: parsed.title ?? extracted.title,
+        company: parsed.company ?? extracted.company,
+        location: parsed.location ?? extracted.location,
+        platform: parsed.platform ?? extracted.platform,
+        parsedJson: JSON.stringify(parsed),
+        normalizedJson: JSON.stringify(normalized),
+        parseVersion: PARSE_VERSION,
+      },
+    });
 
-  const savedDecision = await deps.prisma.applicationDecision.create({
-    data: {
-      jobPostingId: saved.id,
-      score: score.totalScore,
-      decision: finalDecision,
-      policyAllowed: policy.allowed,
-      reasons: JSON.stringify(finalReasons),
-    },
-  });
+    savedDecision = await deps.prisma.applicationDecision.create({
+      data: {
+        jobPostingId: saved.id,
+        score: score.totalScore,
+        decision: finalDecision,
+        policyAllowed: policy.allowed,
+        reasons: JSON.stringify(finalReasons),
+      },
+    });
+  } catch (error) {
+    throw new AppError({
+      message: "Failed to save job analysis to the database.",
+      phase: "database",
+      code: "DATABASE_WRITE_FAILED",
+      cause: error,
+      details: { url },
+    });
+  }
 
   return {
     mode,
@@ -254,14 +285,24 @@ async function runBuildProfileFlow(
     ...(args.linkedinUrl ? { linkedinUrl: args.linkedinUrl } : {}),
   });
 
-  const snapshot = await deps.prisma.candidateProfileSnapshot.create({
-    data: {
-      fullName: profile.fullName,
-      linkedinUrl: profile.linkedinUrl,
-      resumePath: profile.sourceMetadata.resumePath ?? null,
-      profileJson: JSON.stringify(profile),
-    },
-  });
+  let snapshot;
+  try {
+    snapshot = await deps.prisma.candidateProfileSnapshot.create({
+      data: {
+        fullName: profile.fullName,
+        linkedinUrl: profile.linkedinUrl,
+        resumePath: profile.sourceMetadata.resumePath ?? null,
+        profileJson: JSON.stringify(profile),
+      },
+    });
+  } catch (error) {
+    throw new AppError({
+      message: "Failed to save candidate profile snapshot to the database.",
+      phase: "database",
+      code: "DATABASE_CANDIDATE_SNAPSHOT_FAILED",
+      cause: error,
+    });
+  }
 
   deps.logger.info(
     {
@@ -288,16 +329,29 @@ async function runAnswerQuestionsFlow(
     ...(args.linkedinUrl ? { linkedinUrl: args.linkedinUrl } : {}),
   });
 
-  const snapshot = await deps.prisma.candidateProfileSnapshot.create({
-    data: {
-      fullName: profile.fullName,
-      linkedinUrl: profile.linkedinUrl,
-      resumePath: profile.sourceMetadata.resumePath ?? null,
-      profileJson: JSON.stringify(profile),
-    },
-  });
+  let snapshot;
+  let preparedAnswerSet;
+  try {
+    snapshot = await deps.prisma.candidateProfileSnapshot.create({
+      data: {
+        fullName: profile.fullName,
+        linkedinUrl: profile.linkedinUrl,
+        resumePath: profile.sourceMetadata.resumePath ?? null,
+        profileJson: JSON.stringify(profile),
+      },
+    });
+  } catch (error) {
+    throw new AppError({
+      message: "Failed to save candidate profile snapshot to the database.",
+      phase: "database",
+      code: "DATABASE_CANDIDATE_SNAPSHOT_FAILED",
+      cause: error,
+    });
+  }
 
-  const questions = JSON.parse(await readFile(args.questionsPath, "utf8")) as InputQuestion[];
+  const questions = JSON.parse(
+    await readFile(args.questionsPath, "utf8"),
+  ) as InputQuestion[];
   const answers = await Promise.all(
     questions.map(async (question) => ({
       question,
@@ -308,13 +362,22 @@ async function runAnswerQuestionsFlow(
     })),
   );
 
-  const preparedAnswerSet = await deps.prisma.preparedAnswerSet.create({
-    data: {
-      candidateProfileId: snapshot.id,
-      questionsJson: JSON.stringify(questions),
-      answersJson: JSON.stringify(answers),
-    },
-  });
+  try {
+    preparedAnswerSet = await deps.prisma.preparedAnswerSet.create({
+      data: {
+        candidateProfileId: snapshot.id,
+        questionsJson: JSON.stringify(questions),
+        answersJson: JSON.stringify(answers),
+      },
+    });
+  } catch (error) {
+    throw new AppError({
+      message: "Failed to save prepared answers to the database.",
+      phase: "database",
+      code: "DATABASE_PREPARED_ANSWERS_FAILED",
+      cause: error,
+    });
+  }
 
   deps.logger.info(
     {
@@ -341,15 +404,26 @@ async function runEasyApplyDryRunFlow(
     resumePath: args.resumePath,
   });
 
-  const result = await deps.withPage(async (page) =>
-    deps.runEasyApplyDryRun({
-      driver: await deps.createEasyApplyDriver(page),
-      url: args.url,
-      candidateProfile: profile,
-      resolveAnswer: ({ question, candidateProfile }) =>
-        deps.resolveAnswer({ question, candidateProfile }),
-    }),
-  );
+  let result;
+  try {
+    result = await deps.withPage(async (page) =>
+      deps.runEasyApplyDryRun({
+        driver: await deps.createEasyApplyDriver(page),
+        url: args.url,
+        candidateProfile: profile,
+        resolveAnswer: ({ question, candidateProfile }) =>
+          deps.resolveAnswer({ question, candidateProfile }),
+      }),
+    );
+  } catch (error) {
+    throw new AppError({
+      message: "LinkedIn Easy Apply flow failed.",
+      phase: "linkedin_easy_apply",
+      code: "LINKEDIN_EASY_APPLY_FAILED",
+      cause: error,
+      details: { url: args.url },
+    });
+  }
 
   deps.logger.info(
     {
@@ -369,7 +443,9 @@ async function runEasyApplyDryRunFlow(
 
 export async function main(cliArgs = process.argv.slice(2), deps = appDeps) {
   const startedAt = performance.now();
-  const args = Array.isArray(cliArgs) ? parseCliArgs(cliArgs) : parseCliArgs([cliArgs]);
+  const args = Array.isArray(cliArgs)
+    ? parseCliArgs(cliArgs)
+    : parseCliArgs([cliArgs]);
   const llmProviderInfo = deps.getConfiguredProviderInfo();
 
   deps.logger.info(
@@ -401,7 +477,14 @@ export async function runCli(deps = appDeps): Promise<void> {
   try {
     await main(undefined, deps);
   } catch (error: unknown) {
-    deps.logger.error(error);
+    deps.logger.error(
+      {
+        event: "cli.failed",
+        error: serializeError(error),
+      },
+      "CLI execution failed",
+    );
+    process.stderr.write(`Error: ${getErrorMessage(error)}\n`);
     deps.exit(1);
   } finally {
     await deps.prisma.$disconnect();

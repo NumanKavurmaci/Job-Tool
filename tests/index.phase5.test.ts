@@ -83,7 +83,25 @@ describe("phase 5 index flows", () => {
     );
 
     expect(result.snapshot.id).toBe("snapshot_1");
-    expect(mocks.createSnapshotMock).toHaveBeenCalled();
+    expect(mocks.createSnapshotMock).toHaveBeenCalledWith({
+      data: {
+        fullName: "Jane Doe",
+        linkedinUrl: "https://linkedin.com/in/jane",
+        resumePath: "./resume.txt",
+        profileJson: JSON.stringify({
+          fullName: "Jane Doe",
+          linkedinUrl: "https://linkedin.com/in/jane",
+          sourceMetadata: { resumePath: "./resume.txt" },
+        }),
+      },
+    });
+    expect(mocks.infoMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        candidateProfileSnapshotId: "snapshot_1",
+        fullName: "Jane Doe",
+      }),
+      "Candidate profile snapshot saved",
+    );
   });
 
   it("answers questions and saves a prepared answer set", async () => {
@@ -115,6 +133,32 @@ describe("phase 5 index flows", () => {
     expect(result.preparedAnswerSet.id).toBe("answers_1");
     expect(readFileMock).toHaveBeenCalledWith("./questions.json", "utf8");
     expect(mocks.resolveAnswerMock).toHaveBeenCalledTimes(1);
+    expect(mocks.createPreparedAnswerSetMock).toHaveBeenCalledWith({
+      data: {
+        candidateProfileId: "snapshot_1",
+        questionsJson: JSON.stringify([{ label: "LinkedIn Profile", inputType: "text" }]),
+        answersJson: JSON.stringify([
+          {
+            question: { label: "LinkedIn Profile", inputType: "text" },
+            resolved: {
+              questionType: "linkedin",
+              strategy: "deterministic",
+              answer: "https://linkedin.com/in/jane",
+              confidence: 0.98,
+              confidenceLabel: "high",
+              source: "candidate-profile",
+            },
+          },
+        ]),
+      },
+    });
+    expect(mocks.infoMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        preparedAnswerSetId: "answers_1",
+        answerCount: 1,
+      }),
+      "Prepared answer set saved",
+    );
   });
 
   it("parses build-profile and answer-questions CLI args", async () => {
@@ -209,5 +253,38 @@ describe("phase 5 index flows", () => {
     expect(result.easyApply.status).toBe("ready_to_submit");
     expect(mocks.createEasyApplyDriverMock).toHaveBeenCalled();
     expect(mocks.runEasyApplyDryRunMock).toHaveBeenCalled();
+    expect(mocks.infoMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "ready_to_submit",
+        stepCount: 0,
+      }),
+      "LinkedIn Easy Apply dry run finished",
+    );
+  });
+
+  it("wraps easy apply flow failures with a linkedin phase error", async () => {
+    const { module, mocks, deps } = await loadIndexModule();
+    mocks.loadCandidateMasterProfileMock.mockResolvedValue({
+      fullName: "Jane Doe",
+      linkedinUrl: "https://linkedin.com/in/jane",
+      sourceMetadata: { resumePath: "./resume.txt" },
+    });
+    mocks.createEasyApplyDriverMock.mockReturnValue({ driver: true });
+    mocks.withPageMock.mockImplementation(async (fn: (page: unknown) => Promise<unknown>) =>
+      fn({ fake: "page" }),
+    );
+    mocks.runEasyApplyDryRunMock.mockRejectedValue(new Error("login wall"));
+
+    await expect(
+      module.main(
+        ["easy-apply-dry-run", "https://www.linkedin.com/jobs/view/1", "--resume", "./resume.txt"],
+        deps,
+      ),
+    ).rejects.toMatchObject({
+      name: "AppError",
+      phase: "linkedin_easy_apply",
+      code: "LINKEDIN_EASY_APPLY_FAILED",
+      message: "LinkedIn Easy Apply flow failed.",
+    });
   });
 });
