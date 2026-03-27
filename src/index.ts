@@ -1,3 +1,4 @@
+import { readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import { resolveAnswer } from "./answers/resolveAnswer.js";
@@ -5,6 +6,7 @@ import { withPage } from "./browser/playwright.js";
 import { loadCandidateMasterProfile } from "./candidate/loadCandidateProfile.js";
 import { prisma } from "./db/client.js";
 import { normalizeParsedJob } from "./domain/job.js";
+import { runEasyApplyDryRun } from "./linkedin/easyApply.js";
 import { parseJob } from "./llm/parseJob.js";
 import { getConfiguredProviderInfo } from "./llm/providers/resolveProvider.js";
 import { extractJobText } from "./parser/extractJobText.js";
@@ -17,6 +19,13 @@ import { scoreJob } from "./scoring/scoreJob.js";
 import { logger } from "./utils/logger.js";
 
 export const PARSE_VERSION = "phase-5";
+
+function findDefaultResumePath(): string | undefined {
+  const match = readdirSync(process.cwd()).find((entry) => /CV Resume\.pdf$/i.test(entry));
+  return match ? `${process.cwd()}\\${match}` : undefined;
+}
+
+const DEFAULT_RESUME_PATH = findDefaultResumePath();
 
 export const appDeps = {
   withPage,
@@ -32,12 +41,22 @@ export const appDeps = {
   scoreJob,
   evaluatePolicy,
   decideJob,
+  runEasyApplyDryRun,
+  createEasyApplyDriver: async (page: unknown) => {
+    const { PlaywrightLinkedInEasyApplyDriver } = await import(
+      "./linkedin/playwrightEasyApplyDriver.js"
+    );
+    return new PlaywrightLinkedInEasyApplyDriver(
+      page as Parameters<Parameters<typeof withPage>[0]>[0],
+    );
+  },
   logger,
   exit: (code: number) => process.exit(code),
 };
 
 export type CliArgs =
   | { mode: "score" | "decide"; url: string }
+  | { mode: "easy-apply-dry-run"; url: string; resumePath: string }
   | {
       mode: "build-profile";
       resumePath: string;
@@ -60,12 +79,12 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
 
   if (!first) {
     throw new Error(
-      'Usage: npm run dev -- <job-url> | npm run dev -- score "<job-url>" | npm run dev -- decide "<job-url>" | npm run dev -- build-profile --resume "./cv.pdf" --linkedin "https://linkedin.com/in/..." | npm run dev -- answer-questions --resume "./cv.pdf" --linkedin "https://linkedin.com/in/..." --questions "./questions.json"',
+      'Usage: npm run dev -- <job-url> | npm run dev -- score "<job-url>" | npm run dev -- decide "<job-url>" | npm run dev -- build-profile --resume "./cv.pdf" --linkedin "https://linkedin.com/in/..." | npm run dev -- answer-questions --resume "./cv.pdf" --linkedin "https://linkedin.com/in/..." --questions "./questions.json" | npm run dev -- easy-apply-dry-run "<linkedin-job-url>"',
     );
   }
 
   if (first === "build-profile") {
-    const resumePath = second === "--resume" ? rest[0] : getFlag("--resume");
+    const resumePath = (second === "--resume" ? rest[0] : getFlag("--resume")) ?? DEFAULT_RESUME_PATH;
     const linkedinUrl = getFlag("--linkedin");
 
     if (!resumePath) {
@@ -80,7 +99,7 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
   }
 
   if (first === "answer-questions") {
-    const resumePath = second === "--resume" ? rest[0] : getFlag("--resume");
+    const resumePath = (second === "--resume" ? rest[0] : getFlag("--resume")) ?? DEFAULT_RESUME_PATH;
     const linkedinUrl = getFlag("--linkedin");
     const questionsPath = getFlag("--questions");
 
@@ -97,6 +116,27 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
       resumePath,
       ...(linkedinUrl ? { linkedinUrl } : {}),
       questionsPath,
+    };
+  }
+
+  if (first === "easy-apply-dry-run") {
+    const resumePath = (second === "--resume" ? rest[0] : getFlag("--resume")) ?? DEFAULT_RESUME_PATH;
+    const url = second && !second.startsWith("--")
+      ? second
+      : rest.find((value) => !value.startsWith("--"));
+
+    if (!url) {
+      throw new Error("--url or a LinkedIn job URL is required for easy-apply-dry-run.");
+    }
+
+    if (!resumePath) {
+      throw new Error("--resume is required for easy-apply-dry-run when no default CV is available.");
+    }
+
+    return {
+      mode: "easy-apply-dry-run",
+      url,
+      resumePath,
     };
   }
 
@@ -295,6 +335,40 @@ async function runAnswerQuestionsFlow(
   };
 }
 
+async function runEasyApplyDryRunFlow(
+  args: Extract<CliArgs, { mode: "easy-apply-dry-run" }>,
+  deps = appDeps,
+) {
+  const profile = await deps.loadCandidateMasterProfile({
+    resumePath: args.resumePath,
+  });
+
+  const result = await deps.withPage(async (page) =>
+    deps.runEasyApplyDryRun({
+      driver: await deps.createEasyApplyDriver(page),
+      url: args.url,
+      candidateProfile: profile,
+      resolveAnswer: ({ question, candidateProfile }) =>
+        deps.resolveAnswer({ question, candidateProfile }),
+    }),
+  );
+
+  deps.logger.info(
+    {
+      status: result.status,
+      stepCount: result.steps.length,
+      stopReason: result.stopReason,
+    },
+    "LinkedIn Easy Apply dry run finished",
+  );
+
+  return {
+    mode: args.mode,
+    profile,
+    easyApply: result,
+  };
+}
+
 export async function main(cliArgs = process.argv.slice(2), deps = appDeps) {
   const startedAt = performance.now();
   const args = Array.isArray(cliArgs) ? parseCliArgs(cliArgs) : parseCliArgs([cliArgs]);
@@ -313,6 +387,8 @@ export async function main(cliArgs = process.argv.slice(2), deps = appDeps) {
     result = await runBuildProfileFlow(args, deps);
   } else if (args.mode === "answer-questions") {
     result = await runAnswerQuestionsFlow(args, deps);
+  } else if (args.mode === "easy-apply-dry-run") {
+    result = await runEasyApplyDryRunFlow(args, deps);
   } else {
     result = await runJobFlow(args.mode, args.url, deps);
   }

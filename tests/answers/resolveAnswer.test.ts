@@ -15,16 +15,30 @@ const profile = {
   githubUrl: null,
   portfolioUrl: null,
   summary: "Backend engineer",
+  gpa: 2.4,
   yearsOfExperienceTotal: 4,
   currentTitle: "Backend Engineer",
   preferredRoles: ["Backend Engineer"],
   preferredTechStack: ["TypeScript", "React", "Node.js"],
   skills: ["TypeScript", "React", "Node.js"],
   languages: ["English"],
+  salaryExpectations: {
+    usd: "50000-60000 USD yearly",
+    eur: "3000-3500 EUR net monthly",
+    try: "120000-140000 TRY net monthly",
+  },
   workAuthorization: "EU",
   requiresSponsorship: false,
   willingToRelocate: true,
   remotePreference: "remote",
+  remoteOnly: true,
+  disability: {
+    hasVisualDisability: true,
+    disabilityPercentage: 46,
+    requiresAccommodation: null,
+    accommodationNotes: null,
+    disclosurePreference: "manual-review",
+  },
   education: [],
   experience: [
     {
@@ -107,6 +121,56 @@ describe("resolveAnswer", () => {
     expect(relocation.answer).toBe(true);
   });
 
+  it("returns deterministic answers for GPA questions", async () => {
+    const { resolveAnswer } = await import("../../src/answers/resolveAnswer.js");
+    const result = await resolveAnswer({
+      question: {
+        label: "What is your GPA?",
+        inputType: "text",
+      },
+      candidateProfile: profile,
+    });
+
+    expect(result.strategy).toBe("deterministic");
+    expect(result.answer).toBe("2.4");
+  });
+
+  it("returns deterministic answers for remote-only work arrangement questions", async () => {
+    const { resolveAnswer } = await import("../../src/answers/resolveAnswer.js");
+    const remote = await resolveAnswer({
+      question: {
+        label: "Are you comfortable working remotely?",
+        inputType: "radio",
+      },
+      candidateProfile: profile,
+    });
+
+    const hybrid = await resolveAnswer({
+      question: {
+        label: "Are you open to hybrid work?",
+        inputType: "radio",
+      },
+      candidateProfile: profile,
+    });
+
+    expect(remote.answer).toBe(true);
+    expect(hybrid.answer).toBe(false);
+  });
+
+  it("routes disability questions to manual review when disclosure is manual", async () => {
+    const { resolveAnswer } = await import("../../src/answers/resolveAnswer.js");
+    const result = await resolveAnswer({
+      question: {
+        label: "Do you identify as disabled or require accommodations?",
+        inputType: "radio",
+      },
+      candidateProfile: profile,
+    });
+
+    expect(result.strategy).toBe("needs-review");
+    expect(result.confidenceLabel).toBe("manual_review");
+  });
+
   it("returns resume-derived answers for skill years questions", async () => {
     const { resolveAnswer } = await import("../../src/answers/resolveAnswer.js");
     const result = await resolveAnswer({
@@ -142,9 +206,9 @@ describe("resolveAnswer", () => {
     expect(result.strategy).toBe("generated");
   });
 
-  it("routes salary questions to manual review", async () => {
+  it("returns deterministic answers for salary questions when the currency is configured", async () => {
     const { resolveAnswer } = await import("../../src/answers/resolveAnswer.js");
-    const result = await resolveAnswer({
+    const eurResult = await resolveAnswer({
       question: {
         label: "What is your salary expectation in EUR net after tax?",
         inputType: "text",
@@ -152,8 +216,46 @@ describe("resolveAnswer", () => {
       candidateProfile: profile,
     });
 
+    const usdResult = await resolveAnswer({
+      question: {
+        label: "What is your salary expectation in USD?",
+        inputType: "text",
+      },
+      candidateProfile: profile,
+    });
+
+    const tryResult = await resolveAnswer({
+      question: {
+        label: "What is your salary expectation in TL?",
+        inputType: "text",
+      },
+      candidateProfile: profile,
+    });
+
+    expect(eurResult.strategy).toBe("deterministic");
+    expect(eurResult.answer).toBe("3000-3500 EUR net monthly");
+    expect(usdResult.answer).toBe("50000-60000 USD yearly");
+    expect(tryResult.answer).toBe("120000-140000 TRY net monthly");
+  });
+
+  it("points back to candidate-profile.json when a required salary field is missing", async () => {
+    const { resolveAnswer } = await import("../../src/answers/resolveAnswer.js");
+    const result = await resolveAnswer({
+      question: {
+        label: "What is your salary expectation in EUR net after tax?",
+        inputType: "text",
+      },
+      candidateProfile: {
+        ...profile,
+        salaryExpectations: {
+          ...profile.salaryExpectations,
+          eur: null,
+        },
+      },
+    });
+
     expect(result.strategy).toBe("needs-review");
-    expect(result.confidenceLabel).toBe("manual_review");
+    expect(result.notes?.some((note) => note.includes("candidate-profile.json"))).toBe(true);
   });
 
   it("routes notice period questions to manual review", async () => {

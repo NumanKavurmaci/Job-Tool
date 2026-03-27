@@ -70,6 +70,34 @@ describe("parseJob orchestration", () => {
     expect(errorMock).toHaveBeenCalled();
   });
 
+  it("accepts fenced JSON from local providers", async () => {
+    parseJobMock.mockResolvedValue({
+      text: `\`\`\`json
+{
+  "title": "Backend Engineer",
+  "company": "Acme",
+  "location": "Remote",
+  "platform": "generic",
+  "seniority": "Mid",
+  "mustHaveSkills": ["TypeScript"],
+  "niceToHaveSkills": [],
+  "technologies": ["TypeScript"],
+  "yearsRequired": 3,
+  "remoteType": "Remote",
+  "visaSponsorship": "yes",
+  "workAuthorization": "authorized"
+}
+\`\`\``,
+      provider: "local",
+      model: "openai/gpt-oss-20b",
+    });
+
+    const { parseJob } = await import("../../src/llm/parseJob.js");
+    const result = await parseJob("Title: Backend Engineer");
+
+    expect(result.parsed.company).toBe("Acme");
+  });
+
   it("throws on schema validation errors", async () => {
     parseJobMock.mockResolvedValue({
       text: JSON.stringify({

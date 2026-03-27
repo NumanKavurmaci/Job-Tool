@@ -1,5 +1,6 @@
 import { ZodError } from "zod";
 import { logger } from "../utils/logger.js";
+import { parseJsonResponse } from "./json.js";
 import { buildParseJobPrompt } from "./prompts.js";
 import { resolveProvider } from "./providers/resolveProvider.js";
 import { ParsedJobSchema, type ParsedJob } from "./schema.js";
@@ -42,7 +43,7 @@ export async function parseJob(formattedJobText: string): Promise<ParseJobResult
 
     let parsedJson: unknown;
     try {
-      parsedJson = JSON.parse(response.text);
+      parsedJson = parseJsonResponse(response.text);
     } catch (error) {
       throw new Error(
         `The ${response.provider} provider returned invalid JSON.`,

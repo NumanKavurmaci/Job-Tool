@@ -29,10 +29,23 @@ describe("candidate profile loader", () => {
         preferredLocations: ["Remote"],
         excludedLocations: ["Istanbul onsite"],
         remotePreference: "remote",
+        remoteOnly: true,
         visaRequirement: "not-required",
         workAuthorizationStatus: "authorized",
         languages: ["English"],
+        salaryExpectations: {
+          usd: "50000-60000 USD yearly",
+          eur: "3000-3500 EUR net monthly",
+          try: "120000-140000 TRY net monthly",
+        },
         salaryExpectation: "100k+",
+        disability: {
+          hasVisualDisability: true,
+          disabilityPercentage: 46,
+          requiresAccommodation: null,
+          accommodationNotes: null,
+          disclosurePreference: "manual-review",
+        },
       }),
       "utf8",
     );
@@ -40,6 +53,9 @@ describe("candidate profile loader", () => {
     const profile = await loadCandidateProfile(profilePath);
     expect(profile.yearsOfExperience).toBe(5);
     expect(profile.preferredTechStack).toEqual(["TypeScript", "Node.js"]);
+    expect(profile.remoteOnly).toBe(true);
+    expect(profile.salaryExpectations.eur).toContain("EUR");
+    expect(profile.disability.hasVisualDisability).toBe(true);
   });
 
   it("throws for invalid profile JSON", async () => {

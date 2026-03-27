@@ -15,6 +15,7 @@ const profile = {
   githubUrl: null,
   portfolioUrl: null,
   summary: "Backend engineer",
+  gpa: 2.4,
   yearsOfExperienceTotal: 4,
   currentTitle: "Backend Engineer",
   preferredRoles: ["Backend Engineer"],
@@ -25,6 +26,14 @@ const profile = {
   requiresSponsorship: false,
   willingToRelocate: true,
   remotePreference: "remote",
+  remoteOnly: true,
+  disability: {
+    hasVisualDisability: true,
+    disabilityPercentage: 46,
+    requiresAccommodation: null,
+    accommodationNotes: null,
+    disclosurePreference: "manual-review",
+  },
   education: [
     {
       institution: "TU Berlin",
@@ -101,6 +110,20 @@ describe("question strategies", () => {
         profile,
       )?.answer,
     ).toBe("Berlin");
+
+    expect(
+      resolveDeterministicAnswer(
+        { type: "gpa", normalizedText: "what is your gpa", confidence: 0.9 },
+        profile,
+      )?.answer,
+    ).toBe("2.4");
+
+    expect(
+      resolveDeterministicAnswer(
+        { type: "remote_preference", normalizedText: "are you comfortable working remotely", confidence: 0.9 },
+        profile,
+      )?.answer,
+    ).toBe(true);
   });
 
   it("flags deterministic sponsorship as manual when unknown", async () => {
@@ -126,6 +149,71 @@ describe("question strategies", () => {
         profile,
       ),
     ).toBeNull();
+  });
+
+  it("routes accessibility questions to manual review by default", async () => {
+    const { resolveDeterministicAnswer } = await import(
+      "../../src/questions/strategies/deterministic.js"
+    );
+
+    const result = resolveDeterministicAnswer(
+      { type: "accessibility", normalizedText: "do you require reasonable accommodation", confidence: 0.9 },
+      profile,
+    );
+
+    expect(result?.strategy).toBe("needs-review");
+    expect(result?.confidenceLabel).toBe("manual_review");
+  });
+
+  it("returns prefer-not-to-say for accessibility questions when configured", async () => {
+    const { resolveDeterministicAnswer } = await import(
+      "../../src/questions/strategies/deterministic.js"
+    );
+
+    const result = resolveDeterministicAnswer(
+      { type: "accessibility", normalizedText: "do you identify as disabled", confidence: 0.9 },
+      {
+        ...profile,
+        disability: {
+          ...profile.disability,
+          disclosurePreference: "prefer-not-to-say",
+        },
+      },
+    );
+
+    expect(result?.answer).toBe("Prefer not to say");
+  });
+
+  it("returns disclosed accessibility answers when configured", async () => {
+    const { resolveDeterministicAnswer } = await import(
+      "../../src/questions/strategies/deterministic.js"
+    );
+
+    const disabilityResult = resolveDeterministicAnswer(
+      { type: "accessibility", normalizedText: "do you identify as disabled", confidence: 0.9 },
+      {
+        ...profile,
+        disability: {
+          ...profile.disability,
+          disclosurePreference: "disclose",
+        },
+      },
+    );
+
+    const accommodationResult = resolveDeterministicAnswer(
+      { type: "accessibility", normalizedText: "do you require reasonable accommodation", confidence: 0.9 },
+      {
+        ...profile,
+        disability: {
+          ...profile.disability,
+          disclosurePreference: "disclose",
+          requiresAccommodation: true,
+        },
+      },
+    );
+
+    expect(disabilityResult?.answer).toBe(true);
+    expect(accommodationResult?.answer).toBe(true);
   });
 
   it("resolves resume-aware answers for years, skills, and education", async () => {

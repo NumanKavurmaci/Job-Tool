@@ -70,6 +70,16 @@ function scoreSeniority(job: NormalizedJob, profile: CandidateProfile): number {
 function scoreLocation(job: NormalizedJob, profile: CandidateProfile): number {
   const location = `${job.location ?? ""} ${job.remoteType}`.toLowerCase();
 
+  if (profile.remoteOnly) {
+    if (job.remoteType === "remote") {
+      return 20;
+    }
+
+    if (job.remoteType === "hybrid" || job.remoteType === "onsite") {
+      return 0;
+    }
+  }
+
   if (profile.remotePreference === "remote") {
     if (job.remoteType === "remote") {
       return 20;

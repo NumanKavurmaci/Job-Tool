@@ -9,10 +9,18 @@ const profile = {
   preferredLocations: ["Remote", "Europe"],
   excludedLocations: ["Istanbul onsite"],
   remotePreference: "remote",
+  remoteOnly: true,
   visaRequirement: "not-required",
   workAuthorizationStatus: "authorized",
   languages: ["English"],
   salaryExpectation: "market",
+  disability: {
+    hasVisualDisability: true,
+    disabilityPercentage: 46,
+    requiresAccommodation: null,
+    accommodationNotes: null,
+    disclosurePreference: "manual-review",
+  },
 } as const;
 
 describe("scoreJob", () => {
@@ -150,6 +158,7 @@ describe("scoreJob", () => {
   });
 
   it("covers hybrid, onsite, and preferred-location scoring branches", () => {
+    const flexibleProfile = { ...profile, remoteOnly: false };
     const hybridResult = scoreJob(
       {
         title: "Backend Engineer",
@@ -166,7 +175,7 @@ describe("scoreJob", () => {
         workAuthorization: "authorized",
         openQuestionsCount: 0,
       },
-      profile,
+      flexibleProfile,
     );
     const onsiteResult = scoreJob(
       {
@@ -184,7 +193,7 @@ describe("scoreJob", () => {
         workAuthorization: "authorized",
         openQuestionsCount: 0,
       },
-      profile,
+      flexibleProfile,
     );
     const preferredLocationResult = scoreJob(
       {
@@ -202,12 +211,36 @@ describe("scoreJob", () => {
         workAuthorization: "authorized",
         openQuestionsCount: 0,
       },
-      profile,
+      flexibleProfile,
     );
 
     expect(hybridResult.breakdown.location).toBe(12);
     expect(onsiteResult.breakdown.location).toBe(0);
     expect(preferredLocationResult.breakdown.location).toBe(16);
+  });
+
+  it("enforces remote-only scoring when configured", () => {
+    const hybridResult = scoreJob(
+      {
+        title: "Backend Engineer",
+        company: "Acme",
+        location: "Berlin",
+        remoteType: "hybrid",
+        seniority: "mid",
+        mustHaveSkills: [],
+        niceToHaveSkills: [],
+        technologies: [],
+        yearsRequired: 3,
+        platform: "generic",
+        applicationType: "unknown",
+        visaSponsorship: "yes",
+        workAuthorization: "authorized",
+        openQuestionsCount: 0,
+      },
+      profile,
+    );
+
+    expect(hybridResult.breakdown.location).toBe(0);
   });
 
   it("covers junior and intern scoring branches", () => {

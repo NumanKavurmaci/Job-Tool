@@ -13,7 +13,7 @@ import {
 
 const LINKEDIN_LOGIN_URL = "https://www.linkedin.com/login";
 
-async function isLinkedInSignInWall(page: Page): Promise<boolean> {
+export async function isLinkedInSignInWall(page: Page): Promise<boolean> {
   const currentUrl = page.url().toLowerCase();
   if (currentUrl.includes("/login") || currentUrl.includes("/checkpoint")) {
     return true;
@@ -36,40 +36,7 @@ export class LinkedInAdapter implements JobAdapter {
   }
 
   private async ensureAuthenticated(page: Page, url: string): Promise<void> {
-    await gotoJobPage(page, url);
-
-    if (!(await isLinkedInSignInWall(page))) {
-      return;
-    }
-
-    if (!env.LINKEDIN_USERNAME || !env.LINKEDIN_PASSWORD) {
-      throw new Error(
-        "LinkedIn job pages require authentication. Set LINKEDIN_USERNAME and LINKEDIN_PASSWORD to continue.",
-      );
-    }
-
-    await page.goto(LINKEDIN_LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
-    await page.waitForTimeout(1_000);
-
-    const usernameInput = page.locator("input[name='session_key']").first();
-    const passwordInput = page.locator("input[name='session_password']").first();
-    const submitButton = page.locator("button[type='submit']").first();
-
-    if ((await usernameInput.count()) === 0 || (await passwordInput.count()) === 0) {
-      throw new Error("LinkedIn login form was not detected.");
-    }
-
-    await usernameInput.fill(env.LINKEDIN_USERNAME);
-    await passwordInput.fill(env.LINKEDIN_PASSWORD);
-    await submitButton.click();
-    await page.waitForTimeout(3_000);
-    await gotoJobPage(page, url);
-
-    if (await isLinkedInSignInWall(page)) {
-      throw new Error(
-        "LinkedIn authentication did not unlock the job page. The session may need manual verification.",
-      );
-    }
+    await ensureLinkedInAuthenticated(page, url);
   }
 
   async extract(page: Page, url: string): Promise<ExtractedJobContent> {
@@ -181,3 +148,40 @@ export class LinkedInAdapter implements JobAdapter {
     };
   }
 }
+
+export async function ensureLinkedInAuthenticated(page: Page, url: string): Promise<void> {
+    await gotoJobPage(page, url);
+
+    if (!(await isLinkedInSignInWall(page))) {
+      return;
+    }
+
+    if (!env.LINKEDIN_USERNAME || !env.LINKEDIN_PASSWORD) {
+      throw new Error(
+        "LinkedIn job pages require authentication. Set LINKEDIN_USERNAME and LINKEDIN_PASSWORD to continue.",
+      );
+    }
+
+    await page.goto(LINKEDIN_LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    await page.waitForTimeout(1_000);
+
+    const usernameInput = page.locator("input[name='session_key']").first();
+    const passwordInput = page.locator("input[name='session_password']").first();
+    const submitButton = page.locator("button[type='submit']").first();
+
+    if ((await usernameInput.count()) === 0 || (await passwordInput.count()) === 0) {
+      throw new Error("LinkedIn login form was not detected.");
+    }
+
+    await usernameInput.fill(env.LINKEDIN_USERNAME);
+    await passwordInput.fill(env.LINKEDIN_PASSWORD);
+    await submitButton.click();
+    await page.waitForTimeout(3_000);
+    await gotoJobPage(page, url);
+
+    if (await isLinkedInSignInWall(page)) {
+      throw new Error(
+        "LinkedIn authentication did not unlock the job page. The session may need manual verification.",
+      );
+    }
+  }

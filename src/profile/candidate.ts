@@ -2,6 +2,11 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 
+export const DEFAULT_CANDIDATE_PROFILE_PATH = path.resolve(
+  process.cwd(),
+  "candidate-profile.json",
+);
+
 const CandidateProfileSchema = z.object({
   yearsOfExperience: z.number().min(0),
   preferredRoles: z.array(z.string()).default([]),
@@ -10,12 +15,42 @@ const CandidateProfileSchema = z.object({
   preferredLocations: z.array(z.string()).default([]),
   excludedLocations: z.array(z.string()).default([]),
   remotePreference: z.enum(["remote", "hybrid", "onsite", "flexible"]),
+  remoteOnly: z.boolean().default(false),
   visaRequirement: z.enum(["required", "not-required", "unknown"]),
   workAuthorizationStatus: z
     .enum(["authorized", "requires-sponsorship", "unknown"])
     .default("unknown"),
   languages: z.array(z.string()).default([]),
+  salaryExpectations: z
+    .object({
+      usd: z.string().nullable().default(null),
+      eur: z.string().nullable().default(null),
+      try: z.string().nullable().default(null),
+    })
+    .default({
+      usd: null,
+      eur: null,
+      try: null,
+    }),
+  gpa: z.number().min(0).max(4).nullable().default(null),
   salaryExpectation: z.string().nullable().default(null),
+  disability: z
+    .object({
+      hasVisualDisability: z.boolean().default(false),
+      disabilityPercentage: z.number().min(0).max(100).nullable().default(null),
+      requiresAccommodation: z.boolean().nullable().default(null),
+      accommodationNotes: z.string().nullable().default(null),
+      disclosurePreference: z
+        .enum(["manual-review", "disclose", "prefer-not-to-say"])
+        .default("manual-review"),
+    })
+    .default({
+      hasVisualDisability: false,
+      disabilityPercentage: null,
+      requiresAccommodation: null,
+      accommodationNotes: null,
+      disclosurePreference: "manual-review",
+    }),
 });
 
 export type CandidateProfile = z.infer<typeof CandidateProfileSchema>;
@@ -39,14 +74,28 @@ export const DEFAULT_CANDIDATE_PROFILE: CandidateProfile = {
   preferredLocations: ["Remote", "Europe", "Turkey"],
   excludedLocations: ["Istanbul onsite"],
   remotePreference: "remote",
+  remoteOnly: false,
   visaRequirement: "not-required",
   workAuthorizationStatus: "authorized",
   languages: ["English"],
+  salaryExpectations: {
+    usd: null,
+    eur: null,
+    try: null,
+  },
+  gpa: null,
   salaryExpectation: "Open to market-rate mid-level backend roles",
+  disability: {
+    hasVisualDisability: false,
+    disabilityPercentage: null,
+    requiresAccommodation: null,
+    accommodationNotes: null,
+    disclosurePreference: "manual-review",
+  },
 };
 
 export async function loadCandidateProfile(
-  profilePath = path.resolve(process.cwd(), "candidate-profile.json"),
+  profilePath = DEFAULT_CANDIDATE_PROFILE_PATH,
 ): Promise<CandidateProfile> {
   try {
     const content = await readFile(profilePath, "utf8");

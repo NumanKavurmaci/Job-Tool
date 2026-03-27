@@ -27,6 +27,14 @@ describe("answer helpers", () => {
       requiresSponsorship: null,
       willingToRelocate: null,
       remotePreference: null,
+      remoteOnly: false,
+      disability: {
+        hasVisualDisability: false,
+        disabilityPercentage: null,
+        requiresAccommodation: null,
+        accommodationNotes: null,
+        disclosurePreference: "manual-review",
+      },
       education: [],
       experience: [],
       projects: [],
@@ -35,5 +43,6 @@ describe("answer helpers", () => {
     });
 
     expect(bank.sponsorship.confidenceLabel).toBe("manual_review");
+    expect(bank.remote_preference).toBeUndefined();
   });
 });

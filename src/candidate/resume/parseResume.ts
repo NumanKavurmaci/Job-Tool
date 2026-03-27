@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { completePrompt } from "../../llm/completePrompt.js";
+import { parseJsonResponse } from "../../llm/json.js";
 import type { ParsedResume } from "../types.js";
 
 const ResumeSchema = z.object({
@@ -116,7 +117,7 @@ Resume:
 
   let parsedJson: unknown;
   try {
-    parsedJson = JSON.parse(response.text);
+    parsedJson = parseJsonResponse(response.text);
   } catch (error) {
     throw new Error("Resume parser returned invalid JSON.", { cause: error });
   }

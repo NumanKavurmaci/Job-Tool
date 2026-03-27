@@ -32,10 +32,6 @@ export async function resolveAnswer(input: {
     return resumeAware;
   }
 
-  if (classified.type === "salary") {
-    return resolveManualReview(classified);
-  }
-
   const generated = await resolveGeneratedAnswer(classified, input.candidateProfile, input.job);
   if (generated) {
     return generated;

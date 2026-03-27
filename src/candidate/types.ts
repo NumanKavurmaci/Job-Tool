@@ -21,6 +21,20 @@ export interface CandidateProject {
   technologies: string[];
 }
 
+export interface CandidateDisabilityProfile {
+  hasVisualDisability: boolean;
+  disabilityPercentage: number | null;
+  requiresAccommodation: boolean | null;
+  accommodationNotes: string | null;
+  disclosurePreference: "manual-review" | "disclose" | "prefer-not-to-say";
+}
+
+export interface CandidateSalaryExpectations {
+  usd: string | null;
+  eur: string | null;
+  try: string | null;
+}
+
 export interface CandidateProfile {
   fullName: string | null;
   email: string | null;
@@ -30,16 +44,20 @@ export interface CandidateProfile {
   githubUrl: string | null;
   portfolioUrl: string | null;
   summary: string | null;
+  gpa: number | null;
   yearsOfExperienceTotal: number | null;
   currentTitle: string | null;
   preferredRoles: string[];
   preferredTechStack: string[];
   skills: string[];
   languages: string[];
+  salaryExpectations: CandidateSalaryExpectations;
   workAuthorization: string | null;
   requiresSponsorship: boolean | null;
   willingToRelocate: boolean | null;
   remotePreference: string | null;
+  remoteOnly: boolean;
+  disability: CandidateDisabilityProfile;
   education: CandidateEducation[];
   experience: CandidateExperience[];
   projects: CandidateProject[];

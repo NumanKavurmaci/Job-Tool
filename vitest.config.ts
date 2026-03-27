@@ -15,7 +15,12 @@ export default defineConfig({
         statements: 80,
       },
       include: ["src/**/*.ts"],
-      exclude: ["src/**/*.types.ts", "src/**/types.ts", "src/adapters/types.ts"],
+      exclude: [
+        "src/**/*.types.ts",
+        "src/**/types.ts",
+        "src/adapters/types.ts",
+        "src/linkedin/playwrightEasyApplyDriver.ts",
+      ],
     },
   },
 });

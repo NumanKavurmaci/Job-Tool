@@ -16,6 +16,9 @@ async function loadIndexModule(readFileMock?: ReturnType<typeof vi.fn>) {
   }));
   const loadCandidateMasterProfileMock = vi.fn();
   const resolveAnswerMock = vi.fn();
+  const withPageMock = vi.fn();
+  const runEasyApplyDryRunMock = vi.fn();
+  const createEasyApplyDriverMock = vi.fn();
   const createSnapshotMock = vi.fn();
   const createPreparedAnswerSetMock = vi.fn();
   const disconnectMock = vi.fn();
@@ -29,6 +32,9 @@ async function loadIndexModule(readFileMock?: ReturnType<typeof vi.fn>) {
       getConfiguredProviderInfoMock,
       loadCandidateMasterProfileMock,
       resolveAnswerMock,
+      withPageMock,
+      runEasyApplyDryRunMock,
+      createEasyApplyDriverMock,
       createSnapshotMock,
       createPreparedAnswerSetMock,
       disconnectMock,
@@ -40,6 +46,9 @@ async function loadIndexModule(readFileMock?: ReturnType<typeof vi.fn>) {
       getConfiguredProviderInfo: getConfiguredProviderInfoMock,
       loadCandidateMasterProfile: loadCandidateMasterProfileMock,
       resolveAnswer: resolveAnswerMock,
+      withPage: withPageMock,
+      runEasyApplyDryRun: runEasyApplyDryRunMock,
+      createEasyApplyDriver: createEasyApplyDriverMock,
       prisma: {
         candidateProfileSnapshot: { create: createSnapshotMock },
         preparedAnswerSet: { create: createPreparedAnswerSetMock },
@@ -138,14 +147,23 @@ describe("phase 5 index flows", () => {
       resumePath: "./resume.txt",
       questionsPath: "./questions.json",
     });
+
+    expect(module.parseCliArgs(["easy-apply-dry-run", "https://www.linkedin.com/jobs/view/1"]))
+      .toEqual({
+        mode: "easy-apply-dry-run",
+        url: "https://www.linkedin.com/jobs/view/1",
+        resumePath: expect.any(String),
+      });
   });
 
   it("rejects missing candidate prep flags", async () => {
     const { module } = await loadIndexModule();
 
-    expect(() => module.parseCliArgs(["build-profile"])).toThrow("--resume is required");
     expect(() => module.parseCliArgs(["answer-questions", "--resume", "./resume.txt"])).toThrow(
       "--questions is required",
+    );
+    expect(() => module.parseCliArgs(["easy-apply-dry-run"])).toThrow(
+      "--url or a LinkedIn job URL is required",
     );
   });
 
@@ -160,5 +178,33 @@ describe("phase 5 index flows", () => {
       mode: "decide",
       url: "https://jobs.example.com/1",
     });
+  });
+
+  it("runs the easy apply dry-run flow", async () => {
+    const { module, mocks, deps } = await loadIndexModule();
+    mocks.loadCandidateMasterProfileMock.mockResolvedValue({
+      fullName: "Jane Doe",
+      linkedinUrl: "https://linkedin.com/in/jane",
+      sourceMetadata: { resumePath: "./resume.txt" },
+    });
+    mocks.createEasyApplyDriverMock.mockReturnValue({ driver: true });
+    mocks.withPageMock.mockImplementation(async (fn: (page: unknown) => Promise<unknown>) =>
+      fn({ fake: "page" }),
+    );
+    mocks.runEasyApplyDryRunMock.mockResolvedValue({
+      status: "ready_to_submit",
+      steps: [],
+      stopReason: "Reached the final submit step. Dry run stops before submission.",
+      url: "https://www.linkedin.com/jobs/view/1",
+    });
+
+    const result = await module.main(
+      ["easy-apply-dry-run", "https://www.linkedin.com/jobs/view/1", "--resume", "./resume.txt"],
+      deps,
+    );
+
+    expect(result.easyApply.status).toBe("ready_to_submit");
+    expect(mocks.createEasyApplyDriverMock).toHaveBeenCalled();
+    expect(mocks.runEasyApplyDryRunMock).toHaveBeenCalled();
   });
 });

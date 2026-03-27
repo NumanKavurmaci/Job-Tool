@@ -13,25 +13,26 @@
     "Prisma",
     "PostgreSQL"
   ],
-  "excludedRoles": [
-    "Senior",
-    "Lead",
-    "Staff",
-    "Principal"
-  ],
-  "preferredLocations": [
-    "Remote",
-    "Europe",
-    "Turkey"
-  ],
-  "excludedLocations": [
-    "Istanbul onsite"
-  ],
+  "excludedRoles": ["Senior", "Lead", "Staff", "Principal"],
+  "preferredLocations": ["Remote", "Europe", "Turkey"],
+  "excludedLocations": ["Istanbul onsite"],
   "remotePreference": "remote",
+  "remoteOnly": true,
   "visaRequirement": "not-required",
   "workAuthorizationStatus": "authorized",
-  "languages": [
-    "English"
-  ],
-  "salaryExpectation": "Open to market-rate mid-level backend roles"
+  "languages": ["English"],
+  "salaryExpectations": {
+    "usd": 2000,
+    "eur": 1800,
+    "try": 80000
+  },
+  "gpa": 2.4,
+  "salaryExpectation": "Open to market-rate mid-level backend roles",
+  "disability": {
+    "hasVisualDisability": true,
+    "disabilityPercentage": 46,
+    "requiresAccommodation": null,
+    "accommodationNotes": null,
+    "disclosurePreference": "manual-review"
+  }
 }

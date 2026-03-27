@@ -47,6 +47,10 @@ export function evaluatePolicy(
     reasons.push("Istanbul onsite roles are blocked by policy.");
   }
 
+  if (profile.remoteOnly && job.remoteType !== "remote" && job.remoteType !== "unknown") {
+    reasons.push("Only remote roles are allowed by profile.");
+  }
+
   if (profile.visaRequirement === "required" && job.visaSponsorship === "no") {
     reasons.push("Visa sponsorship mismatch.");
   }
