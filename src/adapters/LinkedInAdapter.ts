@@ -28,6 +28,13 @@ const LINKEDIN_PASSWORD_SELECTORS = [
   "input#password",
   "input[autocomplete='current-password']",
 ];
+const LINKEDIN_SUBMIT_SELECTORS = [
+  "button[type='submit'][aria-label*='Sign in']",
+  "button[type='submit'][data-litms-control-urn='login-submit']",
+  "button[type='submit'].btn__primary--large",
+  "button[type='submit']:has-text('Sign in')",
+  "button[type='submit']",
+];
 const LINKEDIN_SIGNED_IN_SELECTORS = [
   "nav[aria-label='Primary Navigation']",
   ".global-nav",
@@ -52,6 +59,20 @@ async function firstVisibleLocator(page: Page, selectors: string[]) {
   }
 
   return null;
+}
+
+async function requireLocator(
+  page: Page,
+  selectors: string[],
+  errorFactory: () => Promise<AppError>,
+  timeoutMs = 10_000,
+) {
+  const locator = await waitForLocator(page, selectors, timeoutMs);
+  if (locator) {
+    return locator;
+  }
+
+  throw await errorFactory();
 }
 
 async function waitForLocator(
@@ -311,124 +332,140 @@ export class LinkedInAdapter implements JobAdapter {
 }
 
 export async function ensureLinkedInAuthenticated(page: Page, url: string): Promise<void> {
-    await gotoJobPage(page, url);
+  await gotoJobPage(page, url);
 
-    const initialState = await getLinkedInAuthState(page);
-    logger.info(
-      {
-        event: "linkedin.auth.state",
-        state: initialState,
-        url: page.url(),
-        title: await page.title().catch(() => ""),
-      },
-      "LinkedIn auth state detected",
-    );
-    if (initialState === "authenticated") {
+  const initialState = await getLinkedInAuthState(page);
+  logger.info(
+    {
+      event: "linkedin.auth.state",
+      state: initialState,
+      url: page.url(),
+      title: await page.title().catch(() => ""),
+    },
+    "LinkedIn auth state detected",
+  );
+  if (initialState === "authenticated") {
+    return;
+  }
+
+  if (!env.LINKEDIN_USERNAME || !env.LINKEDIN_PASSWORD) {
+    throw new AppError({
+      message: "LinkedIn job pages require authentication. Set LINKEDIN_USERNAME and LINKEDIN_PASSWORD to continue.",
+      phase: "linkedin_auth",
+      code: "LINKEDIN_CREDENTIALS_MISSING",
+    });
+  }
+
+  let usernameInput = await waitForLocator(page, LINKEDIN_USERNAME_SELECTORS, 5_000);
+  let passwordInput = await waitForLocator(page, LINKEDIN_PASSWORD_SELECTORS, 5_000);
+
+  if (!usernameInput || !passwordInput) {
+    await page.goto(LINKEDIN_LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    await page.waitForTimeout(1_000);
+    usernameInput = await waitForLocator(page, LINKEDIN_USERNAME_SELECTORS, 10_000);
+    passwordInput = await waitForLocator(page, LINKEDIN_PASSWORD_SELECTORS, 10_000);
+  }
+
+  if (!usernameInput || !passwordInput) {
+    const recovered = await waitForManualLinkedInIntervention(page, url);
+    if (recovered) {
       return;
     }
 
-    if (!env.LINKEDIN_USERNAME || !env.LINKEDIN_PASSWORD) {
-      throw new AppError({
-        message: "LinkedIn job pages require authentication. Set LINKEDIN_USERNAME and LINKEDIN_PASSWORD to continue.",
-        phase: "linkedin_auth",
-        code: "LINKEDIN_CREDENTIALS_MISSING",
-      });
-    }
-
-    let usernameInput = await waitForLocator(page, LINKEDIN_USERNAME_SELECTORS, 5_000);
-    let passwordInput = await waitForLocator(page, LINKEDIN_PASSWORD_SELECTORS, 5_000);
-
-    if (!usernameInput || !passwordInput) {
-      await page.goto(LINKEDIN_LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
-      await page.waitForTimeout(1_000);
-      usernameInput = await waitForLocator(page, LINKEDIN_USERNAME_SELECTORS, 10_000);
-      passwordInput = await waitForLocator(page, LINKEDIN_PASSWORD_SELECTORS, 10_000);
-    }
-
-    const submitButton = page.locator("button[type='submit']").first();
-
-    if (!usernameInput || !passwordInput) {
-      const recovered = await waitForManualLinkedInIntervention(page, url);
-      if (recovered) {
-        return;
-      }
-
-      const artifacts = await capturePageArtifacts(page, "linkedin-login-form-not-found");
-      throw new AppError({
-        message: "LinkedIn login form was not detected.",
-        phase: "linkedin_auth",
-        code: "LINKEDIN_LOGIN_FORM_NOT_FOUND",
-        details: {
-          url: page.url(),
-          title: await page.title(),
-          ...artifacts,
-        },
-      });
-    }
-
-    logger.info({ event: "linkedin.auth.submit", url: page.url() }, "Submitting LinkedIn credentials");
-    await usernameInput.fill(env.LINKEDIN_USERNAME);
-    await passwordInput.fill(env.LINKEDIN_PASSWORD);
-    await submitButton.click();
-    const postSubmitState = await waitForLinkedInAuthResolution(page);
-
-    if (postSubmitState === "challenge") {
-      const recovered = await waitForManualLinkedInIntervention(page, url);
-      if (recovered) {
-        return;
-      }
-
-      const artifacts = await capturePageArtifacts(page, "linkedin-auth-challenge-post-submit");
-      throw new AppError({
-        message: "LinkedIn login reached a verification challenge. Manual verification is required before automation can continue.",
-        phase: "linkedin_auth",
-        code: "LINKEDIN_AUTHENTICATION_CHALLENGE",
-        details: {
-          url: page.url(),
-          title: await page.title(),
-          ...artifacts,
-        },
-      });
-    }
-
-    await gotoJobPage(page, url);
-
-    const finalState = await waitForLinkedInAuthResolution(page, 5_000);
-    if (finalState === "challenge") {
-      const recovered = await waitForManualLinkedInIntervention(page, url);
-      if (recovered) {
-        return;
-      }
-
-      const artifacts = await capturePageArtifacts(page, "linkedin-auth-challenge-after-login");
-      throw new AppError({
-        message: "LinkedIn redirected to a verification challenge after login. Manual verification is required before automation can continue.",
-        phase: "linkedin_auth",
-        code: "LINKEDIN_AUTHENTICATION_CHALLENGE",
-        details: {
-          url: page.url(),
-          title: await page.title(),
-          ...artifacts,
-        },
-      });
-    }
-
-    if (finalState !== "authenticated") {
-      const recovered = await waitForManualLinkedInIntervention(page, url);
-      if (recovered) {
-        return;
-      }
-
-      const artifacts = await capturePageArtifacts(page, "linkedin-auth-not-unlocked");
-      throw new AppError({
-        message: "LinkedIn authentication did not unlock the job page. The session may need manual verification.",
-        phase: "linkedin_auth",
-        code: "LINKEDIN_AUTHENTICATION_FAILED",
-        details: {
-          url: page.url(),
-          title: await page.title(),
-          ...artifacts,
-        },
-      });
-    }
+    const artifacts = await capturePageArtifacts(page, "linkedin-login-form-not-found");
+    throw new AppError({
+      message: "LinkedIn login form was not detected.",
+      phase: "linkedin_auth",
+      code: "LINKEDIN_LOGIN_FORM_NOT_FOUND",
+      details: {
+        url: page.url(),
+        title: await page.title(),
+        ...artifacts,
+      },
+    });
   }
+
+  const submitButton = await requireLocator(
+    page,
+    LINKEDIN_SUBMIT_SELECTORS,
+    async () => {
+      const artifacts = await capturePageArtifacts(page, "linkedin-login-submit-not-found");
+      return new AppError({
+        message: "LinkedIn sign-in submit button was not detected.",
+        phase: "linkedin_auth",
+        code: "LINKEDIN_LOGIN_SUBMIT_NOT_FOUND",
+        details: {
+          url: page.url(),
+          title: await page.title(),
+          ...artifacts,
+        },
+      });
+    },
+  );
+
+  logger.info({ event: "linkedin.auth.submit", url: page.url() }, "Submitting LinkedIn credentials");
+  await usernameInput.fill(env.LINKEDIN_USERNAME);
+  await passwordInput.fill(env.LINKEDIN_PASSWORD);
+  await submitButton.click();
+  const postSubmitState = await waitForLinkedInAuthResolution(page);
+
+  if (postSubmitState === "challenge") {
+    const recovered = await waitForManualLinkedInIntervention(page, url);
+    if (recovered) {
+      return;
+    }
+
+    const artifacts = await capturePageArtifacts(page, "linkedin-auth-challenge-post-submit");
+    throw new AppError({
+      message: "LinkedIn login reached a verification challenge. Manual verification is required before automation can continue.",
+      phase: "linkedin_auth",
+      code: "LINKEDIN_AUTHENTICATION_CHALLENGE",
+      details: {
+        url: page.url(),
+        title: await page.title(),
+        ...artifacts,
+      },
+    });
+  }
+
+  await gotoJobPage(page, url);
+
+  const finalState = await waitForLinkedInAuthResolution(page, 5_000);
+  if (finalState === "challenge") {
+    const recovered = await waitForManualLinkedInIntervention(page, url);
+    if (recovered) {
+      return;
+    }
+
+    const artifacts = await capturePageArtifacts(page, "linkedin-auth-challenge-after-login");
+    throw new AppError({
+      message: "LinkedIn redirected to a verification challenge after login. Manual verification is required before automation can continue.",
+      phase: "linkedin_auth",
+      code: "LINKEDIN_AUTHENTICATION_CHALLENGE",
+      details: {
+        url: page.url(),
+        title: await page.title(),
+        ...artifacts,
+      },
+    });
+  }
+
+  if (finalState !== "authenticated") {
+    const recovered = await waitForManualLinkedInIntervention(page, url);
+    if (recovered) {
+      return;
+    }
+
+    const artifacts = await capturePageArtifacts(page, "linkedin-auth-not-unlocked");
+    throw new AppError({
+      message: "LinkedIn authentication did not unlock the job page. The session may need manual verification.",
+      phase: "linkedin_auth",
+      code: "LINKEDIN_AUTHENTICATION_FAILED",
+      details: {
+        url: page.url(),
+        title: await page.title(),
+        ...artifacts,
+      },
+    });
+  }
+}

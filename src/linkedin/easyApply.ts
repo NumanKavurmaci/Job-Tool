@@ -94,6 +94,51 @@ export interface EasyApplyDriver {
   dismissCompletionModal?(): Promise<boolean>;
 }
 
+interface EasyApplyRunInput {
+  driver: EasyApplyDriver;
+  url: string;
+  candidateProfile: CandidateProfile;
+  resolveAnswer: (args: {
+    question: InputQuestion;
+    candidateProfile: CandidateProfile;
+  }) => Promise<ResolvedAnswer>;
+  maxSteps?: number;
+}
+
+interface PreparedStepQuestionResult {
+  answeredQuestion: EasyApplyAnsweredQuestion;
+  hasRequiredManualReview: boolean;
+}
+
+interface StepExecutionResult {
+  report: EasyApplyStepReport;
+  hasRequiredManualReview: boolean;
+  stepSignature: string;
+}
+
+type SubmitMode = "dry-run" | "submit";
+
+function createSkippedAnswer(
+  question: EasyApplyQuestionView,
+  details: string,
+  notes: string[],
+): EasyApplyAnsweredQuestion {
+  return {
+    question,
+    resolved: {
+      questionType: "contact_info",
+      strategy: "deterministic",
+      answer: question.currentValue ?? null,
+      confidence: 0.99,
+      confidenceLabel: "high",
+      source: "candidate-profile",
+      notes,
+    },
+    filled: true,
+    details,
+  };
+}
+
 export function isManualReviewAnswer(answer: ResolvedAnswer): boolean {
   return (
     answer.strategy === "needs-review" ||
@@ -146,54 +191,163 @@ export function chooseRadioValue(
   return null;
 }
 
-export async function runEasyApplyDryRun(input: {
-  driver: EasyApplyDriver;
-  url: string;
-  candidateProfile: CandidateProfile;
-  resolveAnswer: (args: {
-    question: InputQuestion;
-    candidateProfile: CandidateProfile;
-  }) => Promise<ResolvedAnswer>;
-  maxSteps?: number;
-}): Promise<EasyApplyRunResult> {
+async function stopIfApplyUnavailable(
+  driver: EasyApplyDriver,
+  url: string,
+): Promise<EasyApplyRunResult | null> {
+  if (await driver.isEasyApplyAvailable()) {
+    return null;
+  }
+
+  const externalApplyAvailable =
+    (await driver.isExternalApplyAvailable?.()) === true;
+  const externalApplyUrl = externalApplyAvailable
+    ? ((await driver.getExternalApplyUrl?.()) ?? undefined)
+    : undefined;
+
+  if ((await driver.isAlreadyApplied?.()) === true) {
+    return {
+      status: "stopped_not_easy_apply",
+      steps: [],
+      stopReason: "This LinkedIn job has already been applied to.",
+      url,
+    };
+  }
+
+  if (externalApplyAvailable) {
+    return {
+      status: "stopped_external_apply",
+      steps: [],
+      stopReason:
+        "This LinkedIn job redirects to an external application page.",
+      url,
+      ...(externalApplyUrl ? { externalApplyUrl } : {}),
+    };
+  }
+
+  return {
+    status: "stopped_not_easy_apply",
+    steps: [],
+    stopReason: "Easy Apply button was not found on the page.",
+    url,
+  };
+}
+
+async function prepareQuestionAnswer(args: {
+  question: EasyApplyQuestionView;
+  input: EasyApplyRunInput;
+}): Promise<PreparedStepQuestionResult> {
+  const { question, input } = args;
+
+  if (isAutoHandledQuestion(question)) {
+    return {
+      answeredQuestion: createSkippedAnswer(
+        question,
+        "Skipped because LinkedIn already manages the resume/document field.",
+        [
+          "Skipped because LinkedIn handles resume/document selection on this step.",
+        ],
+      ),
+      hasRequiredManualReview: false,
+    };
+  }
+
+  if (question.isPrefilled) {
+    return {
+      answeredQuestion: createSkippedAnswer(
+        question,
+        "Skipped because LinkedIn already pre-filled this field.",
+        ["Skipped because LinkedIn already pre-filled this field."],
+      ),
+      hasRequiredManualReview: false,
+    };
+  }
+
+  const resolved = await input.resolveAnswer({
+    question,
+    candidateProfile: input.candidateProfile,
+  });
+
+  if (question.required && isManualReviewAnswer(resolved)) {
+    return {
+      answeredQuestion: {
+        question,
+        resolved,
+        filled: false,
+        details: "Required question needs manual review.",
+      },
+      hasRequiredManualReview: true,
+    };
+  }
+
+  const filled = isManualReviewAnswer(resolved)
+    ? {
+        filled: false,
+        details: "Skipped because it is marked for manual review.",
+      }
+    : await input.driver.fillAnswer(question, resolved);
+
+  return {
+    answeredQuestion: {
+      question,
+      resolved,
+      filled: filled.filled,
+      ...(filled.details ? { details: filled.details } : {}),
+    },
+    hasRequiredManualReview: question.required && !filled.filled,
+  };
+}
+
+async function executeStep(args: {
+  input: EasyApplyRunInput;
+  stepIndex: number;
+}): Promise<StepExecutionResult> {
+  const questions = await args.input.driver.collectQuestions();
+  const stepSignature = JSON.stringify(
+    questions.map((question) => ({
+      key: question.fieldKey,
+      label: question.label,
+      required: question.required,
+    })),
+  );
+  const answeredQuestions: EasyApplyAnsweredQuestion[] = [];
+  let hasRequiredManualReview = false;
+
+  for (const question of questions) {
+    const prepared = await prepareQuestionAnswer({
+      question,
+      input: args.input,
+    });
+    answeredQuestions.push(prepared.answeredQuestion);
+    hasRequiredManualReview =
+      hasRequiredManualReview || prepared.hasRequiredManualReview;
+  }
+
+  const action = await args.input.driver.getPrimaryAction();
+
+  return {
+    report: {
+      stepIndex: args.stepIndex,
+      questions: answeredQuestions,
+      action,
+    },
+    hasRequiredManualReview,
+    stepSignature,
+  };
+}
+
+async function runEasyApplyInternal(
+  input: EasyApplyRunInput,
+  submitMode: SubmitMode,
+): Promise<EasyApplyRunResult> {
   const maxSteps = input.maxSteps ?? 10;
 
   await input.driver.ensureAuthenticated(input.url);
   await input.driver.open(input.url);
 
-  if (!(await input.driver.isEasyApplyAvailable())) {
-    const externalApplyAvailable =
-      (await input.driver.isExternalApplyAvailable?.()) === true;
-    const externalApplyUrl = externalApplyAvailable
-      ? ((await input.driver.getExternalApplyUrl?.()) ?? undefined)
-      : undefined;
-
-    if ((await input.driver.isAlreadyApplied?.()) === true) {
-      return {
-        status: "stopped_not_easy_apply",
-        steps: [],
-        stopReason: "This LinkedIn job has already been applied to.",
-        url: input.url,
-      };
-    }
-
-    if (externalApplyAvailable) {
-      return {
-        status: "stopped_external_apply",
-        steps: [],
-        stopReason:
-          "This LinkedIn job redirects to an external application page.",
-        url: input.url,
-        ...(externalApplyUrl ? { externalApplyUrl } : {}),
-      };
-    }
-
-    return {
-      status: "stopped_not_easy_apply",
-      steps: [],
-      stopReason: "Easy Apply button was not found on the page.",
-      url: input.url,
-    };
+  const unavailableResult = await stopIfApplyUnavailable(input.driver, input.url);
+  if (unavailableResult) {
+    return unavailableResult;
   }
 
   await input.driver.openEasyApply();
@@ -202,129 +356,61 @@ export async function runEasyApplyDryRun(input: {
   let lastStepSignature: string | null = null;
 
   for (let stepIndex = 0; stepIndex < maxSteps; stepIndex += 1) {
-    const questions = await input.driver.collectQuestions();
-    const stepSignature = JSON.stringify(
-      questions.map((question) => ({
-        key: question.fieldKey,
-        label: question.label,
-        required: question.required,
-      })),
-    );
-    const answeredQuestions: EasyApplyAnsweredQuestion[] = [];
-    let hasRequiredManualReview = false;
+    const step = await executeStep({ input, stepIndex });
+    steps.push(step.report);
 
-    for (const question of questions) {
-      if (isAutoHandledQuestion(question)) {
-        answeredQuestions.push({
-          question,
-          resolved: {
-            questionType: "contact_info",
-            strategy: "deterministic",
-            answer: question.currentValue ?? null,
-            confidence: 0.99,
-            confidenceLabel: "high",
-            source: "candidate-profile",
-            notes: [
-              "Skipped because LinkedIn handles resume/document selection on this step.",
-            ],
-          },
-          filled: true,
-          details:
-            "Skipped because LinkedIn already manages the resume/document field.",
-        });
-        continue;
+    if (step.report.action === "submit") {
+      if (submitMode === "dry-run") {
+        return {
+          status: "ready_to_submit",
+          steps,
+          stopReason:
+            "Reached the final submit step. Dry run stops before submission.",
+          url: input.url,
+        };
       }
 
-      if (question.isPrefilled) {
-        answeredQuestions.push({
-          question,
-          resolved: {
-            questionType: "contact_info",
-            strategy: "deterministic",
-            answer: question.currentValue ?? null,
-            confidence: 0.99,
-            confidenceLabel: "high",
-            source: "candidate-profile",
-            notes: ["Skipped because LinkedIn already pre-filled this field."],
-          },
-          filled: true,
-          details: "Skipped because LinkedIn already pre-filled this field.",
-        });
-        continue;
+      if (step.hasRequiredManualReview) {
+        return {
+          status: "stopped_manual_review",
+          steps,
+          stopReason:
+            "A required Easy Apply question needs manual review before submitting.",
+          url: input.url,
+        };
       }
 
-      const resolved = await input.resolveAnswer({
-        question,
-        candidateProfile: input.candidateProfile,
-      });
+      await input.driver.advance("submit");
+      await input.driver.dismissCompletionModal?.();
 
-      if (question.required && isManualReviewAnswer(resolved)) {
-        hasRequiredManualReview = true;
-        answeredQuestions.push({
-          question,
-          resolved,
-          filled: false,
-          details: "Required question needs manual review.",
-        });
-        continue;
-      }
-
-      const filled = isManualReviewAnswer(resolved)
-        ? {
-            filled: false,
-            details: "Skipped because it is marked for manual review.",
-          }
-        : await input.driver.fillAnswer(question, resolved);
-
-      if (question.required && !filled.filled) {
-        hasRequiredManualReview = true;
-      }
-
-      answeredQuestions.push({
-        question,
-        resolved,
-        filled: filled.filled,
-        ...(filled.details ? { details: filled.details } : {}),
-      });
-    }
-
-    const action = await input.driver.getPrimaryAction();
-    steps.push({
-      stepIndex,
-      questions: answeredQuestions,
-      action,
-    });
-
-    if (action === "submit") {
       return {
-        status: "ready_to_submit",
+        status: "submitted",
         steps,
-        stopReason:
-          "Reached the final submit step. Dry run stops before submission.",
+        stopReason: "Application submitted successfully.",
         url: input.url,
       };
     }
 
-    if (action === "review") {
-      if (lastStepSignature === stepSignature) {
+    if (step.report.action === "review") {
+      if (lastStepSignature === step.stepSignature) {
         return {
-          status: hasRequiredManualReview
+          status: step.hasRequiredManualReview
             ? "stopped_manual_review"
             : "stopped_unknown_action",
           steps,
-          stopReason: hasRequiredManualReview
+          stopReason: step.hasRequiredManualReview
             ? "Review step did not advance because required questions still need review or valid input."
             : "Review step repeated without advancing.",
           url: input.url,
         };
       }
 
-      lastStepSignature = stepSignature;
-      await input.driver.advance(action);
+      lastStepSignature = step.stepSignature;
+      await input.driver.advance("review");
       continue;
     }
 
-    if (hasRequiredManualReview) {
+    if (step.hasRequiredManualReview) {
       return {
         status: "stopped_manual_review",
         steps,
@@ -333,9 +419,9 @@ export async function runEasyApplyDryRun(input: {
       };
     }
 
-    if (action === "next") {
-      lastStepSignature = stepSignature;
-      await input.driver.advance(action);
+    if (step.report.action === "next") {
+      lastStepSignature = step.stepSignature;
+      await input.driver.advance("next");
       continue;
     }
 
@@ -353,6 +439,12 @@ export async function runEasyApplyDryRun(input: {
     stopReason: `Exceeded the Easy Apply step limit of ${maxSteps}.`,
     url: input.url,
   };
+}
+
+export async function runEasyApplyDryRun(
+  input: EasyApplyRunInput,
+): Promise<EasyApplyRunResult> {
+  return runEasyApplyInternal(input, "dry-run");
 }
 
 export async function runEasyApplyBatchDryRun(input: {
@@ -496,223 +588,8 @@ export async function runEasyApplyBatchDryRun(input: {
   };
 }
 
-export async function runEasyApply(input: {
-  driver: EasyApplyDriver;
-  url: string;
-  candidateProfile: CandidateProfile;
-  resolveAnswer: (args: {
-    question: InputQuestion;
-    candidateProfile: CandidateProfile;
-  }) => Promise<ResolvedAnswer>;
-  maxSteps?: number;
-}): Promise<EasyApplyRunResult> {
-  const maxSteps = input.maxSteps ?? 10;
-
-  await input.driver.ensureAuthenticated(input.url);
-  await input.driver.open(input.url);
-
-  if (!(await input.driver.isEasyApplyAvailable())) {
-    const externalApplyAvailable =
-      (await input.driver.isExternalApplyAvailable?.()) === true;
-    const externalApplyUrl = externalApplyAvailable
-      ? ((await input.driver.getExternalApplyUrl?.()) ?? undefined)
-      : undefined;
-
-    if ((await input.driver.isAlreadyApplied?.()) === true) {
-      return {
-        status: "stopped_not_easy_apply",
-        steps: [],
-        stopReason: "This LinkedIn job has already been applied to.",
-        url: input.url,
-      };
-    }
-
-    if (externalApplyAvailable) {
-      return {
-        status: "stopped_external_apply",
-        steps: [],
-        stopReason:
-          "This LinkedIn job redirects to an external application page.",
-        url: input.url,
-        ...(externalApplyUrl ? { externalApplyUrl } : {}),
-      };
-    }
-
-    return {
-      status: "stopped_not_easy_apply",
-      steps: [],
-      stopReason: "Easy Apply button was not found on the page.",
-      url: input.url,
-    };
-  }
-
-  await input.driver.openEasyApply();
-
-  const steps: EasyApplyStepReport[] = [];
-  let lastStepSignature: string | null = null;
-
-  for (let stepIndex = 0; stepIndex < maxSteps; stepIndex += 1) {
-    const questions = await input.driver.collectQuestions();
-    const stepSignature = JSON.stringify(
-      questions.map((question) => ({
-        key: question.fieldKey,
-        label: question.label,
-        required: question.required,
-      })),
-    );
-    const answeredQuestions: EasyApplyAnsweredQuestion[] = [];
-    let hasRequiredManualReview = false;
-
-    for (const question of questions) {
-      if (isAutoHandledQuestion(question)) {
-        answeredQuestions.push({
-          question,
-          resolved: {
-            questionType: "contact_info",
-            strategy: "deterministic",
-            answer: question.currentValue ?? null,
-            confidence: 0.99,
-            confidenceLabel: "high",
-            source: "candidate-profile",
-            notes: [
-              "Skipped because LinkedIn handles resume/document selection on this step.",
-            ],
-          },
-          filled: true,
-          details:
-            "Skipped because LinkedIn already manages the resume/document field.",
-        });
-        continue;
-      }
-
-      if (question.isPrefilled) {
-        answeredQuestions.push({
-          question,
-          resolved: {
-            questionType: "contact_info",
-            strategy: "deterministic",
-            answer: question.currentValue ?? null,
-            confidence: 0.99,
-            confidenceLabel: "high",
-            source: "candidate-profile",
-            notes: ["Skipped because LinkedIn already pre-filled this field."],
-          },
-          filled: true,
-          details: "Skipped because LinkedIn already pre-filled this field.",
-        });
-        continue;
-      }
-
-      const resolved = await input.resolveAnswer({
-        question,
-        candidateProfile: input.candidateProfile,
-      });
-
-      if (question.required && isManualReviewAnswer(resolved)) {
-        hasRequiredManualReview = true;
-        answeredQuestions.push({
-          question,
-          resolved,
-          filled: false,
-          details: "Required question needs manual review.",
-        });
-        continue;
-      }
-
-      const filled = isManualReviewAnswer(resolved)
-        ? {
-            filled: false,
-            details: "Skipped because it is marked for manual review.",
-          }
-        : await input.driver.fillAnswer(question, resolved);
-
-      if (question.required && !filled.filled) {
-        hasRequiredManualReview = true;
-      }
-
-      answeredQuestions.push({
-        question,
-        resolved,
-        filled: filled.filled,
-        ...(filled.details ? { details: filled.details } : {}),
-      });
-    }
-
-    const action = await input.driver.getPrimaryAction();
-    steps.push({
-      stepIndex,
-      questions: answeredQuestions,
-      action,
-    });
-
-    if (action === "submit") {
-      if (hasRequiredManualReview) {
-        return {
-          status: "stopped_manual_review",
-          steps,
-          stopReason:
-            "A required Easy Apply question needs manual review before submitting.",
-          url: input.url,
-        };
-      }
-
-      await input.driver.advance("submit");
-      await input.driver.dismissCompletionModal?.();
-
-      return {
-        status: "submitted",
-        steps,
-        stopReason: "Application submitted successfully.",
-        url: input.url,
-      };
-    }
-
-    if (action === "review") {
-      if (lastStepSignature === stepSignature) {
-        return {
-          status: hasRequiredManualReview
-            ? "stopped_manual_review"
-            : "stopped_unknown_action",
-          steps,
-          stopReason: hasRequiredManualReview
-            ? "Review step did not advance because required questions still need review or valid input."
-            : "Review step repeated without advancing.",
-          url: input.url,
-        };
-      }
-
-      lastStepSignature = stepSignature;
-      await input.driver.advance(action);
-      continue;
-    }
-
-    if (hasRequiredManualReview) {
-      return {
-        status: "stopped_manual_review",
-        steps,
-        stopReason: "A required Easy Apply question needs manual review.",
-        url: input.url,
-      };
-    }
-
-    if (action === "next") {
-      lastStepSignature = stepSignature;
-      await input.driver.advance(action);
-      continue;
-    }
-
-    return {
-      status: "stopped_unknown_action",
-      steps,
-      stopReason: "Could not determine the next Easy Apply action.",
-      url: input.url,
-    };
-  }
-
-  return {
-    status: "stopped_unknown_action",
-    steps,
-    stopReason: `Exceeded the Easy Apply step limit of ${maxSteps}.`,
-    url: input.url,
-  };
+export async function runEasyApply(
+  input: EasyApplyRunInput,
+): Promise<EasyApplyRunResult> {
+  return runEasyApplyInternal(input, "submit");
 }

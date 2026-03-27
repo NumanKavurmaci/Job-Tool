@@ -401,14 +401,35 @@ async function runBuildProfileFlow(
   };
 }
 
+async function loadMasterProfileForArgs(
+  args: Extract<CliArgs, { resumePath: string }> & { linkedinUrl?: string },
+  deps = appDeps,
+) {
+  return deps.loadCandidateMasterProfile({
+    resumePath: args.resumePath,
+    ...(args.linkedinUrl ? { linkedinUrl: args.linkedinUrl } : {}),
+  });
+}
+
+function createCandidateAnswerResolver(
+  candidateProfile: Awaited<ReturnType<typeof appDeps.loadCandidateMasterProfile>>,
+  deps = appDeps,
+) {
+  return ({ question, candidateProfile: profileOverride }: {
+    question: InputQuestion;
+    candidateProfile: typeof candidateProfile;
+  }) =>
+    deps.resolveAnswer({
+      question,
+      candidateProfile: profileOverride ?? candidateProfile,
+    });
+}
+
 async function runAnswerQuestionsFlow(
   args: Extract<CliArgs, { mode: "answer-questions" }>,
   deps = appDeps,
 ) {
-  const profile = await deps.loadCandidateMasterProfile({
-    resumePath: args.resumePath,
-    ...(args.linkedinUrl ? { linkedinUrl: args.linkedinUrl } : {}),
-  });
+  const profile = await loadMasterProfileForArgs(args, deps);
 
   let snapshot;
   let preparedAnswerSet;
@@ -481,10 +502,9 @@ async function runEasyApplyDryRunFlow(
   args: Extract<CliArgs, { mode: "easy-apply-dry-run" }>,
   deps = appDeps,
 ) {
-  const profile = await deps.loadCandidateMasterProfile({
-    resumePath: args.resumePath,
-  });
+  const profile = await loadMasterProfileForArgs(args, deps);
   const scoringProfile = await deps.loadCandidateProfile();
+  const resolveCandidateAnswer = createCandidateAnswerResolver(profile, deps);
 
   let result;
   try {
@@ -530,10 +550,7 @@ async function runEasyApplyDryRunFlow(
           url: args.url,
           candidateProfile: profile,
           evaluateJob,
-          resolveAnswer: ({ question, candidateProfile }: {
-            question: InputQuestion;
-            candidateProfile: typeof profile;
-          }) => deps.resolveAnswer({ question, candidateProfile }),
+          resolveAnswer: resolveCandidateAnswer,
         };
 
         if (args.count > 1 || isLinkedInCollectionUrl(args.url)) {
@@ -594,9 +611,8 @@ async function runEasyApplyFlow(
   args: Extract<CliArgs, { mode: "easy-apply" }>,
   deps = appDeps,
 ) {
-  const profile = await deps.loadCandidateMasterProfile({
-    resumePath: args.resumePath,
-  });
+  const profile = await loadMasterProfileForArgs(args, deps);
+  const resolveCandidateAnswer = createCandidateAnswerResolver(profile, deps);
 
   let result;
   try {
@@ -606,10 +622,7 @@ async function runEasyApplyFlow(
         driver,
         url: args.url,
         candidateProfile: profile,
-        resolveAnswer: ({ question, candidateProfile }: {
-          question: InputQuestion;
-          candidateProfile: typeof profile;
-        }) => deps.resolveAnswer({ question, candidateProfile }),
+        resolveAnswer: resolveCandidateAnswer,
       });
     });
   } catch (error) {
