@@ -6,7 +6,12 @@ function safeTimestamp(date = new Date()): string {
 }
 
 export async function writeRunReport(input: {
-  category: "batch-runs";
+  category:
+    | "answer-runs"
+    | "batch-runs"
+    | "easy-apply-runs"
+    | "job-runs"
+    | "profile-runs";
   prefix: string;
   payload: unknown;
 }): Promise<string> {

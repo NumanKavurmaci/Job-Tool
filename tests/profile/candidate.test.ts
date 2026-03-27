@@ -25,6 +25,7 @@ describe("candidate profile loader", () => {
         yearsOfExperience: 5,
         preferredRoles: ["Backend Engineer"],
         preferredTechStack: ["TypeScript", "Node.js"],
+        aspirationalTechStack: ["Python", "LLM APIs", "AIOps"],
         excludedRoles: ["Staff"],
         preferredLocations: ["Remote"],
         excludedLocations: ["Istanbul onsite"],
@@ -57,6 +58,7 @@ describe("candidate profile loader", () => {
     const profile = await loadCandidateProfile(profilePath);
     expect(profile.yearsOfExperience).toBe(5);
     expect(profile.preferredTechStack).toEqual(["TypeScript", "Node.js"]);
+    expect(profile.aspirationalTechStack).toEqual(["Python", "LLM APIs", "AIOps"]);
     expect(profile.remoteOnly).toBe(true);
     expect(profile.allowedHybridLocations).toEqual(["Ankara", "Izmir"]);
     expect(profile.experienceOverrides.linux).toBe(0);
@@ -74,6 +76,7 @@ describe("candidate profile loader", () => {
         yearsOfExperience: 5,
         preferredRoles: [],
         preferredTechStack: [],
+        aspirationalTechStack: [],
         excludedRoles: [],
         preferredLocations: [],
         excludedLocations: [],

@@ -114,7 +114,24 @@ function renderCliSummary(result: Awaited<ReturnType<typeof main>>): string | nu
     `Status: ${result.easyApply.status}`,
     `Steps: ${result.easyApply.steps.length}`,
     `Reason: ${result.easyApply.stopReason}`,
+    ...("reportPath" in result && typeof result.reportPath === "string"
+      ? [`Report: ${result.reportPath}`]
+      : []),
   ].join("\n") + "\n";
+}
+
+async function persistRunArtifact(args: {
+  category: "answer-runs" | "batch-runs" | "easy-apply-runs" | "job-runs" | "profile-runs";
+  prefix: string;
+  payload: unknown;
+  deps?: typeof appDeps;
+}): Promise<string> {
+  const deps = args.deps ?? appDeps;
+  return deps.writeRunReport({
+    category: args.category,
+    prefix: args.prefix,
+    payload: args.payload,
+  });
 }
 
 export type CliArgs =
@@ -450,7 +467,7 @@ async function runJobFlow(
     });
   }
 
-  return {
+  const result = {
     mode,
     jobPosting: saved,
     normalized,
@@ -460,6 +477,18 @@ async function runJobFlow(
     finalDecision,
     finalReasons,
     applicationDecision: savedDecision,
+  };
+
+  const reportPath = await persistRunArtifact({
+    category: "job-runs",
+    prefix: mode,
+    payload: result,
+    deps,
+  });
+
+  return {
+    ...result,
+    reportPath,
   };
 }
 
@@ -500,10 +529,22 @@ async function runBuildProfileFlow(
     "Candidate profile snapshot saved",
   );
 
-  return {
+  const result = {
     mode: args.mode,
     profile,
     snapshot,
+  };
+
+  const reportPath = await persistRunArtifact({
+    category: "profile-runs",
+    prefix: args.mode,
+    payload: result,
+    deps,
+  });
+
+  return {
+    ...result,
+    reportPath,
   };
 }
 
@@ -540,6 +581,7 @@ function createBatchJobEvaluator(args: {
   disableAiEvaluation: boolean;
   scoreThreshold: number;
   scoringProfile: Awaited<ReturnType<typeof appDeps.loadCandidateProfile>>;
+  evaluationPage?: Page;
   deps?: typeof appDeps;
 }) {
   const deps = args.deps ?? appDeps;
@@ -554,51 +596,55 @@ function createBatchJobEvaluator(args: {
     });
   }
 
-  return async (url: string) => {
-    const evaluationResult = await deps.withPage(
-      LINKEDIN_EVALUATION_SESSION_OPTIONS,
-      async (evaluationPage) => {
-        const extracted = await deps.extractJobText(evaluationPage, url);
-        const llmInput = deps.formatJobForLLM(extracted);
-        const parseResult = await deps.parseJob(llmInput);
-        const normalized = deps.normalizeParsedJob(
-          parseResult.parsed,
-          extracted,
-        );
-        const score = deps.scoreJob(normalized, args.scoringProfile);
-        const policy = deps.evaluatePolicy(normalized, args.scoringProfile);
-        const meetsThreshold = score.totalScore >= args.scoreThreshold;
-        const finalDecision: "APPLY" | "SKIP" =
-          policy.allowed && meetsThreshold ? "APPLY" : "SKIP";
-        const reason = !policy.allowed
-          ? policy.reasons.join(" ")
-          : meetsThreshold
-            ? `Score ${score.totalScore} meets the configured threshold of ${args.scoreThreshold}.`
-            : `Score ${score.totalScore} is below the configured threshold of ${args.scoreThreshold}.`;
+  const evaluateOnPage = async (evaluationPage: Page, url: string) => {
+    const extracted = await deps.extractJobText(evaluationPage, url);
+    const llmInput = deps.formatJobForLLM(extracted);
+    const parseResult = await deps.parseJob(llmInput);
+    const normalized = deps.normalizeParsedJob(
+      parseResult.parsed,
+      extracted,
+    );
+    const score = deps.scoreJob(normalized, args.scoringProfile);
+    const policy = deps.evaluatePolicy(normalized, args.scoringProfile);
+    const meetsThreshold = score.totalScore >= args.scoreThreshold;
+    const finalDecision: "APPLY" | "SKIP" =
+      policy.allowed && meetsThreshold ? "APPLY" : "SKIP";
+    const reason = !policy.allowed
+      ? policy.reasons.join(" ")
+      : meetsThreshold
+        ? `Score ${score.totalScore} meets the configured threshold of ${args.scoreThreshold}.`
+        : `Score ${score.totalScore} is below the configured threshold of ${args.scoreThreshold}.`;
 
-        deps.logger.info(
-          {
-            url,
-            finalDecision,
-            totalScore: score.totalScore,
-            policyAllowed: policy.allowed,
-            scoreThreshold: args.scoreThreshold,
-            reasons: !policy.allowed ? policy.reasons : [reason],
-          },
-          "LinkedIn Easy Apply job evaluated",
-        );
-
-        return {
-          shouldApply: finalDecision === "APPLY",
-          finalDecision,
-          score: score.totalScore,
-          reason,
-          policyAllowed: policy.allowed,
-        };
+    deps.logger.info(
+      {
+        url,
+        finalDecision,
+        totalScore: score.totalScore,
+        policyAllowed: policy.allowed,
+        scoreThreshold: args.scoreThreshold,
+        reasons: !policy.allowed ? policy.reasons : [reason],
       },
+      "LinkedIn Easy Apply job evaluated",
     );
 
-    return evaluationResult;
+    return {
+      shouldApply: finalDecision === "APPLY",
+      finalDecision,
+      score: score.totalScore,
+      reason,
+      policyAllowed: policy.allowed,
+    };
+  };
+
+  if (args.evaluationPage) {
+    return async (url: string) => evaluateOnPage(args.evaluationPage as Page, url);
+  }
+
+  return async (url: string) => {
+    return deps.withPage(
+      LINKEDIN_EVALUATION_SESSION_OPTIONS,
+      async (evaluationPage) => evaluateOnPage(evaluationPage, url),
+    );
   };
 }
 
@@ -666,12 +712,24 @@ async function runAnswerQuestionsFlow(
     "Prepared answer set saved",
   );
 
-  return {
+  const result = {
     mode: args.mode,
     profile,
     snapshot,
     answers,
     preparedAnswerSet,
+  };
+
+  const reportPath = await persistRunArtifact({
+    category: "answer-runs",
+    prefix: args.mode,
+    payload: result,
+    deps,
+  });
+
+  return {
+    ...result,
+    reportPath,
   };
 }
 
@@ -682,12 +740,6 @@ async function runEasyApplyDryRunFlow(
   const profile = await loadMasterProfileForArgs(args, deps);
   const scoringProfile = await deps.loadCandidateProfile();
   const resolveCandidateAnswer = createCandidateAnswerResolver(profile, deps);
-  const evaluateJob = createBatchJobEvaluator({
-    disableAiEvaluation: args.disableAiEvaluation,
-    scoreThreshold: args.scoreThreshold,
-    scoringProfile,
-    deps,
-  });
 
   let result;
   let reportPath: string | undefined;
@@ -696,6 +748,16 @@ async function runEasyApplyDryRunFlow(
       LINKEDIN_BROWSER_SESSION_OPTIONS,
       async (page) => {
         const driver = await deps.createEasyApplyDriver(page);
+        const evaluationPage = args.disableAiEvaluation
+          ? undefined
+          : await page.context().newPage();
+        const evaluateJob = createBatchJobEvaluator({
+          disableAiEvaluation: args.disableAiEvaluation,
+          scoreThreshold: args.scoreThreshold,
+          scoringProfile,
+          ...(evaluationPage ? { evaluationPage } : {}),
+          deps,
+        });
         const sharedInput = {
           driver,
           url: args.url,
@@ -704,14 +766,18 @@ async function runEasyApplyDryRunFlow(
           resolveAnswer: resolveCandidateAnswer,
         };
 
-        if (args.count > 1 || isLinkedInCollectionUrl(args.url)) {
-          return deps.runEasyApplyBatchDryRun({
-            ...sharedInput,
-            targetCount: args.count,
-          });
-        }
+        try {
+          if (args.count > 1 || isLinkedInCollectionUrl(args.url)) {
+            return await deps.runEasyApplyBatchDryRun({
+              ...sharedInput,
+              targetCount: args.count,
+            });
+          }
 
-        return deps.runEasyApplyDryRun(sharedInput);
+          return await deps.runEasyApplyDryRun(sharedInput);
+        } finally {
+          await evaluationPage?.close().catch(() => undefined);
+        }
       },
     );
   } catch (error) {
@@ -757,7 +823,7 @@ async function runEasyApplyDryRunFlow(
   );
 
   if ("jobs" in result) {
-    reportPath = await deps.writeRunReport({
+    reportPath = await persistRunArtifact({
       category: "batch-runs",
       prefix: "easy-apply-dry-run",
       payload: {
@@ -767,15 +833,31 @@ async function runEasyApplyDryRunFlow(
         scoreThreshold: args.scoreThreshold,
         result,
       },
+      deps,
     });
   }
 
-  return {
+  const response = {
     mode: args.mode,
     profile,
     easyApply: result,
     ...(reportPath ? { reportPath } : {}),
   };
+
+  if (!("jobs" in result)) {
+    reportPath = await persistRunArtifact({
+      category: "easy-apply-runs",
+      prefix: "easy-apply-dry-run",
+      payload: response,
+      deps,
+    });
+    return {
+      ...response,
+      reportPath,
+    };
+  }
+
+  return response;
 }
 
 async function runEasyApplyFlow(
@@ -786,7 +868,7 @@ async function runEasyApplyFlow(
   const resolveCandidateAnswer = createCandidateAnswerResolver(profile, deps);
 
   let result;
-  let reportPath: string | undefined;
+  let reportPath: string;
   try {
     result = await deps.withPage(
       LINKEDIN_BROWSER_SESSION_OPTIONS,
@@ -833,10 +915,22 @@ async function runEasyApplyFlow(
     "LinkedIn Easy Apply finished",
   );
 
+  reportPath = await persistRunArtifact({
+    category: "easy-apply-runs",
+    prefix: args.mode,
+    payload: {
+      mode: args.mode,
+      url: args.url,
+      result,
+    },
+    deps,
+  });
+
   return {
     mode: args.mode,
     profile,
     easyApply: result,
+    reportPath,
   };
 }
 
@@ -847,12 +941,6 @@ async function runEasyApplyBatchFlow(
   const profile = await loadMasterProfileForArgs(args, deps);
   const scoringProfile = await deps.loadCandidateProfile();
   const resolveCandidateAnswer = createCandidateAnswerResolver(profile, deps);
-  const evaluateJob = createBatchJobEvaluator({
-    disableAiEvaluation: args.disableAiEvaluation,
-    scoreThreshold: args.scoreThreshold,
-    scoringProfile,
-    deps,
-  });
 
   let result;
   let reportPath: string;
@@ -861,14 +949,29 @@ async function runEasyApplyBatchFlow(
       LINKEDIN_BROWSER_SESSION_OPTIONS,
       async (page) => {
         const driver = await deps.createEasyApplyDriver(page);
-        return deps.runEasyApplyBatch({
-          driver,
-          url: args.url,
-          targetCount: args.count,
-          candidateProfile: profile,
-          evaluateJob,
-          resolveAnswer: resolveCandidateAnswer,
+        const evaluationPage = args.disableAiEvaluation
+          ? undefined
+          : await page.context().newPage();
+        const evaluateJob = createBatchJobEvaluator({
+          disableAiEvaluation: args.disableAiEvaluation,
+          scoreThreshold: args.scoreThreshold,
+          scoringProfile,
+          ...(evaluationPage ? { evaluationPage } : {}),
+          deps,
         });
+
+        try {
+          return await deps.runEasyApplyBatch({
+            driver,
+            url: args.url,
+            targetCount: args.count,
+            candidateProfile: profile,
+            evaluateJob,
+            resolveAnswer: resolveCandidateAnswer,
+          });
+        } finally {
+          await evaluationPage?.close().catch(() => undefined);
+        }
       },
     );
   } catch (error) {
@@ -904,7 +1007,7 @@ async function runEasyApplyBatchFlow(
     "LinkedIn Easy Apply batch finished",
   );
 
-  reportPath = await deps.writeRunReport({
+  reportPath = await persistRunArtifact({
     category: "batch-runs",
     prefix: "easy-apply-batch",
     payload: {
@@ -914,6 +1017,7 @@ async function runEasyApplyBatchFlow(
       scoreThreshold: args.scoreThreshold,
       result,
     },
+    deps,
   });
 
   return {

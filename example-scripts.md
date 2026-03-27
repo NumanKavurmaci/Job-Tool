@@ -269,7 +269,7 @@ $env:LOCAL_LLM_MODEL='openai/gpt-oss-20b'
 @'
 import { main, appDeps } from "./src/index.ts";
 try {
-  const result = await main(["easy-apply-batch", "5"], appDeps);
+  const result = await main(["easy-apply-batch", "10"], appDeps);
   console.log(JSON.stringify(result.easyApply, null, 2));
 } finally {
   await appDeps.prisma.$disconnect();

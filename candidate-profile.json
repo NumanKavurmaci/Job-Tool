@@ -13,6 +13,19 @@
     "Prisma",
     "PostgreSQL"
   ],
+  "aspirationalTechStack": [
+    "Python",
+    "LLM APIs",
+    "OpenAI",
+    "Azure OpenAI",
+    "AIOps",
+    "n8n",
+    "Airflow",
+    "Prefect",
+    "Docker",
+    "CI/CD",
+    "Linux"
+  ],
   "excludedRoles": ["Senior", "Lead", "Staff", "Principal"],
   "preferredLocations": ["Remote", "Europe", "Turkey"],
   "excludedLocations": ["Istanbul onsite"],

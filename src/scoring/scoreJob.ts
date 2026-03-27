@@ -29,8 +29,12 @@ function scoreSkill(job: NormalizedJob, profile: CandidateProfile): number {
     [...job.mustHaveSkills, ...job.technologies],
     profile.preferredTechStack,
   );
+  const aspirationalOverlap = overlapRatio(
+    [...job.mustHaveSkills, ...job.technologies],
+    profile.aspirationalTechStack,
+  );
 
-  return Math.round(mustHaveRatio * 20 + techOverlap * 15);
+  return Math.round(mustHaveRatio * 18 + techOverlap * 12 + aspirationalOverlap * 5);
 }
 
 function scoreSeniority(job: NormalizedJob, profile: CandidateProfile): number {
@@ -98,18 +102,25 @@ function scoreLocation(job: NormalizedJob, profile: CandidateProfile): number {
 }
 
 function scoreTech(job: NormalizedJob, profile: CandidateProfile): number {
-  return Math.round(overlapRatio(job.technologies, profile.preferredTechStack) * 15);
+  const preferredTechScore =
+    overlapRatio(job.technologies, profile.preferredTechStack) * 12;
+  const aspirationalTechScore =
+    overlapRatio(job.technologies, profile.aspirationalTechStack) * 3;
+
+  return Math.round(preferredTechScore + aspirationalTechScore);
 }
 
 function scoreBonus(job: NormalizedJob, profile: CandidateProfile): number {
   const niceToHave = overlapRatio(job.niceToHaveSkills, profile.preferredTechStack) * 6;
+  const aspirationalNiceToHave =
+    overlapRatio(job.niceToHaveSkills, profile.aspirationalTechStack) * 2;
   const roleMatch = profile.preferredRoles.some((role) =>
     (job.title ?? "").toLowerCase().includes(role.toLowerCase()),
   )
     ? 4
     : 0;
 
-  return Math.round(niceToHave + roleMatch);
+  return Math.round(niceToHave + aspirationalNiceToHave + roleMatch);
 }
 
 export function scoreJob(job: NormalizedJob, profile: CandidateProfile): JobScore {

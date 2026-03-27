@@ -106,15 +106,34 @@ async function loadIndexModule(readFileMock?: ReturnType<typeof vi.fn>) {
 }
 
 function mockWithPageSuccess(mock: ReturnType<typeof vi.fn>) {
+  const evaluationPage = {
+    fake: "evaluation-page",
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+  const newEvaluationPageMock = vi.fn().mockResolvedValue(evaluationPage);
+  const context = {
+    newPage: newEvaluationPageMock,
+  };
+  const page = {
+    fake: "page",
+    context: () => context,
+  };
+
   mock.mockImplementation(
     async (
       optionsOrFn: unknown,
       maybeFn?: (page: unknown) => Promise<unknown>,
     ) => {
       const fn = typeof optionsOrFn === "function" ? optionsOrFn : maybeFn;
-      return fn?.({ fake: "page" });
+      return fn?.(page);
     },
   );
+
+  return {
+    page,
+    evaluationPage,
+    newEvaluationPageMock,
+  };
 }
 
 describe("phase 5 index flows", () => {
@@ -189,6 +208,7 @@ describe("phase 5 index flows", () => {
     );
 
     expect(result.snapshot.id).toBe("snapshot_1");
+    expect(result.reportPath).toBe("artifacts/batch-runs/report.json");
     expect(mocks.createSnapshotMock).toHaveBeenCalledWith({
       data: {
         fullName: "Jane Doe",
@@ -207,6 +227,12 @@ describe("phase 5 index flows", () => {
         fullName: "Jane Doe",
       }),
       "Candidate profile snapshot saved",
+    );
+    expect(mocks.writeRunReportMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: "profile-runs",
+        prefix: "build-profile",
+      }),
     );
   });
 
@@ -289,6 +315,7 @@ describe("phase 5 index flows", () => {
     );
 
     expect(result.preparedAnswerSet.id).toBe("answers_1");
+    expect(result.reportPath).toBe("artifacts/batch-runs/report.json");
     expect(readFileMock).toHaveBeenCalledWith("./questions.json", "utf8");
     expect(mocks.resolveAnswerMock).toHaveBeenCalledTimes(1);
     expect(mocks.createPreparedAnswerSetMock).toHaveBeenCalledWith({
@@ -316,6 +343,12 @@ describe("phase 5 index flows", () => {
         answerCount: 1,
       }),
       "Prepared answer set saved",
+    );
+    expect(mocks.writeRunReportMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: "answer-runs",
+        prefix: "answer-questions",
+      }),
     );
   });
 
@@ -463,7 +496,7 @@ describe("phase 5 index flows", () => {
       sourceMetadata: { resumePath: "./resume.txt" },
     });
     mocks.createEasyApplyDriverMock.mockReturnValue({ driver: true });
-    mockWithPageSuccess(mocks.withPageMock);
+    const pageRuntime = mockWithPageSuccess(mocks.withPageMock);
     mocks.runEasyApplyMock.mockResolvedValue({
       status: "submitted",
       steps: [],
@@ -477,6 +510,7 @@ describe("phase 5 index flows", () => {
     );
 
     expect(result.easyApply.status).toBe("submitted");
+    expect(result.reportPath).toBe("artifacts/batch-runs/report.json");
     expect(mocks.runEasyApplyMock).toHaveBeenCalledWith(
       expect.objectContaining({
         url: "https://www.linkedin.com/jobs/view/1",
@@ -494,6 +528,12 @@ describe("phase 5 index flows", () => {
       }),
       "LinkedIn Easy Apply finished",
     );
+    expect(mocks.writeRunReportMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: "easy-apply-runs",
+        prefix: "easy-apply",
+      }),
+    );
   });
 
   it("wraps real easy apply flow failures with a linkedin phase error", async () => {
@@ -504,7 +544,7 @@ describe("phase 5 index flows", () => {
       sourceMetadata: { resumePath: "./resume.txt" },
     });
     mocks.createEasyApplyDriverMock.mockReturnValue({ driver: true });
-    mockWithPageSuccess(mocks.withPageMock);
+    const pageRuntime = mockWithPageSuccess(mocks.withPageMock);
     mocks.runEasyApplyMock.mockRejectedValue(new Error("submit failed"));
 
     await expect(
@@ -554,7 +594,7 @@ describe("phase 5 index flows", () => {
       },
     });
     mocks.createEasyApplyDriverMock.mockReturnValue({ driver: true });
-    mockWithPageSuccess(mocks.withPageMock);
+    const pageRuntime = mockWithPageSuccess(mocks.withPageMock);
     mocks.runEasyApplyBatchMock.mockResolvedValue({
       status: "completed",
       collectionUrl: "https://www.linkedin.com/jobs/collections/easy-apply",
@@ -635,7 +675,7 @@ describe("phase 5 index flows", () => {
       },
     });
     mocks.createEasyApplyDriverMock.mockReturnValue({ driver: true });
-    mockWithPageSuccess(mocks.withPageMock);
+    const pageRuntime = mockWithPageSuccess(mocks.withPageMock);
     mocks.runEasyApplyBatchMock.mockRejectedValue(new Error("batch failed"));
 
     await expect(
@@ -723,6 +763,7 @@ describe("phase 5 index flows", () => {
     );
 
     expect(result.easyApply.status).toBe("ready_to_submit");
+    expect(result.reportPath).toBe("artifacts/batch-runs/report.json");
     expect(mocks.createEasyApplyDriverMock).toHaveBeenCalled();
     expect(mocks.runEasyApplyDryRunMock).toHaveBeenCalled();
     expect(mocks.runEasyApplyBatchDryRunMock).not.toHaveBeenCalled();
@@ -732,6 +773,12 @@ describe("phase 5 index flows", () => {
         stepCount: 0,
       }),
       "LinkedIn Easy Apply dry run finished",
+    );
+    expect(mocks.writeRunReportMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: "easy-apply-runs",
+        prefix: "easy-apply-dry-run",
+      }),
     );
   });
 
@@ -840,7 +887,7 @@ describe("phase 5 index flows", () => {
       },
     });
     mocks.createEasyApplyDriverMock.mockReturnValue({ driver: true });
-    mockWithPageSuccess(mocks.withPageMock);
+    const pageRuntime = mockWithPageSuccess(mocks.withPageMock);
     mocks.runEasyApplyBatchDryRunMock.mockResolvedValue({
       status: "completed",
       collectionUrl: "https://www.linkedin.com/jobs/collections/easy-apply",
@@ -946,24 +993,135 @@ describe("phase 5 index flows", () => {
       }),
       expect.any(Function),
     );
-    expect(mocks.withPageMock).toHaveBeenNthCalledWith(
+    expect(mocks.withPageMock).toHaveBeenCalledTimes(1);
+    expect(pageRuntime.newEvaluationPageMock).toHaveBeenCalledTimes(1);
+    expect(pageRuntime.evaluationPage.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("reuses a shared batch evaluation page instead of launching nested browser sessions", async () => {
+    const { module, mocks, deps } = await loadIndexModule();
+    mocks.loadCandidateMasterProfileMock.mockResolvedValue({
+      fullName: "Jane Doe",
+      linkedinUrl: "https://linkedin.com/in/jane",
+      sourceMetadata: { resumePath: "./resume.txt" },
+    });
+    mocks.loadCandidateProfileMock.mockResolvedValue({
+      yearsOfExperience: 3,
+      preferredRoles: ["Backend Engineer"],
+      preferredTechStack: ["TypeScript"],
+      aspirationalTechStack: [],
+      excludedRoles: [],
+      preferredLocations: [],
+      excludedLocations: [],
+      allowedHybridLocations: ["Ankara"],
+      remotePreference: "remote",
+      remoteOnly: true,
+      visaRequirement: "not-required",
+      languages: [],
+      salaryExpectation: null,
+      salaryExpectations: { usd: null, eur: null, try: null },
+      gpa: null,
+      linkedinUrl: null,
+      workAuthorizationStatus: "authorized",
+      requiresSponsorship: false,
+      willingToRelocate: false,
+      disability: {
+        hasVisualDisability: false,
+        disabilityPercentage: null,
+        requiresAccommodation: null,
+        accommodationNotes: null,
+        disclosurePreference: "manual-review",
+      },
+    });
+    mocks.createEasyApplyDriverMock.mockReturnValue({ driver: true });
+    const pageRuntime = mockWithPageSuccess(mocks.withPageMock);
+    mocks.runEasyApplyBatchDryRunMock.mockResolvedValue({
+      status: "completed",
+      collectionUrl: "https://www.linkedin.com/jobs/collections/easy-apply",
+      requestedCount: 2,
+      attemptedCount: 1,
+      evaluatedCount: 2,
+      skippedCount: 1,
+      pagesVisited: 1,
+      jobs: [],
+      stopReason: "Processed 1 LinkedIn Easy Apply job(s).",
+    });
+    deps.extractJobText = vi.fn().mockResolvedValue({
+      rawText: "Job body",
+      title: "Backend Engineer",
+      company: "Acme",
+      location: "Remote",
+      platform: "linkedin",
+      applicationType: "easy_apply",
+      applyUrl: "https://linkedin.com/apply",
+      currentUrl: "https://www.linkedin.com/jobs/view/1",
+      descriptionText: "TypeScript backend role",
+      requirementsText: "Need TypeScript",
+      benefitsText: null,
+    });
+    deps.formatJobForLLM = vi.fn().mockReturnValue("Formatted prompt");
+    deps.parseJob = vi.fn().mockResolvedValue({
+      parsed: {
+        title: "Backend Engineer",
+        company: "Acme",
+        location: "Remote",
+        platform: "linkedin",
+        seniority: "mid",
+        mustHaveSkills: ["TypeScript"],
+        niceToHaveSkills: [],
+        technologies: ["TypeScript"],
+        yearsRequired: 3,
+        remoteType: "remote",
+        visaSponsorship: "no",
+        workAuthorization: "authorized",
+      },
+      provider: "local",
+      model: "openai/gpt-oss-20b",
+      rawText: "{}",
+    });
+    deps.normalizeParsedJob = vi.fn().mockReturnValue({
+      title: "Backend Engineer",
+      company: "Acme",
+      location: "Remote",
+      remoteType: "remote",
+      seniority: "mid",
+      mustHaveSkills: ["TypeScript"],
+      niceToHaveSkills: [],
+      technologies: ["TypeScript"],
+      yearsRequired: 3,
+      platform: "linkedin",
+      applicationType: "easy_apply",
+      visaSponsorship: "no",
+      workAuthorization: "authorized",
+      openQuestionsCount: 0,
+    });
+    deps.scoreJob = vi.fn().mockReturnValue({
+      totalScore: 81,
+      breakdown: { skill: 30, seniority: 18, location: 20, tech: 10, bonus: 3 },
+    });
+    deps.evaluatePolicy = vi.fn().mockReturnValue({ allowed: true, reasons: [] });
+
+    await module.main(
+      ["easy-apply-dry-run", "--count", "2", "--resume", "./resume.txt"],
+      deps,
+    );
+
+    const batchArgs = mocks.runEasyApplyBatchDryRunMock.mock.calls[0]?.[0];
+    await batchArgs.evaluateJob("https://www.linkedin.com/jobs/view/1");
+    await batchArgs.evaluateJob("https://www.linkedin.com/jobs/view/2");
+
+    expect(mocks.withPageMock).toHaveBeenCalledTimes(1);
+    expect(pageRuntime.newEvaluationPageMock).toHaveBeenCalledTimes(1);
+    expect(deps.extractJobText).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({
-        persistentProfilePath: ".auth/linkedin-profile",
-        storageStatePath: ".auth/linkedin-session.json",
-        persistStorageState: true,
-      }),
-      expect.any(Function),
+      pageRuntime.evaluationPage,
+      "https://www.linkedin.com/jobs/view/1",
     );
-    expect(mocks.withPageMock).toHaveBeenNthCalledWith(
+    expect(deps.extractJobText).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({
-        storageStatePath: ".auth/linkedin-session.json",
-        persistStorageState: true,
-      }),
-      expect.any(Function),
+      pageRuntime.evaluationPage,
+      "https://www.linkedin.com/jobs/view/2",
     );
-    expect(mocks.withPageMock.mock.calls[1]?.[0]).not.toHaveProperty("persistentProfilePath");
   });
 
   it("uses the configured score threshold when evaluating batch jobs", async () => {
@@ -1304,6 +1462,7 @@ describe("phase 5 index flows", () => {
     expect(mocks.getConfiguredProviderInfoMock).toHaveBeenCalledTimes(1);
     expect(mocks.parseJobMock).toHaveBeenCalledWith("Formatted prompt");
     expect(result.finalDecision).toBe("APPLY");
+    expect(result.reportPath).toBe("artifacts/batch-runs/report.json");
     expect(result.jobPosting.id).toBe("job_1");
     expect(mocks.upsertMock).toHaveBeenCalledWith({
       where: { url: "https://jobs.example.com/1" },
@@ -1359,6 +1518,12 @@ describe("phase 5 index flows", () => {
         totalScore: 82,
       }),
       "Job scored",
+    );
+    expect(mocks.writeRunReportMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: "job-runs",
+        prefix: "decide",
+      }),
     );
   });
 

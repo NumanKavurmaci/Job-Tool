@@ -5,6 +5,19 @@ const profile = {
   yearsOfExperience: 3,
   preferredRoles: ["Backend Engineer", "Software Engineer"],
   preferredTechStack: ["TypeScript", "Node.js", "Prisma", "PostgreSQL"],
+  aspirationalTechStack: [
+    "Python",
+    "LLM APIs",
+    "OpenAI",
+    "Azure OpenAI",
+    "AIOps",
+    "n8n",
+    "Airflow",
+    "Prefect",
+    "Docker",
+    "CI/CD",
+    "Linux",
+  ],
   excludedRoles: ["Senior", "Staff", "Lead"],
   preferredLocations: ["Remote", "Europe"],
   excludedLocations: ["Istanbul onsite"],
@@ -262,6 +275,50 @@ describe("scoreJob", () => {
 
     expect(hybridResult.breakdown.location).toBe(14);
     expect(blockedHybridResult.breakdown.location).toBe(2);
+  });
+
+  it("gives partial credit for aspirational technologies without treating them as core experience", () => {
+    const result = scoreJob(
+      {
+        title: "Software Engineer (AIOps)",
+        company: "Bentego",
+        location: "Türkiye",
+        remoteType: "remote",
+        seniority: "mid",
+        mustHaveSkills: [
+          "Python",
+          "LLM APIs",
+          "Linux environments",
+          "Docker",
+          "CI/CD pipelines",
+        ],
+        niceToHaveSkills: ["n8n", "Airflow", "OpenAI"],
+        technologies: [
+          "Python",
+          "LLM APIs",
+          "OpenAI",
+          "Azure OpenAI",
+          "Docker",
+          "CI/CD",
+          "Linux",
+          "n8n",
+          "Airflow",
+        ],
+        yearsRequired: 2,
+        platform: "linkedin",
+        applicationType: "easy_apply",
+        visaSponsorship: "unknown",
+        workAuthorization: "unknown",
+        openQuestionsCount: 0,
+      },
+      profile,
+    );
+
+    expect(result.breakdown.skill).toBeGreaterThan(0);
+    expect(result.breakdown.tech).toBeGreaterThan(0);
+    expect(result.breakdown.bonus).toBeGreaterThan(0);
+    expect(result.totalScore).toBeGreaterThanOrEqual(50);
+    expect(result.totalScore).toBeLessThan(75);
   });
 
   it("covers junior and intern scoring branches", () => {
