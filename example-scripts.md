@@ -79,7 +79,7 @@ Run a dry run for one specific Easy Apply job:
 $env:LLM_PROVIDER='local'
 $env:LOCAL_LLM_BASE_URL='http://127.0.0.1:1234/v1'
 $env:LOCAL_LLM_MODEL='openai/gpt-oss-20b'
-npm run dev -- easy-apply-dry-run "https://www.linkedin.com/jobs/view/JOB_ID"
+npm run dev -- easy-apply-dry-run
 ```
 
 Run from the default LinkedIn Easy Apply collection:

@@ -513,6 +513,14 @@ async function runEasyApplyDryRunFlow(
       },
     );
   } catch (error) {
+    deps.logger.error(
+      {
+        event: "linkedin.easy_apply.failed",
+        url: args.url,
+        error: serializeError(error),
+      },
+      "LinkedIn Easy Apply run failed",
+    );
     throw new AppError({
       message: "LinkedIn Easy Apply flow failed.",
       phase: "linkedin_easy_apply",

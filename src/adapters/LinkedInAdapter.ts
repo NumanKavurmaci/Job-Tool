@@ -1,6 +1,8 @@
 import type { Page } from "@playwright/test";
 import { env } from "../config/env.js";
+import { capturePageArtifacts } from "../utils/artifacts.js";
 import { AppError } from "../utils/errors.js";
+import { logger } from "../utils/logger.js";
 import type { ExtractedJobContent, JobAdapter } from "./types.js";
 import {
   compactText,
@@ -264,6 +266,15 @@ export async function ensureLinkedInAuthenticated(page: Page, url: string): Prom
     await gotoJobPage(page, url);
 
     const initialState = await getLinkedInAuthState(page);
+    logger.info(
+      {
+        event: "linkedin.auth.state",
+        state: initialState,
+        url: page.url(),
+        title: await page.title().catch(() => ""),
+      },
+      "LinkedIn auth state detected",
+    );
     if (initialState === "authenticated") {
       return;
     }
@@ -289,25 +300,36 @@ export async function ensureLinkedInAuthenticated(page: Page, url: string): Prom
     const submitButton = page.locator("button[type='submit']").first();
 
     if (!usernameInput || !passwordInput) {
+      const artifacts = await capturePageArtifacts(page, "linkedin-login-form-not-found");
       throw new AppError({
         message: "LinkedIn login form was not detected.",
         phase: "linkedin_auth",
         code: "LINKEDIN_LOGIN_FORM_NOT_FOUND",
-        details: { url: page.url(), title: await page.title() },
+        details: {
+          url: page.url(),
+          title: await page.title(),
+          ...artifacts,
+        },
       });
     }
 
+    logger.info({ event: "linkedin.auth.submit", url: page.url() }, "Submitting LinkedIn credentials");
     await usernameInput.fill(env.LINKEDIN_USERNAME);
     await passwordInput.fill(env.LINKEDIN_PASSWORD);
     await submitButton.click();
     const postSubmitState = await waitForLinkedInAuthResolution(page);
 
     if (postSubmitState === "challenge") {
+      const artifacts = await capturePageArtifacts(page, "linkedin-auth-challenge-post-submit");
       throw new AppError({
         message: "LinkedIn login reached a verification challenge. Manual verification is required before automation can continue.",
         phase: "linkedin_auth",
         code: "LINKEDIN_AUTHENTICATION_CHALLENGE",
-        details: { url: page.url(), title: await page.title() },
+        details: {
+          url: page.url(),
+          title: await page.title(),
+          ...artifacts,
+        },
       });
     }
 
@@ -315,20 +337,30 @@ export async function ensureLinkedInAuthenticated(page: Page, url: string): Prom
 
     const finalState = await waitForLinkedInAuthResolution(page, 5_000);
     if (finalState === "challenge") {
+      const artifacts = await capturePageArtifacts(page, "linkedin-auth-challenge-after-login");
       throw new AppError({
         message: "LinkedIn redirected to a verification challenge after login. Manual verification is required before automation can continue.",
         phase: "linkedin_auth",
         code: "LINKEDIN_AUTHENTICATION_CHALLENGE",
-        details: { url: page.url(), title: await page.title() },
+        details: {
+          url: page.url(),
+          title: await page.title(),
+          ...artifacts,
+        },
       });
     }
 
     if (finalState !== "authenticated") {
+      const artifacts = await capturePageArtifacts(page, "linkedin-auth-not-unlocked");
       throw new AppError({
         message: "LinkedIn authentication did not unlock the job page. The session may need manual verification.",
         phase: "linkedin_auth",
         code: "LINKEDIN_AUTHENTICATION_FAILED",
-        details: { url: page.url(), title: await page.title() },
+        details: {
+          url: page.url(),
+          title: await page.title(),
+          ...artifacts,
+        },
       });
     }
   }
