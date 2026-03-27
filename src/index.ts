@@ -81,7 +81,14 @@ export const appDeps = {
 export type CliArgs =
   | { mode: "score" | "decide"; url: string }
   | { mode: "easy-apply"; url: string; resumePath: string }
-  | { mode: "easy-apply-dry-run"; url: string; resumePath: string; count: number }
+  | {
+      mode: "easy-apply-dry-run";
+      url: string;
+      resumePath: string;
+      count: number;
+      disableAiEvaluation: boolean;
+      scoreThreshold: number;
+    }
   | {
       mode: "build-profile";
       resumePath: string;
@@ -97,7 +104,13 @@ export type CliArgs =
 export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
   const [first] = args;
   const tail = args.slice(1);
-  const valueFlags = new Set(["--resume", "--linkedin", "--questions", "--count"]);
+  const valueFlags = new Set([
+    "--resume",
+    "--linkedin",
+    "--questions",
+    "--count",
+    "--score-threshold",
+  ]);
 
   const getFlag = (name: string): string | undefined => {
     const index = tail.findIndex((value) => value === name);
@@ -136,6 +149,7 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
 
     return parsed;
   };
+  const hasFlag = (name: string): boolean => tail.includes(name);
 
   if (!first) {
     throw new Error(
@@ -183,6 +197,8 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
     const resumePath = getFlag("--resume") ?? DEFAULT_RESUME_PATH;
     const positionalArgs = getPositionalTailArgs();
     const countFromFlag = getIntegerFlag("--count");
+    const scoreThreshold = getIntegerFlag("--score-threshold") ?? 75;
+    const disableAiEvaluation = hasFlag("--disable-ai-evaluation");
     const trailingPositional = positionalArgs.at(-1);
     const positionalCount =
       !countFromFlag && trailingPositional && /^\d+$/.test(trailingPositional)
@@ -203,6 +219,8 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
       url,
       resumePath,
       count,
+      disableAiEvaluation,
+      scoreThreshold,
     };
   }
 
@@ -425,6 +443,69 @@ function createCandidateAnswerResolver(
     });
 }
 
+function createBatchJobEvaluator(args: {
+  disableAiEvaluation: boolean;
+  scoreThreshold: number;
+  scoringProfile: Awaited<ReturnType<typeof appDeps.loadCandidateProfile>>;
+  deps?: typeof appDeps;
+}) {
+  const deps = args.deps ?? appDeps;
+
+  if (args.disableAiEvaluation) {
+    return async (_url: string) => ({
+      shouldApply: true,
+      finalDecision: "APPLY" as const,
+      score: 0,
+      reason: "AI evaluation disabled for this batch run.",
+      policyAllowed: true,
+    });
+  }
+
+  return async (url: string) => {
+    const evaluationResult = await deps.withPage(
+      LINKEDIN_EVALUATION_SESSION_OPTIONS,
+      async (evaluationPage) => {
+        const extracted = await deps.extractJobText(evaluationPage, url);
+        const llmInput = deps.formatJobForLLM(extracted);
+        const parseResult = await deps.parseJob(llmInput);
+        const normalized = deps.normalizeParsedJob(parseResult.parsed, extracted);
+        const score = deps.scoreJob(normalized, args.scoringProfile);
+        const policy = deps.evaluatePolicy(normalized, args.scoringProfile);
+        const meetsThreshold = score.totalScore >= args.scoreThreshold;
+        const finalDecision: "APPLY" | "SKIP" =
+          policy.allowed && meetsThreshold ? "APPLY" : "SKIP";
+        const reason = !policy.allowed
+          ? policy.reasons.join(" ")
+          : meetsThreshold
+            ? `Score ${score.totalScore} meets the configured threshold of ${args.scoreThreshold}.`
+            : `Score ${score.totalScore} is below the configured threshold of ${args.scoreThreshold}.`;
+
+        deps.logger.info(
+          {
+            url,
+            finalDecision,
+            totalScore: score.totalScore,
+            policyAllowed: policy.allowed,
+            scoreThreshold: args.scoreThreshold,
+            reasons: !policy.allowed ? policy.reasons : [reason],
+          },
+          "LinkedIn Easy Apply job evaluated",
+        );
+
+        return {
+          shouldApply: finalDecision === "APPLY",
+          finalDecision,
+          score: score.totalScore,
+          reason,
+          policyAllowed: policy.allowed,
+        };
+      },
+    );
+
+    return evaluationResult;
+  };
+}
+
 async function runAnswerQuestionsFlow(
   args: Extract<CliArgs, { mode: "answer-questions" }>,
   deps = appDeps,
@@ -505,46 +586,18 @@ async function runEasyApplyDryRunFlow(
   const profile = await loadMasterProfileForArgs(args, deps);
   const scoringProfile = await deps.loadCandidateProfile();
   const resolveCandidateAnswer = createCandidateAnswerResolver(profile, deps);
+  const evaluateJob = createBatchJobEvaluator({
+    disableAiEvaluation: args.disableAiEvaluation,
+    scoreThreshold: args.scoreThreshold,
+    scoringProfile,
+    deps,
+  });
 
   let result;
   try {
     result = await deps.withPage(LINKEDIN_BROWSER_SESSION_OPTIONS, async (page) =>
       {
         const driver = await deps.createEasyApplyDriver(page);
-        const evaluateJob = async (url: string) => {
-          const evaluationResult = await deps.withPage(LINKEDIN_EVALUATION_SESSION_OPTIONS, async (evaluationPage) => {
-            const extracted = await deps.extractJobText(evaluationPage, url);
-            const llmInput = deps.formatJobForLLM(extracted);
-            const parseResult = await deps.parseJob(llmInput);
-            const normalized = deps.normalizeParsedJob(parseResult.parsed, extracted);
-            const score = deps.scoreJob(normalized, scoringProfile);
-            const policy = deps.evaluatePolicy(normalized, scoringProfile);
-            const decision = deps.decideJob(score);
-            const finalDecision = policy.allowed ? decision.decision : "SKIP";
-            const reason = policy.allowed ? decision.reason : policy.reasons.join(" ");
-
-            deps.logger.info(
-              {
-                url,
-                finalDecision,
-                totalScore: score.totalScore,
-                policyAllowed: policy.allowed,
-                reasons: policy.allowed ? [decision.reason] : policy.reasons,
-              },
-              "LinkedIn Easy Apply job evaluated",
-            );
-
-            return {
-              shouldApply: finalDecision === "APPLY",
-              finalDecision,
-              score: score.totalScore,
-              reason,
-              policyAllowed: policy.allowed,
-            };
-          });
-
-          return evaluationResult;
-        };
         const sharedInput = {
           driver,
           url: args.url,
@@ -590,6 +643,8 @@ async function runEasyApplyDryRunFlow(
           skippedCount: result.skippedCount,
           requestedCount: result.requestedCount,
           pagesVisited: result.pagesVisited,
+          disableAiEvaluation: args.disableAiEvaluation,
+          scoreThreshold: args.scoreThreshold,
           stopReason: result.stopReason,
         }
       : {

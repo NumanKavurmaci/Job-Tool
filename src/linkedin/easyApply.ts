@@ -131,6 +131,58 @@ interface StepExecutionResult {
 
 type SubmitMode = "dry-run" | "submit";
 
+function buildJobProcessingFailure(url: string, error: unknown): EasyApplyRunResult {
+  return {
+    status: "stopped_unknown_action",
+    steps: [],
+    stopReason: `Job processing failed: ${getErrorMessage(error)}`,
+    url,
+  };
+}
+
+function buildAlreadyAppliedBatchResult(url: string): EasyApplyBatchJobResult {
+  return {
+    url,
+    evaluation: {
+      shouldApply: false,
+      finalDecision: "SKIP",
+      score: 0,
+      reason: "Job already has a LinkedIn applied badge.",
+      policyAllowed: true,
+    },
+  };
+}
+
+async function collectVisibleBatchJobs(
+  driver: EasyApplyDriver,
+): Promise<EasyApplyCollectionJob[]> {
+  if (driver.collectVisibleJobs) {
+    return driver.collectVisibleJobs();
+  }
+
+  return ((await driver.collectVisibleJobUrls?.()) ?? []).map((url) => ({
+    url,
+    alreadyApplied: false,
+  }));
+}
+
+async function processApprovedBatchJob(
+  input: EasyApplyBatchRunInput,
+  url: string,
+  submitMode: SubmitMode,
+): Promise<EasyApplyRunResult> {
+  return runEasyApplyInternal(
+    {
+      driver: input.driver,
+      url,
+      candidateProfile: input.candidateProfile,
+      resolveAnswer: input.resolveAnswer,
+      ...(input.maxSteps ? { maxSteps: input.maxSteps } : {}),
+    },
+    submitMode,
+  );
+}
+
 function createSkippedAnswer(
   question: EasyApplyQuestionView,
   details: string,
@@ -479,12 +531,7 @@ export async function runEasyApplyBatchInternal(
   pagesVisited += 1;
 
   while (approvedUrls.length < requestedCount) {
-    const visibleJobs = input.driver.collectVisibleJobs
-      ? await input.driver.collectVisibleJobs()
-      : ((await input.driver.collectVisibleJobUrls?.()) ?? []).map((url) => ({
-          url,
-          alreadyApplied: false,
-        }));
+    const visibleJobs = await collectVisibleBatchJobs(input.driver);
 
     for (const job of visibleJobs) {
       const { url, alreadyApplied } = job;
@@ -496,16 +543,7 @@ export async function runEasyApplyBatchInternal(
 
       if (alreadyApplied) {
         skippedCount += 1;
-        jobs.push({
-          url,
-          evaluation: {
-            shouldApply: false,
-            finalDecision: "SKIP",
-            score: 0,
-            reason: "Job already has a LinkedIn applied badge.",
-            policyAllowed: true,
-          },
-        });
+        jobs.push(buildAlreadyAppliedBatchResult(url));
         continue;
       }
 
@@ -555,23 +593,9 @@ export async function runEasyApplyBatchInternal(
   for (const url of approvedUrls) {
     let result: EasyApplyRunResult;
     try {
-      result = await runEasyApplyInternal(
-        {
-          driver: input.driver,
-          url,
-          candidateProfile: input.candidateProfile,
-          resolveAnswer: input.resolveAnswer,
-          ...(input.maxSteps ? { maxSteps: input.maxSteps } : {}),
-        },
-        submitMode,
-      );
+      result = await processApprovedBatchJob(input, url, submitMode);
     } catch (error) {
-      result = {
-        status: "stopped_unknown_action",
-        steps: [],
-        stopReason: `Job processing failed: ${getErrorMessage(error)}`,
-        url,
-      };
+      result = buildJobProcessingFailure(url, error);
     }
 
     const entry = jobs.find((job) => job.url === url);

@@ -73,6 +73,8 @@ npm run dev -- answer-questions --resume "./cv.pdf" --questions "./questions.jso
 npm run dev -- easy-apply-dry-run "https://www.linkedin.com/jobs/view/123"
 npm run dev -- easy-apply-dry-run
 npm run dev -- easy-apply-dry-run 10
+npm run dev -- easy-apply-dry-run --score-threshold 60 10
+npm run dev -- easy-apply-dry-run --disable-ai-evaluation 10
 npm run dev -- easy-apply "https://www.linkedin.com/jobs/view/123"
 ```
 
@@ -81,6 +83,10 @@ npm run dev -- easy-apply "https://www.linkedin.com/jobs/view/123"
 When a number is passed, the tool treats it as the target number of matching LinkedIn Easy Apply jobs to process from the default collection.
 
 `easy-apply` is a single-job command. Collection URLs are only supported by `easy-apply-dry-run`.
+
+Batch dry runs also support:
+- `--score-threshold <number>` to control the minimum score required before a job is attempted
+- `--disable-ai-evaluation` to skip pre-application AI evaluation and process matching jobs directly
 
 ## Testing
 

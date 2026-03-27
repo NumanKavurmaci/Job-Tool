@@ -100,6 +100,24 @@ $env:LOCAL_LLM_MODEL='openai/gpt-oss-20b'
 npm run dev -- easy-apply-dry-run 10
 ```
 
+Run a batch dry run with a custom score threshold:
+
+```powershell
+$env:LLM_PROVIDER='local'
+$env:LOCAL_LLM_BASE_URL='http://127.0.0.1:1234/v1'
+$env:LOCAL_LLM_MODEL='openai/gpt-oss-20b'
+npm run dev -- easy-apply-dry-run --score-threshold 60 10
+```
+
+Run a batch dry run with AI evaluation disabled:
+
+```powershell
+$env:LLM_PROVIDER='local'
+$env:LOCAL_LLM_BASE_URL='http://127.0.0.1:1234/v1'
+$env:LOCAL_LLM_MODEL='openai/gpt-oss-20b'
+npm run dev -- easy-apply-dry-run --disable-ai-evaluation 10
+```
+
 Run a batch dry run against a specific LinkedIn collection URL:
 
 ```powershell
@@ -197,6 +215,8 @@ npm run test:local-llm
 - `easy-apply` accepts a single LinkedIn job URL only.
 - Collection/batch processing is currently exposed only through `easy-apply-dry-run`.
 - The default Easy Apply root URL is `https://www.linkedin.com/jobs/collections/easy-apply`.
+- `--score-threshold` changes the fit gate for batch runs.
+- `--disable-ai-evaluation` disables the batch fit gate and processes jobs directly.
 - In batch mode, the tool evaluates jobs first and only attempts jobs that score as `APPLY`.
 - Already-applied LinkedIn jobs are skipped automatically.
 - LinkedIn session state is persisted at `.auth/linkedin-session.json` by default.

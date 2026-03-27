@@ -192,6 +192,16 @@ npm run dev -- easy-apply-dry-run "https://www.linkedin.com/jobs/collections/eas
 
 The current CLI only supports batch processing in dry-run mode. `easy-apply` is reserved for a single LinkedIn job URL and will reject collection URLs.
 
+Optional batch controls:
+
+```bash
+npm run dev -- easy-apply-dry-run --score-threshold 60 10
+npm run dev -- easy-apply-dry-run --disable-ai-evaluation 10
+```
+
+- `--score-threshold` changes the score gate used before a job is attempted in batch mode
+- `--disable-ai-evaluation` skips extraction/LLM scoring and processes jobs without the AI fit gate
+
 ## Pipelines
 
 ### Job pipeline

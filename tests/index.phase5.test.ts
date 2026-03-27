@@ -323,6 +323,8 @@ describe("phase 5 index flows", () => {
         url: "https://www.linkedin.com/jobs/view/1",
         resumePath: expect.any(String),
         count: 1,
+        disableAiEvaluation: false,
+        scoreThreshold: 75,
       });
 
     expect(module.parseCliArgs(["easy-apply-dry-run"])).toEqual({
@@ -330,6 +332,8 @@ describe("phase 5 index flows", () => {
       url: "https://www.linkedin.com/jobs/collections/easy-apply",
       resumePath: expect.any(String),
       count: 1,
+      disableAiEvaluation: false,
+      scoreThreshold: 75,
     });
 
     expect(module.parseCliArgs(["easy-apply-dry-run", "--count", "3"])).toEqual({
@@ -337,6 +341,8 @@ describe("phase 5 index flows", () => {
       url: "https://www.linkedin.com/jobs/collections/easy-apply",
       resumePath: expect.any(String),
       count: 3,
+      disableAiEvaluation: false,
+      scoreThreshold: 75,
     });
 
     expect(module.parseCliArgs(["easy-apply-dry-run", "2"])).toEqual({
@@ -344,6 +350,25 @@ describe("phase 5 index flows", () => {
       url: "https://www.linkedin.com/jobs/collections/easy-apply",
       resumePath: expect.any(String),
       count: 2,
+      disableAiEvaluation: false,
+      scoreThreshold: 75,
+    });
+
+    expect(
+      module.parseCliArgs([
+        "easy-apply-dry-run",
+        "--disable-ai-evaluation",
+        "--score-threshold",
+        "60",
+        "2",
+      ]),
+    ).toEqual({
+      mode: "easy-apply-dry-run",
+      url: "https://www.linkedin.com/jobs/collections/easy-apply",
+      resumePath: expect.any(String),
+      count: 2,
+      disableAiEvaluation: true,
+      scoreThreshold: 60,
     });
 
     expect(module.parseCliArgs(["easy-apply", "https://www.linkedin.com/jobs/view/1"])).toEqual({
@@ -681,7 +706,6 @@ describe("phase 5 index flows", () => {
       breakdown: { skill: 30, seniority: 18, location: 20, tech: 10, bonus: 3 },
     });
     deps.evaluatePolicy = vi.fn().mockReturnValue({ allowed: true, reasons: [] });
-    deps.decideJob = vi.fn().mockReturnValue({ decision: "APPLY", reason: "Strong fit." });
 
     await module.main(
       ["easy-apply-dry-run", "--count", "2", "--resume", "./resume.txt"],
@@ -695,7 +719,7 @@ describe("phase 5 index flows", () => {
       shouldApply: true,
       finalDecision: "APPLY",
       score: 81,
-      reason: "Strong fit.",
+      reason: "Score 81 meets the configured threshold of 75.",
       policyAllowed: true,
     });
     expect(deps.extractJobText).toHaveBeenCalled();
@@ -710,6 +734,7 @@ describe("phase 5 index flows", () => {
         url: "https://www.linkedin.com/jobs/view/1",
         finalDecision: "APPLY",
         totalScore: 81,
+        scoreThreshold: 75,
       }),
       "LinkedIn Easy Apply job evaluated",
     );
@@ -739,6 +764,189 @@ describe("phase 5 index flows", () => {
       expect.any(Function),
     );
     expect(mocks.withPageMock.mock.calls[1]?.[0]).not.toHaveProperty("persistentProfilePath");
+  });
+
+  it("uses the configured score threshold when evaluating batch jobs", async () => {
+    const { module, mocks, deps } = await loadIndexModule();
+    mocks.loadCandidateMasterProfileMock.mockResolvedValue({
+      fullName: "Jane Doe",
+      linkedinUrl: "https://linkedin.com/in/jane",
+      sourceMetadata: { resumePath: "./resume.txt" },
+    });
+    mocks.loadCandidateProfileMock.mockResolvedValue({
+      yearsOfExperience: 3,
+      preferredRoles: ["Backend Engineer"],
+      preferredTechStack: ["TypeScript"],
+      excludedRoles: [],
+      preferredLocations: [],
+      excludedLocations: [],
+      remotePreference: "remote",
+      remoteOnly: true,
+      visaRequirement: "not-required",
+      languages: [],
+      salaryExpectation: null,
+      salaryExpectations: { usd: null, eur: null, try: null },
+      gpa: null,
+      linkedinUrl: null,
+      workAuthorizationStatus: "authorized",
+      requiresSponsorship: false,
+      willingToRelocate: false,
+      disability: {
+        hasVisualDisability: false,
+        disabilityPercentage: null,
+        requiresAccommodation: null,
+        accommodationNotes: null,
+        disclosurePreference: "manual-review",
+      },
+    });
+    mocks.createEasyApplyDriverMock.mockReturnValue({ driver: true });
+    mockWithPageSuccess(mocks.withPageMock);
+    mocks.runEasyApplyBatchDryRunMock.mockResolvedValue({
+      status: "completed",
+      collectionUrl: "https://www.linkedin.com/jobs/collections/easy-apply",
+      requestedCount: 1,
+      attemptedCount: 0,
+      evaluatedCount: 1,
+      skippedCount: 1,
+      pagesVisited: 1,
+      jobs: [],
+      stopReason: "Only found and processed 0 matching LinkedIn Easy Apply job(s) before pagination ended.",
+    });
+    deps.extractJobText = vi.fn().mockResolvedValue({
+      rawText: "Job body",
+      title: "Backend Engineer",
+      company: "Acme",
+      location: "Remote",
+      platform: "linkedin",
+      applicationType: "easy_apply",
+      applyUrl: "https://linkedin.com/apply",
+      currentUrl: "https://www.linkedin.com/jobs/view/1",
+      descriptionText: "TypeScript backend role",
+      requirementsText: "Need TypeScript",
+      benefitsText: null,
+    });
+    deps.formatJobForLLM = vi.fn().mockReturnValue("Formatted prompt");
+    deps.parseJob = vi.fn().mockResolvedValue({
+      parsed: {
+        title: "Backend Engineer",
+        company: "Acme",
+        location: "Remote",
+        platform: "linkedin",
+        seniority: "mid",
+        mustHaveSkills: ["TypeScript"],
+        niceToHaveSkills: [],
+        technologies: ["TypeScript"],
+        yearsRequired: 3,
+        remoteType: "remote",
+        visaSponsorship: "no",
+        workAuthorization: "authorized",
+      },
+      provider: "local",
+      model: "openai/gpt-oss-20b",
+      rawText: "{}",
+    });
+    deps.normalizeParsedJob = vi.fn().mockReturnValue({
+      title: "Backend Engineer",
+      company: "Acme",
+      location: "Remote",
+      remoteType: "remote",
+      seniority: "mid",
+      mustHaveSkills: ["TypeScript"],
+      niceToHaveSkills: [],
+      technologies: ["TypeScript"],
+      yearsRequired: 3,
+      platform: "linkedin",
+      applicationType: "easy_apply",
+      visaSponsorship: "no",
+      workAuthorization: "authorized",
+      openQuestionsCount: 0,
+    });
+    deps.scoreJob = vi.fn().mockReturnValue({
+      totalScore: 74,
+      breakdown: { skill: 28, seniority: 18, location: 18, tech: 8, bonus: 2 },
+    });
+    deps.evaluatePolicy = vi.fn().mockReturnValue({ allowed: true, reasons: [] });
+
+    await module.main(
+      ["easy-apply-dry-run", "--score-threshold", "80", "--resume", "./resume.txt"],
+      deps,
+    );
+
+    const batchArgs = mocks.runEasyApplyBatchDryRunMock.mock.calls[0]?.[0];
+    const evaluation = await batchArgs.evaluateJob("https://www.linkedin.com/jobs/view/1");
+
+    expect(evaluation).toEqual({
+      shouldApply: false,
+      finalDecision: "SKIP",
+      score: 74,
+      reason: "Score 74 is below the configured threshold of 80.",
+      policyAllowed: true,
+    });
+  });
+
+  it("skips AI evaluation entirely when disabled for batch runs", async () => {
+    const { module, mocks, deps } = await loadIndexModule();
+    mocks.loadCandidateMasterProfileMock.mockResolvedValue({
+      fullName: "Jane Doe",
+      linkedinUrl: "https://linkedin.com/in/jane",
+      sourceMetadata: { resumePath: "./resume.txt" },
+    });
+    mocks.loadCandidateProfileMock.mockResolvedValue({
+      yearsOfExperience: 3,
+      preferredRoles: [],
+      preferredTechStack: [],
+      excludedRoles: [],
+      preferredLocations: [],
+      excludedLocations: [],
+      remotePreference: "remote",
+      remoteOnly: true,
+      visaRequirement: "not-required",
+      languages: [],
+      salaryExpectation: null,
+      salaryExpectations: { usd: null, eur: null, try: null },
+      gpa: null,
+      linkedinUrl: null,
+      workAuthorizationStatus: "authorized",
+      requiresSponsorship: false,
+      willingToRelocate: false,
+      disability: {
+        hasVisualDisability: false,
+        disabilityPercentage: null,
+        requiresAccommodation: null,
+        accommodationNotes: null,
+        disclosurePreference: "manual-review",
+      },
+    });
+    mocks.createEasyApplyDriverMock.mockReturnValue({ driver: true });
+    mockWithPageSuccess(mocks.withPageMock);
+    mocks.runEasyApplyBatchDryRunMock.mockResolvedValue({
+      status: "completed",
+      collectionUrl: "https://www.linkedin.com/jobs/collections/easy-apply",
+      requestedCount: 1,
+      attemptedCount: 1,
+      evaluatedCount: 1,
+      skippedCount: 0,
+      pagesVisited: 1,
+      jobs: [],
+      stopReason: "Processed 1 LinkedIn Easy Apply job(s).",
+    });
+
+    await module.main(
+      ["easy-apply-dry-run", "--disable-ai-evaluation", "--resume", "./resume.txt"],
+      deps,
+    );
+
+    const batchArgs = mocks.runEasyApplyBatchDryRunMock.mock.calls[0]?.[0];
+    const evaluation = await batchArgs.evaluateJob("https://www.linkedin.com/jobs/view/1");
+
+    expect(evaluation).toEqual({
+      shouldApply: true,
+      finalDecision: "APPLY",
+      score: 0,
+      reason: "AI evaluation disabled for this batch run.",
+      policyAllowed: true,
+    });
+    expect(deps.extractJobText).toBeUndefined();
   });
 
   it("wraps build-profile snapshot failures with a database phase error", async () => {
