@@ -172,6 +172,12 @@ Run a LinkedIn Easy Apply dry run:
 npm run dev -- easy-apply-dry-run "https://www.linkedin.com/jobs/view/123"
 ```
 
+Run a real Easy Apply flow for one specific LinkedIn job:
+
+```bash
+npm run dev -- easy-apply "https://www.linkedin.com/jobs/view/123"
+```
+
 Run a batch dry run from the default Easy Apply collection:
 
 ```bash
@@ -183,6 +189,8 @@ Run a batch dry run from a specific collection URL:
 ```bash
 npm run dev -- easy-apply-dry-run "https://www.linkedin.com/jobs/collections/easy-apply" 10
 ```
+
+The current CLI only supports batch processing in dry-run mode. `easy-apply` is reserved for a single LinkedIn job URL and will reject collection URLs.
 
 ## Pipelines
 
@@ -220,6 +228,18 @@ npm run dev -- easy-apply-dry-run "https://www.linkedin.com/jobs/collections/eas
 7. Use AI fallback only where needed
 8. Advance through `Next` and `Review`
 9. Stop before final submit
+
+### LinkedIn Easy Apply live run
+
+1. Open one LinkedIn job URL
+2. Reuse persisted LinkedIn session state when available
+3. Authenticate if needed
+4. Open the Easy Apply flow
+5. Fill deterministic, resume-derived, and AI-fallback answers
+6. Advance through `Next`, `Review`, and `Submit`
+7. Dismiss the LinkedIn post-submit modal when it appears
+
+This path is intentionally limited to a single job URL in the CLI.
 
 ### LinkedIn batch Easy Apply dry run
 

@@ -73,11 +73,14 @@ npm run dev -- answer-questions --resume "./cv.pdf" --questions "./questions.jso
 npm run dev -- easy-apply-dry-run "https://www.linkedin.com/jobs/view/123"
 npm run dev -- easy-apply-dry-run
 npm run dev -- easy-apply-dry-run 10
+npm run dev -- easy-apply "https://www.linkedin.com/jobs/view/123"
 ```
 
 `easy-apply-dry-run` defaults to [LinkedIn Easy Apply jobs](https://www.linkedin.com/jobs/collections/easy-apply) when no URL is provided.
 
 When a number is passed, the tool treats it as the target number of matching LinkedIn Easy Apply jobs to process from the default collection.
+
+`easy-apply` is a single-job command. Collection URLs are only supported by `easy-apply-dry-run`.
 
 ## Testing
 
@@ -100,6 +103,7 @@ The default suite does not require LM Studio or OpenAI access.
 - The LinkedIn flow uses saved browser session state by default at `.auth/linkedin-session.json`.
 - If LinkedIn shows a checkpoint or security verification page, the run stops with a specific auth error instead of a vague failure.
 - Dry run still stops before the final submit action.
+- Batch LinkedIn crawling is currently exposed through `easy-apply-dry-run`, not the real-submit CLI path.
 
 ## Documentation
 

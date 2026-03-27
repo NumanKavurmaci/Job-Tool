@@ -79,7 +79,7 @@ Run a dry run for one specific Easy Apply job:
 $env:LLM_PROVIDER='local'
 $env:LOCAL_LLM_BASE_URL='http://127.0.0.1:1234/v1'
 $env:LOCAL_LLM_MODEL='openai/gpt-oss-20b'
-npm run dev -- easy-apply-dry-run
+npm run dev -- easy-apply-dry-run "https://www.linkedin.com/jobs/view/1234567890"
 ```
 
 Run from the default LinkedIn Easy Apply collection:
@@ -109,13 +109,13 @@ $env:LOCAL_LLM_MODEL='openai/gpt-oss-20b'
 npm run dev -- easy-apply-dry-run "https://www.linkedin.com/jobs/collections/easy-apply" 10
 ```
 
-Run a batch run against a specific LinkedIn collection URL:
+Run a real Easy Apply flow for one specific LinkedIn job:
 
 ```powershell
 $env:LLM_PROVIDER='local'
 $env:LOCAL_LLM_BASE_URL='http://127.0.0.1:1234/v1'
 $env:LOCAL_LLM_MODEL='openai/gpt-oss-20b'
-npm run dev -- easy-apply "https://www.linkedin.com/jobs/collections/easy-apply" 10
+npm run dev -- easy-apply "https://www.linkedin.com/jobs/view/1234567890"
 ```
 
 ## Print Full Dry Run JSON
@@ -194,6 +194,8 @@ npm run test:local-llm
 ## Useful Notes
 
 - `easy-apply-dry-run` stops before final submission.
+- `easy-apply` accepts a single LinkedIn job URL only.
+- Collection/batch processing is currently exposed only through `easy-apply-dry-run`.
 - The default Easy Apply root URL is `https://www.linkedin.com/jobs/collections/easy-apply`.
 - In batch mode, the tool evaluates jobs first and only attempts jobs that score as `APPLY`.
 - Already-applied LinkedIn jobs are skipped automatically.
