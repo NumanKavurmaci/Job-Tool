@@ -9,7 +9,13 @@ export const ParsedJobSchema = z.object({
   seniority: z.string().nullable(),
   mustHaveSkills: z.array(z.string()).default([]),
   niceToHaveSkills: z.array(z.string()).default([]),
+  technologies: z.array(z.string()).default([]),
+  yearsRequired: z.number().nullable(),
   remoteType: z.string().nullable(),
+  visaSponsorship: z.enum(["yes", "no"]).nullable(),
+  workAuthorization: z
+    .enum(["authorized", "requires-sponsorship", "unknown"])
+    .nullable(),
 });
 
 export type ParsedJob = z.infer<typeof ParsedJobSchema>;
@@ -22,6 +28,8 @@ Rules:
 - Return only valid JSON
 - Use null when unknown
 - mustHaveSkills and niceToHaveSkills must be arrays
+- technologies must be an array
+- yearsRequired must be a number or null
 - Prefer the explicitly labeled fields over inferring from unrelated text
 
 Schema:
@@ -33,7 +41,11 @@ Schema:
   "seniority": string | null,
   "mustHaveSkills": string[],
   "niceToHaveSkills": string[],
-  "remoteType": string | null
+  "technologies": string[],
+  "yearsRequired": number | null,
+  "remoteType": string | null,
+  "visaSponsorship": "yes" | "no" | null,
+  "workAuthorization": "authorized" | "requires-sponsorship" | "unknown" | null
 }
 
 Job posting text:

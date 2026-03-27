@@ -25,7 +25,11 @@ describe("parseJobWithLLM", () => {
         seniority: "Senior",
         mustHaveSkills: ["TypeScript"],
         niceToHaveSkills: ["Prisma"],
+        technologies: ["TypeScript", "Node.js"],
+        yearsRequired: 5,
         remoteType: "Remote",
+        visaSponsorship: "yes",
+        workAuthorization: "authorized",
       }),
     });
 
@@ -38,6 +42,8 @@ describe("parseJobWithLLM", () => {
     });
     expect(result.mustHaveSkills).toEqual(["TypeScript"]);
     expect(result.niceToHaveSkills).toEqual(["Prisma"]);
+    expect(result.technologies).toEqual(["TypeScript", "Node.js"]);
+    expect(result.yearsRequired).toBe(5);
   });
 
   it("fails on invalid JSON schema", async () => {

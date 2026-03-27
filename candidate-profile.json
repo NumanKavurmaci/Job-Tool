@@ -1,0 +1,37 @@
+{
+  "yearsOfExperience": 3,
+  "preferredRoles": [
+    "Backend Engineer",
+    "Software Engineer",
+    "Full Stack Engineer"
+  ],
+  "preferredTechStack": [
+    "TypeScript",
+    "Node.js",
+    "React",
+    "Next.js",
+    "Prisma",
+    "PostgreSQL"
+  ],
+  "excludedRoles": [
+    "Senior",
+    "Lead",
+    "Staff",
+    "Principal"
+  ],
+  "preferredLocations": [
+    "Remote",
+    "Europe",
+    "Turkey"
+  ],
+  "excludedLocations": [
+    "Istanbul onsite"
+  ],
+  "remotePreference": "remote",
+  "visaRequirement": "not-required",
+  "workAuthorizationStatus": "authorized",
+  "languages": [
+    "English"
+  ],
+  "salaryExpectation": "Open to market-rate mid-level backend roles"
+}

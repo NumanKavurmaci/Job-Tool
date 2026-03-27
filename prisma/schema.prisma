@@ -8,14 +8,34 @@ datasource db {
 }
 
 model JobPosting {
-  id         String   @id @default(cuid())
-  url        String   @unique
-  title      String?
-  company    String?
-  location   String?
-  platform   String?
-  rawText    String
-  parsedJson String?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id             String                @id @default(cuid())
+  url            String                @unique
+  title          String?
+  company        String?
+  location       String?
+  platform       String?
+  rawText        String
+  parsedJson     String?
+  normalizedJson String?
+  parseVersion   String?
+  decisions      ApplicationDecision[]
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+}
+
+enum ApplicationDecisionType {
+  APPLY
+  MAYBE
+  SKIP
+}
+
+model ApplicationDecision {
+  id            String                  @id @default(cuid())
+  jobPostingId  String
+  jobPosting    JobPosting              @relation(fields: [jobPostingId], references: [id], onDelete: Cascade)
+  score         Int
+  decision      ApplicationDecisionType
+  policyAllowed Boolean
+  reasons       String
+  createdAt     DateTime                @default(now())
 }
