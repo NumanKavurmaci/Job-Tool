@@ -5,20 +5,28 @@ import { formatJobForLLM } from "./parser/formatJobForLLM.js";
 import { parseJobWithLLM } from "./parser/parseJobWithLLM.js";
 import { logger } from "./utils/logger.js";
 
-async function main() {
-  const url = process.argv[2];
+export const appDeps = {
+  withPage,
+  prisma,
+  extractJobText,
+  formatJobForLLM,
+  parseJobWithLLM,
+  logger,
+  exit: (code: number) => process.exit(code),
+};
 
+export async function main(url = process.argv[2], deps = appDeps) {
   if (!url) {
     throw new Error("Usage: npm run dev -- <job-url>");
   }
 
-  logger.info({ url }, "Starting job fetch");
+  deps.logger.info({ url }, "Starting job fetch");
 
-  const extracted = await withPage(async (page) => {
-    return extractJobText(page, url);
+  const extracted = await deps.withPage(async (page) => {
+    return deps.extractJobText(page, url);
   });
 
-  logger.info(
+  deps.logger.info(
     {
       adapterPlatform: extracted.platform,
       rawTextLength: extracted.rawText.length,
@@ -29,12 +37,12 @@ async function main() {
     "Job content extracted",
   );
 
-  const llmInput = formatJobForLLM(extracted);
-  const parsed = await parseJobWithLLM(llmInput);
+  const llmInput = deps.formatJobForLLM(extracted);
+  const parsed = await deps.parseJobWithLLM(llmInput);
 
-  logger.info({ parsed }, "Job parsed");
+  deps.logger.info({ parsed }, "Job parsed");
 
-  const saved = await prisma.jobPosting.upsert({
+  const saved = await deps.prisma.jobPosting.upsert({
     where: { url },
     update: {
       rawText: extracted.rawText,
@@ -55,14 +63,22 @@ async function main() {
     },
   });
 
-  logger.info({ id: saved.id }, "Job saved to database");
+  deps.logger.info({ id: saved.id }, "Job saved to database");
+
+  return saved;
 }
 
-main()
-  .catch((error: unknown) => {
-    logger.error(error);
-    process.exit(1);
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
+export async function runCli(deps = appDeps): Promise<void> {
+  try {
+    await main(undefined, deps);
+  } catch (error: unknown) {
+    deps.logger.error(error);
+    deps.exit(1);
+  } finally {
+    await deps.prisma.$disconnect();
+  }
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  await runCli();
+}

@@ -1,6 +1,6 @@
 import type { ExtractedJobContent } from "../adapters/types.js";
 
-function section(label: string, value: string | null | undefined): string {
+export function section(label: string, value: string | null | undefined): string {
   return `${label}:\n${value?.trim() ? value.trim() : "N/A"}`;
 }
 

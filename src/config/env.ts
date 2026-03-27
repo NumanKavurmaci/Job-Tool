@@ -2,7 +2,7 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-function required(name: string): string {
+export function required(name: string): string {
   const value = process.env[name];
   if (!value) {
     throw new Error(`Missing required env var: ${name}`);
@@ -10,7 +10,11 @@ function required(name: string): string {
   return value;
 }
 
-export const env = {
-  OPENAI_API_KEY: required("OPENAI_API_KEY"),
-  DATABASE_URL: required("DATABASE_URL"),
-};
+export function createEnv() {
+  return {
+    OPENAI_API_KEY: required("OPENAI_API_KEY"),
+    DATABASE_URL: required("DATABASE_URL"),
+  };
+}
+
+export const env = createEnv();
