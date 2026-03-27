@@ -71,6 +71,7 @@ export class LeverAdapter implements JobAdapter {
       company,
       location,
       platform: this.name,
+      applicationType: "external",
       applyUrl,
       currentUrl: await getCurrentUrl(page),
       descriptionText,

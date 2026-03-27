@@ -1,11 +1,13 @@
 import { GenericAdapter } from "./GenericAdapter.js";
 import { GreenhouseAdapter } from "./GreenhouseAdapter.js";
 import { LeverAdapter } from "./LeverAdapter.js";
+import { LinkedInAdapter } from "./LinkedInAdapter.js";
 import type { JobAdapter } from "./types.js";
 
 const adapters: JobAdapter[] = [
   new GreenhouseAdapter(),
   new LeverAdapter(),
+  new LinkedInAdapter(),
   new GenericAdapter(),
 ];
 

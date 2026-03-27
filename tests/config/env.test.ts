@@ -12,6 +12,8 @@ describe("env config", () => {
     process.env.LLM_PROVIDER = "openai";
     process.env.OPENAI_API_KEY = "test-key";
     process.env.DATABASE_URL = "file:./dev.db";
+    process.env.LINKEDIN_USERNAME = "user@example.com";
+    process.env.LINKEDIN_PASSWORD = "secret";
 
     const module = await import("../../src/config/env.js");
 
@@ -22,6 +24,8 @@ describe("env config", () => {
       LOCAL_LLM_BASE_URL: "http://127.0.0.1:1234/v1",
       LOCAL_LLM_MODEL: "openai/gpt-oss-20b",
       DATABASE_URL: "file:./dev.db",
+      LINKEDIN_USERNAME: "user@example.com",
+      LINKEDIN_PASSWORD: "secret",
     });
   });
 
@@ -31,6 +35,8 @@ describe("env config", () => {
     process.env.LOCAL_LLM_MODEL = "openai/gpt-oss-20b";
     process.env.OPENAI_API_KEY = "";
     process.env.DATABASE_URL = "file:./dev.db";
+    process.env.LINKEDIN_USERNAME = "";
+    process.env.LINKEDIN_PASSWORD = "";
 
     const module = await import("../../src/config/env.js");
 
@@ -41,6 +47,8 @@ describe("env config", () => {
       LOCAL_LLM_BASE_URL: "http://127.0.0.1:1234/v1",
       LOCAL_LLM_MODEL: "openai/gpt-oss-20b",
       DATABASE_URL: "file:./dev.db",
+      LINKEDIN_USERNAME: undefined,
+      LINKEDIN_PASSWORD: undefined,
     });
   });
 
@@ -69,6 +77,19 @@ describe("env config", () => {
 
     await expect(import("../../src/config/env.js")).rejects.toThrow(
       "LOCAL_LLM_BASE_URL is required when LLM_PROVIDER=local",
+    );
+  });
+
+  it("requires linkedin credentials together when either is provided", async () => {
+    process.env.LLM_PROVIDER = "local";
+    process.env.DATABASE_URL = "file:./dev.db";
+    process.env.LOCAL_LLM_BASE_URL = "http://127.0.0.1:1234/v1";
+    process.env.LOCAL_LLM_MODEL = "openai/gpt-oss-20b";
+    process.env.LINKEDIN_USERNAME = "user@example.com";
+    process.env.LINKEDIN_PASSWORD = "";
+
+    await expect(import("../../src/config/env.js")).rejects.toThrow(
+      "LINKEDIN_USERNAME and LINKEDIN_PASSWORD must be provided together",
     );
   });
 });

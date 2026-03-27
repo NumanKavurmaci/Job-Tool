@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { GenericAdapter } from "../../src/adapters/GenericAdapter.js";
 import { GreenhouseAdapter } from "../../src/adapters/GreenhouseAdapter.js";
 import { LeverAdapter } from "../../src/adapters/LeverAdapter.js";
+import { LinkedInAdapter } from "../../src/adapters/LinkedInAdapter.js";
 import { resolveAdapter } from "../../src/adapters/resolveAdapter.js";
 
 describe("resolveAdapter", () => {
@@ -21,9 +22,9 @@ describe("resolveAdapter", () => {
     );
   });
 
-  it("uses the generic adapter for linkedin urls until a dedicated adapter exists", () => {
+  it("resolves LinkedIn urls to the dedicated linkedin adapter", () => {
     expect(resolveAdapter("https://www.linkedin.com/jobs/view/1234567890/")).toBeInstanceOf(
-      GenericAdapter,
+      LinkedInAdapter,
     );
   });
 });

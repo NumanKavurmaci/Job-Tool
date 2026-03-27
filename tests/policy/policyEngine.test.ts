@@ -29,6 +29,7 @@ describe("evaluatePolicy", () => {
         technologies: ["TypeScript"],
         yearsRequired: 3,
         platform: "greenhouse",
+        applicationType: "external",
         visaSponsorship: "yes",
         workAuthorization: "authorized",
         openQuestionsCount: 0,
@@ -53,6 +54,7 @@ describe("evaluatePolicy", () => {
         technologies: ["TypeScript"],
         yearsRequired: 3,
         platform: "generic",
+        applicationType: "unknown",
         visaSponsorship: "yes",
         workAuthorization: "authorized",
         openQuestionsCount: 0,
@@ -77,6 +79,7 @@ describe("evaluatePolicy", () => {
         technologies: ["TypeScript"],
         yearsRequired: 3,
         platform: "generic",
+        applicationType: "unknown",
         visaSponsorship: "no",
         workAuthorization: "authorized",
         openQuestionsCount: 0,
@@ -101,17 +104,43 @@ describe("evaluatePolicy", () => {
         technologies: [],
         yearsRequired: null,
         platform: "generic",
+        applicationType: "unknown",
         visaSponsorship: "unknown",
         workAuthorization: "unknown",
         openQuestionsCount: 4,
       },
-      profile,
+      { ...profile, workAuthorizationStatus: "unknown" },
     );
 
     expect(result.allowed).toBe(false);
     expect(result.reasons.join(" ")).toContain("Work authorization is unknown");
     expect(result.reasons.join(" ")).toContain("Too many open questions");
     expect(result.reasons.join(" ")).toContain("Missing required fields");
+  });
+
+  it("does not reject only because job work authorization is unknown when candidate status is known", () => {
+    const result = evaluatePolicy(
+      {
+        title: "Backend Engineer",
+        company: "Acme",
+        location: "Remote",
+        remoteType: "unknown",
+        seniority: "unknown",
+        mustHaveSkills: ["TypeScript"],
+        niceToHaveSkills: [],
+        technologies: ["TypeScript"],
+        yearsRequired: 3,
+        platform: "generic",
+        applicationType: "unknown",
+        visaSponsorship: "unknown",
+        workAuthorization: "unknown",
+        openQuestionsCount: 1,
+      },
+      profile,
+    );
+
+    expect(result.allowed).toBe(true);
+    expect(result.reasons).toEqual([]);
   });
 
   it("rejects conflicting seniority data", () => {
@@ -127,6 +156,7 @@ describe("evaluatePolicy", () => {
         technologies: ["TypeScript"],
         yearsRequired: 8,
         platform: "greenhouse",
+        applicationType: "external",
         visaSponsorship: "yes",
         workAuthorization: "authorized",
         openQuestionsCount: 0,
@@ -136,5 +166,30 @@ describe("evaluatePolicy", () => {
 
     expect(result.allowed).toBe(false);
     expect(result.reasons.join(" ")).toContain("Role excluded by profile");
+  });
+
+  it("rejects linkedin jobs that are not easy apply in this phase", () => {
+    const result = evaluatePolicy(
+      {
+        title: "Backend Engineer",
+        company: "Acme",
+        location: "Remote",
+        remoteType: "remote",
+        seniority: "mid",
+        mustHaveSkills: ["TypeScript"],
+        niceToHaveSkills: [],
+        technologies: ["TypeScript"],
+        yearsRequired: 3,
+        platform: "linkedin",
+        applicationType: "external",
+        visaSponsorship: "yes",
+        workAuthorization: "authorized",
+        openQuestionsCount: 0,
+      },
+      profile,
+    );
+
+    expect(result.allowed).toBe(false);
+    expect(result.reasons).toContain("Only LinkedIn Easy Apply jobs are allowed in this phase.");
   });
 });

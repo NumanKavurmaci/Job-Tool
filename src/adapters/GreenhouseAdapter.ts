@@ -74,6 +74,7 @@ export class GreenhouseAdapter implements JobAdapter {
       company,
       location,
       platform: this.name,
+      applicationType: "external",
       applyUrl,
       currentUrl: await getCurrentUrl(page),
       descriptionText,

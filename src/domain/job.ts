@@ -12,6 +12,7 @@ export type NormalizedJob = {
   technologies: string[];
   yearsRequired: number | null;
   platform: string | null;
+  applicationType: "easy_apply" | "external" | "unknown";
   visaSponsorship: "yes" | "no" | "unknown";
   workAuthorization: "authorized" | "requires-sponsorship" | "unknown";
   openQuestionsCount: number;
@@ -70,6 +71,46 @@ function canonicalizeRemoteType(value: string | null | undefined): NormalizedJob
   return "unknown";
 }
 
+function inferRemoteTypeFromText(
+  values: Array<string | null | undefined>,
+): NormalizedJob["remoteType"] {
+  const normalized = values.filter(Boolean).join(" ").toLowerCase();
+
+  if (!normalized) {
+    return "unknown";
+  }
+
+  if (
+    normalized.includes("fully remote") ||
+    normalized.includes("100% remote") ||
+    normalized.includes("work from home") ||
+    normalized.includes("remote-first") ||
+    normalized.includes("remote role") ||
+    normalized.includes("remote position")
+  ) {
+    return "remote";
+  }
+
+  if (normalized.includes("hybrid")) {
+    return "hybrid";
+  }
+
+  if (
+    normalized.includes("on-site") ||
+    normalized.includes("onsite") ||
+    normalized.includes("in office") ||
+    normalized.includes("office-based")
+  ) {
+    return "onsite";
+  }
+
+  if (normalized.includes("remote")) {
+    return "remote";
+  }
+
+  return "unknown";
+}
+
 function canonicalizeSeniority(
   title: string | null | undefined,
   seniority: string | null | undefined,
@@ -107,6 +148,97 @@ function canonicalizeSeniority(
   return "unknown";
 }
 
+function inferSeniorityFromText(
+  title: string | null | undefined,
+  values: Array<string | null | undefined>,
+): NormalizedJob["seniority"] {
+  const normalizedTitle = (title ?? "").toLowerCase();
+  const normalized = values.filter(Boolean).join(" ").toLowerCase();
+
+  if (!normalized) {
+    return "unknown";
+  }
+
+  if (normalized.includes("principal")) {
+    return "principal";
+  }
+
+  if (normalized.includes("staff")) {
+    return "staff";
+  }
+
+  if (
+    /\btech lead\b/.test(normalizedTitle) ||
+    /\bteam lead\b/.test(normalizedTitle) ||
+    /\blead engineer\b/.test(normalizedTitle) ||
+    /\blead developer\b/.test(normalizedTitle) ||
+    /\blead software engineer\b/.test(normalizedTitle) ||
+    /\blead backend engineer\b/.test(normalizedTitle) ||
+    /\blead frontend engineer\b/.test(normalizedTitle) ||
+    /\blead full stack engineer\b/.test(normalizedTitle)
+  ) {
+    return "lead";
+  }
+
+  if (
+    normalizedTitle.includes("sr.") ||
+    normalizedTitle.includes(" sr ") ||
+    normalizedTitle.includes("senior") ||
+    /\bsenior level\b/.test(normalized) ||
+    /\bsenior-level\b/.test(normalized) ||
+    /\bsenior position\b/.test(normalized) ||
+    /\bsenior role\b/.test(normalized)
+  ) {
+    return "senior";
+  }
+
+  if (
+    normalizedTitle.includes("mid-level") ||
+    normalizedTitle.includes("mid level") ||
+    normalizedTitle.includes("intermediate") ||
+    /\bmid-level\b/.test(normalized) ||
+    /\bmid level\b/.test(normalized) ||
+    /\bintermediate\b/.test(normalized)
+  ) {
+    return "mid";
+  }
+
+  if (
+    normalizedTitle.includes("software engineer") ||
+    normalizedTitle.includes("software developer") ||
+    normalizedTitle.includes("full stack engineer") ||
+    normalizedTitle.includes("full-stack engineer") ||
+    normalizedTitle.includes("backend engineer") ||
+    normalizedTitle.includes("frontend engineer")
+  ) {
+    return "mid";
+  }
+
+  if (
+    normalizedTitle.includes("entry level") ||
+    normalizedTitle.includes("entry-level") ||
+    normalizedTitle.includes("new grad") ||
+    normalizedTitle.includes("graduate") ||
+    normalizedTitle.includes("junior") ||
+    normalizedTitle.includes("jr.") ||
+    /\bentry level\b/.test(normalized) ||
+    /\bentry-level\b/.test(normalized) ||
+    /\bnew grad\b/.test(normalized) ||
+    /\bgraduate program\b/.test(normalized) ||
+    /\bjunior role\b/.test(normalized) ||
+    /\bjunior position\b/.test(normalized) ||
+    /\bjunior-level\b/.test(normalized)
+  ) {
+    return "junior";
+  }
+
+  if (/\bintern(ship)?\b/.test(normalizedTitle) || /\bintern(ship)?\b/.test(normalized)) {
+    return "intern";
+  }
+
+  return "unknown";
+}
+
 function inferTechnologies(
   values: Array<string | null | undefined>,
   extraTechnologies: string[] = [],
@@ -133,6 +265,7 @@ function countOpenQuestions(job: Omit<NormalizedJob, "openQuestionsCount">): num
     job.company,
     job.location,
     job.platform,
+    job.applicationType === "unknown" ? null : job.applicationType,
     job.remoteType === "unknown" ? null : job.remoteType,
     job.seniority === "unknown" ? null : job.seniority,
     job.yearsRequired,
@@ -167,17 +300,41 @@ export function normalizeParsedJob(
     parsed.technologies ?? [],
   );
 
+  const inferredRemoteType = inferRemoteTypeFromText([
+    parsed.remoteType,
+    extracted.location,
+    extracted.descriptionText,
+    extracted.requirementsText,
+    extracted.benefitsText,
+    extracted.rawText,
+  ]);
+
+  const inferredSeniority = inferSeniorityFromText(title, [
+    title,
+    parsed.seniority,
+    extracted.descriptionText,
+    extracted.requirementsText,
+    extracted.rawText,
+  ]);
+
   const normalizedWithoutQuestions: Omit<NormalizedJob, "openQuestionsCount"> = {
     title,
     company,
     location,
-    remoteType: canonicalizeRemoteType(parsed.remoteType),
-    seniority: canonicalizeSeniority(title, parsed.seniority),
+    remoteType:
+      canonicalizeRemoteType(parsed.remoteType) === "unknown"
+        ? inferredRemoteType
+        : canonicalizeRemoteType(parsed.remoteType),
+    seniority:
+      canonicalizeSeniority(title, parsed.seniority) === "unknown"
+        ? inferredSeniority
+        : canonicalizeSeniority(title, parsed.seniority),
     mustHaveSkills,
     niceToHaveSkills,
     technologies,
     yearsRequired: normalizeYearsRequired(parsed.yearsRequired),
     platform: parsed.platform ?? extracted.platform ?? null,
+    applicationType: extracted.applicationType,
     visaSponsorship:
       parsed.visaSponsorship === "yes" || parsed.visaSponsorship === "no"
         ? parsed.visaSponsorship

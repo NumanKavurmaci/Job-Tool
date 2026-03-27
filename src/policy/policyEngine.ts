@@ -26,6 +26,10 @@ export function evaluatePolicy(
   const combinedRole = `${job.title ?? ""} ${job.seniority}`;
   const combinedLocation = `${job.location ?? ""} ${job.remoteType}`;
 
+  if (job.platform === "linkedin" && job.applicationType !== "easy_apply") {
+    reasons.push("Only LinkedIn Easy Apply jobs are allowed in this phase.");
+  }
+
   const excludedRole = includesAny(combinedRole, profile.excludedRoles);
   if (excludedRole) {
     reasons.push(`Role excluded by profile: ${excludedRole}.`);
@@ -47,7 +51,10 @@ export function evaluatePolicy(
     reasons.push("Visa sponsorship mismatch.");
   }
 
-  if (profile.workAuthorizationStatus === "unknown" || job.workAuthorization === "unknown") {
+  if (
+    profile.workAuthorizationStatus === "unknown" &&
+    job.workAuthorization === "unknown"
+  ) {
     reasons.push("Work authorization is unknown.");
   }
 
@@ -59,8 +66,6 @@ export function evaluatePolicy(
     !job.title && "title",
     !job.company && "company",
     !job.location && "location",
-    job.remoteType === "unknown" && "remoteType",
-    job.seniority === "unknown" && "seniority",
   ].filter(Boolean);
 
   if (missingRequired.length > 0) {

@@ -10,6 +10,7 @@ export function formatJobForLLM(job: ExtractedJobContent): string {
     `Company: ${job.company ?? "N/A"}`,
     `Location: ${job.location ?? "N/A"}`,
     `Platform: ${job.platform}`,
+    `Application Type: ${job.applicationType}`,
     `Apply URL: ${job.applyUrl ?? "N/A"}`,
     `Current URL: ${job.currentUrl}`,
     "",

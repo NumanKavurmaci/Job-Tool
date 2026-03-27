@@ -1,8 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { GenericAdapter } from "../../src/adapters/GenericAdapter.js";
 import { GreenhouseAdapter } from "../../src/adapters/GreenhouseAdapter.js";
 import { LeverAdapter } from "../../src/adapters/LeverAdapter.js";
 import { createMockPage } from "../utils/fakePage.js";
+
+afterEach(() => {
+  vi.resetModules();
+  vi.doUnmock("../../src/config/env.js");
+});
 
 describe("GenericAdapter", () => {
   it("handles any url and extracts structured content", async () => {
@@ -30,6 +35,7 @@ describe("GenericAdapter", () => {
       company: "Acme",
       location: "Remote",
       platform: "generic",
+      applicationType: "unknown",
       applyUrl: "https://company.example.com/apply",
       currentUrl: "https://company.example.com/jobs/role",
       descriptionText: "Job description",
@@ -51,6 +57,7 @@ describe("GenericAdapter", () => {
 
     expect(result.title).toBe("Page Title");
     expect(result.applyUrl).toBe("https://company.example.com/jobs/role");
+    expect(result.applicationType).toBe("unknown");
   });
 
   it("extracts a linkedin-style job page through the generic fallback", async () => {
@@ -80,6 +87,7 @@ describe("GenericAdapter", () => {
     const result = await new GenericAdapter().extract(page as never, page.url());
 
     expect(result.platform).toBe("generic");
+    expect(result.applicationType).toBe("unknown");
     expect(result.currentUrl).toBe("https://www.linkedin.com/jobs/view/1234567890/");
     expect(result.applyUrl).toBe("https://www.linkedin.com/jobs/view/1234567890/");
     expect(result.title).toBe("Senior Backend Engineer");
@@ -88,6 +96,152 @@ describe("GenericAdapter", () => {
     expect(result.descriptionText).toContain("About the job");
     expect(result.rawText).toContain("Qualifications");
     expect(result.rawText).toContain("Benefits");
+  });
+});
+
+describe("LinkedInAdapter", () => {
+  it("matches linkedin urls and extracts structured linkedin fields", async () => {
+    const { LinkedInAdapter } = await import("../../src/adapters/LinkedInAdapter.js");
+    const adapter = new LinkedInAdapter();
+    const page = createMockPage({
+      currentUrl: "https://www.linkedin.com/jobs/view/1234567890/",
+      title: "Senior Backend Engineer | LinkedIn",
+      selectors: {
+        ".job-details-jobs-unified-top-card__job-title": { text: "Senior Backend Engineer" },
+        ".job-details-jobs-unified-top-card__company-name": { text: "Acme" },
+        ".job-details-jobs-unified-top-card__bullet": { text: "Remote" },
+        "button.jobs-apply-button": { text: "Easy Apply" },
+        ".jobs-description-content__text": { text: "Build product features." },
+        "[class*='qualification']": { text: "5+ years with TypeScript." },
+        "[class*='benefit']": { text: "Health insurance." },
+        body: { text: "Senior Backend Engineer\nAcme\nRemote\nEasy Apply\nBuild product features." },
+      },
+    });
+
+    expect(adapter.canHandle(page.url())).toBe(true);
+
+    const result = await adapter.extract(page as never, page.url());
+
+    expect(result.platform).toBe("linkedin");
+    expect(result.title).toBe("Senior Backend Engineer");
+    expect(result.company).toBe("Acme");
+    expect(result.location).toBe("Remote");
+    expect(result.applicationType).toBe("easy_apply");
+    expect(result.descriptionText).toBe("Build product features.");
+    expect(result.rawText).toContain("Title: Senior Backend Engineer");
+    expect(result.rawText).toContain("Description:");
+    expect(result.rawText).not.toContain("LinkedIn Sign in");
+  });
+
+  it("logs in before extracting when linkedin shows a sign-in wall", async () => {
+    vi.doMock("../../src/config/env.js", () => ({
+      env: {
+        LINKEDIN_USERNAME: "user@example.com",
+        LINKEDIN_PASSWORD: "secret",
+      },
+    }));
+
+    const { LinkedInAdapter } = await import("../../src/adapters/LinkedInAdapter.js");
+    let isAuthenticated = false;
+    const jobUrl = "https://www.linkedin.com/jobs/view/1234567890/";
+    const page = createMockPage({
+      currentUrl: jobUrl,
+      routes: {
+        [jobUrl]: () =>
+          isAuthenticated
+            ? {
+                currentUrl: jobUrl,
+                title: "Backend Engineer | LinkedIn",
+                selectors: {
+                  ".job-details-jobs-unified-top-card__job-title": { text: "Backend Engineer" },
+                  ".job-details-jobs-unified-top-card__company-name": { text: "Acme" },
+                  ".job-details-jobs-unified-top-card__bullet": { text: "Berlin" },
+                  "button.jobs-apply-button": { text: "Easy Apply" },
+                  ".jobs-description-content__text": { text: "Build APIs." },
+                  body: { text: "Backend Engineer\nAcme\nBerlin\nEasy Apply\nBuild APIs." },
+                },
+              }
+            : {
+                currentUrl: jobUrl,
+                title: "Sign in | LinkedIn",
+                selectors: {
+                  body: { text: "LinkedIn Sign in to continue" },
+                },
+              },
+        "https://www.linkedin.com/login": {
+          currentUrl: "https://www.linkedin.com/login",
+          title: "Login | LinkedIn",
+          selectors: {
+            "input[name='session_key']": { text: "" },
+            "input[name='session_password']": { text: "" },
+            "button[type='submit']": { text: "Sign in" },
+            body: { text: "LinkedIn Sign in" },
+          },
+        },
+      },
+      onClick(selector, context) {
+        if (
+          selector === "button[type='submit']"
+          && context.filledValues["input[name='session_key']"] === "user@example.com"
+          && context.filledValues["input[name='session_password']"] === "secret"
+        ) {
+          isAuthenticated = true;
+        }
+      },
+      onFill(selector, value, context) {
+        context.filledValues[selector] = value;
+      },
+    });
+
+    const result = await new LinkedInAdapter().extract(page as never, jobUrl);
+    expect(result.platform).toBe("linkedin");
+    expect(result.title).toBe("Backend Engineer");
+    expect(result.applicationType).toBe("easy_apply");
+  });
+
+  it("fails clearly when linkedin still requires authentication and no credentials exist", async () => {
+    vi.doMock("../../src/config/env.js", () => ({
+      env: {
+        LINKEDIN_USERNAME: undefined,
+        LINKEDIN_PASSWORD: undefined,
+      },
+    }));
+
+    const { LinkedInAdapter } = await import("../../src/adapters/LinkedInAdapter.js");
+    const jobUrl = "https://www.linkedin.com/jobs/view/1234567890/";
+    const page = createMockPage({
+      currentUrl: jobUrl,
+      routes: {
+        [jobUrl]: {
+          currentUrl: jobUrl,
+          title: "Sign in | LinkedIn",
+          selectors: {
+            body: { text: "LinkedIn Sign in to continue" },
+          },
+        },
+      },
+    });
+
+    await expect(new LinkedInAdapter().extract(page as never, jobUrl)).rejects.toThrow(
+      "LinkedIn job pages require authentication",
+    );
+  });
+
+  it("marks linkedin external-apply pages as external", async () => {
+    const { LinkedInAdapter } = await import("../../src/adapters/LinkedInAdapter.js");
+    const page = createMockPage({
+      currentUrl: "https://www.linkedin.com/jobs/view/1234567890/",
+      title: "Senior Backend Engineer | LinkedIn",
+      selectors: {
+        ".job-details-jobs-unified-top-card__job-title": { text: "Senior Backend Engineer" },
+        ".job-details-jobs-unified-top-card__company-name": { text: "Acme" },
+        ".job-details-jobs-unified-top-card__bullet": { text: "Remote" },
+        body: { text: "Senior Backend Engineer\nApply on company website\nBuild product features." },
+      },
+    });
+
+    const result = await new LinkedInAdapter().extract(page as never, page.url());
+    expect(result.applicationType).toBe("external");
   });
 });
 
@@ -118,6 +272,7 @@ describe("GreenhouseAdapter", () => {
     expect(result.title).toBe("Staff Engineer");
     expect(result.company).toBe("Green Corp");
     expect(result.location).toBe("Berlin");
+    expect(result.applicationType).toBe("external");
     expect(result.descriptionText).toBe("Greenhouse description");
     expect(result.requirementsText).toBe("Node.js, TypeScript");
     expect(result.benefitsText).toBe("Bonus, equity");
@@ -151,6 +306,7 @@ describe("LeverAdapter", () => {
     expect(result.title).toBe("Senior Product Designer");
     expect(result.company).toBe("Lever Labs");
     expect(result.location).toBe("London");
+    expect(result.applicationType).toBe("external");
     expect(result.applyUrl).toContain("/apply");
     expect(result.descriptionText).toBe("Lever description");
     expect(result.requirementsText).toBe("Portfolio required");

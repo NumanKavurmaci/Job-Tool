@@ -6,6 +6,7 @@ export interface ExtractedJobContent {
   company: string | null;
   location: string | null;
   platform: string;
+  applicationType: "easy_apply" | "external" | "unknown";
   applyUrl: string | null;
   currentUrl: string;
   descriptionText: string | null;

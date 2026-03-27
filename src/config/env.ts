@@ -24,6 +24,8 @@ export function createEnv() {
   const OPENAI_API_KEY = optional("OPENAI_API_KEY");
   const LOCAL_LLM_BASE_URL = optional("LOCAL_LLM_BASE_URL");
   const LOCAL_LLM_MODEL = optional("LOCAL_LLM_MODEL");
+  const LINKEDIN_USERNAME = optional("LINKEDIN_USERNAME");
+  const LINKEDIN_PASSWORD = optional("LINKEDIN_PASSWORD");
 
   if (LLM_PROVIDER !== "openai" && LLM_PROVIDER !== "local") {
     throw new Error(`Unsupported LLM_PROVIDER: ${LLM_PROVIDER}`);
@@ -43,6 +45,12 @@ export function createEnv() {
     }
   }
 
+  if ((LINKEDIN_USERNAME && !LINKEDIN_PASSWORD) || (!LINKEDIN_USERNAME && LINKEDIN_PASSWORD)) {
+    throw new Error(
+      "LINKEDIN_USERNAME and LINKEDIN_PASSWORD must be provided together",
+    );
+  }
+
   return {
     LLM_PROVIDER,
     OPENAI_API_KEY,
@@ -50,6 +58,8 @@ export function createEnv() {
     LOCAL_LLM_BASE_URL,
     LOCAL_LLM_MODEL,
     DATABASE_URL,
+    LINKEDIN_USERNAME,
+    LINKEDIN_PASSWORD,
   };
 }
 

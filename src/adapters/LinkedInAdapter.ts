@@ -1,0 +1,183 @@
+import type { Page } from "@playwright/test";
+import { env } from "../config/env.js";
+import type { ExtractedJobContent, JobAdapter } from "./types.js";
+import {
+  compactText,
+  extractSectionText,
+  getAttributeBySelectors,
+  getCurrentUrl,
+  getTextBySelectors,
+  gotoJobPage,
+  optionalText,
+} from "./helpers.js";
+
+const LINKEDIN_LOGIN_URL = "https://www.linkedin.com/login";
+
+async function isLinkedInSignInWall(page: Page): Promise<boolean> {
+  const currentUrl = page.url().toLowerCase();
+  if (currentUrl.includes("/login") || currentUrl.includes("/checkpoint")) {
+    return true;
+  }
+
+  const title = (await page.title()).toLowerCase();
+  if (title.includes("sign in") || title.includes("login")) {
+    return true;
+  }
+
+  const bodyText = (await page.locator("body").innerText().catch(() => "")).toLowerCase();
+  return bodyText.includes("sign in") && bodyText.includes("linkedin");
+}
+
+export class LinkedInAdapter implements JobAdapter {
+  name = "linkedin";
+
+  canHandle(url: string): boolean {
+    return url.includes("linkedin.com/jobs");
+  }
+
+  private async ensureAuthenticated(page: Page, url: string): Promise<void> {
+    await gotoJobPage(page, url);
+
+    if (!(await isLinkedInSignInWall(page))) {
+      return;
+    }
+
+    if (!env.LINKEDIN_USERNAME || !env.LINKEDIN_PASSWORD) {
+      throw new Error(
+        "LinkedIn job pages require authentication. Set LINKEDIN_USERNAME and LINKEDIN_PASSWORD to continue.",
+      );
+    }
+
+    await page.goto(LINKEDIN_LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    await page.waitForTimeout(1_000);
+
+    const usernameInput = page.locator("input[name='session_key']").first();
+    const passwordInput = page.locator("input[name='session_password']").first();
+    const submitButton = page.locator("button[type='submit']").first();
+
+    if ((await usernameInput.count()) === 0 || (await passwordInput.count()) === 0) {
+      throw new Error("LinkedIn login form was not detected.");
+    }
+
+    await usernameInput.fill(env.LINKEDIN_USERNAME);
+    await passwordInput.fill(env.LINKEDIN_PASSWORD);
+    await submitButton.click();
+    await page.waitForTimeout(3_000);
+    await gotoJobPage(page, url);
+
+    if (await isLinkedInSignInWall(page)) {
+      throw new Error(
+        "LinkedIn authentication did not unlock the job page. The session may need manual verification.",
+      );
+    }
+  }
+
+  async extract(page: Page, url: string): Promise<ExtractedJobContent> {
+    await this.ensureAuthenticated(page, url);
+    const pageBodyText = await page.locator("body").innerText().catch(() => "");
+
+    const title =
+      (await getTextBySelectors(page, [
+        ".job-details-jobs-unified-top-card__job-title",
+        ".jobs-unified-top-card__job-title",
+        ".top-card-layout__title",
+        "h1",
+      ])) ?? optionalText(await page.title());
+
+    const company = await getTextBySelectors(page, [
+      ".job-details-jobs-unified-top-card__company-name",
+      ".jobs-unified-top-card__company-name",
+      ".topcard__org-name-link",
+      "[class*='company-name']",
+      "[class*='company']",
+    ]);
+
+    const location = await getTextBySelectors(page, [
+      ".job-details-jobs-unified-top-card__bullet",
+      ".topcard__flavor--bullet",
+      ".job-details-jobs-unified-top-card__primary-description-container",
+      "[class*='job-location']",
+      "[class*='location']",
+    ]);
+
+    const applyUrl =
+      (await getAttributeBySelectors(
+        page,
+        [
+          "a[href*='linkedin.com/jobs/view']",
+          "a[href*='easy-apply']",
+          "a[href*='apply']",
+        ],
+        "href",
+      )) ?? (await getCurrentUrl(page));
+
+    const descriptionText = await extractSectionText(page, [
+      ".jobs-description-content__text",
+      ".show-more-less-html__markup",
+      ".jobs-box__html-content",
+      "main",
+      "article",
+      "body",
+    ]);
+
+    const requirementsText = await extractSectionText(page, [
+      "[class*='qualification']",
+      "[class*='requirement']",
+      "[data-testid='job-details-how-you-match-card']",
+    ]);
+
+    const benefitsText = await extractSectionText(page, [
+      "[class*='benefit']",
+      "[class*='perk']",
+    ]);
+
+    const easyApplyText = [
+      pageBodyText,
+      await getTextBySelectors(page, [
+        "button[aria-label*='Easy Apply']",
+        "button[aria-label*='Easy apply']",
+        "button.jobs-apply-button",
+        ".jobs-apply-button",
+        "[data-control-name='jobdetails_topcard_inapply']",
+      ]),
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+    const bodyLower = pageBodyText.toLowerCase();
+    const applicationType = easyApplyText.includes("easy apply")
+      ? "easy_apply"
+      : bodyLower.includes("apply on company website") || bodyLower.includes("apply on company site")
+        ? "external"
+        : "unknown";
+
+    const focusedRawText = compactText(
+      [
+        title ? `Title: ${title}` : null,
+        company ? `Company: ${company}` : null,
+        location ? `Location: ${location}` : null,
+        `Application Type: ${applicationType}`,
+        descriptionText ? `Description:\n${descriptionText}` : null,
+        requirementsText ? `Requirements:\n${requirementsText}` : null,
+        benefitsText ? `Benefits:\n${benefitsText}` : null,
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
+    );
+
+    return {
+      rawText: focusedRawText,
+      title,
+      company,
+      location,
+      platform: this.name,
+      applicationType,
+      applyUrl,
+      currentUrl: await getCurrentUrl(page),
+      descriptionText,
+      requirementsText,
+      benefitsText,
+    };
+  }
+}

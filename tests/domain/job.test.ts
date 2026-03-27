@@ -2,54 +2,50 @@ import { describe, expect, it } from "vitest";
 import { normalizeParsedJob } from "../../src/domain/job.js";
 
 describe("normalizeParsedJob", () => {
-  it("maps parsed and extracted job data into a stable normalized model", () => {
-    const normalized = normalizeParsedJob(
+  it("infers seniority and remote type from job text when the LLM leaves them unknown", () => {
+    const result = normalizeParsedJob(
       {
-        title: null,
-        company: null,
-        location: null,
-        platform: "greenhouse",
-        seniority: "Senior",
-        mustHaveSkills: ["TypeScript", "Node.js"],
-        niceToHaveSkills: ["Prisma"],
-        technologies: ["AWS"],
-        yearsRequired: 5,
-        remoteType: "Remote",
-        visaSponsorship: "yes",
-        workAuthorization: "authorized",
+        title: "Software Engineer",
+        company: "Acme",
+        location: "Turkey",
+        platform: "linkedin",
+        seniority: null,
+        mustHaveSkills: ["TypeScript"],
+        niceToHaveSkills: [],
+        technologies: [],
+        yearsRequired: 3,
+        remoteType: null,
+        visaSponsorship: null,
+        workAuthorization: null,
       },
       {
-        rawText: "TypeScript Node.js AWS",
-        title: "Senior Backend Engineer",
+        rawText:
+          "We are hiring a Software Engineer for a fully remote role. This mid-level engineer will build TypeScript services.",
+        title: "Software Engineer",
         company: "Acme",
-        location: "Remote - Europe",
-        platform: "greenhouse",
-        applyUrl: "https://apply.example.com",
-        currentUrl: "https://jobs.example.com/1",
-        descriptionText: "Build backend systems with TypeScript and AWS.",
-        requirementsText: "5 years of experience with Node.js.",
-        benefitsText: "Remote first.",
+        location: "Turkey",
+        platform: "linkedin",
+        applicationType: "easy_apply",
+        applyUrl: "https://www.linkedin.com/jobs/view/1",
+        currentUrl: "https://www.linkedin.com/jobs/view/1",
+        descriptionText:
+          "This is a fully remote opportunity for a mid-level software engineer.",
+        requirementsText: "3+ years of experience with TypeScript.",
+        benefitsText: null,
       },
     );
 
-    expect(normalized.title).toBe("Senior Backend Engineer");
-    expect(normalized.company).toBe("Acme");
-    expect(normalized.location).toBe("Remote - Europe");
-    expect(normalized.remoteType).toBe("remote");
-    expect(normalized.seniority).toBe("senior");
-    expect(normalized.technologies).toEqual(
-      expect.arrayContaining(["TypeScript", "Node.js", "AWS", "Prisma"]),
-    );
-    expect(normalized.yearsRequired).toBe(5);
+    expect(result.remoteType).toBe("remote");
+    expect(result.seniority).toBe("mid");
   });
 
-  it("handles unknown and missing values", () => {
-    const normalized = normalizeParsedJob(
+  it("does not misclassify generic company wording as a lead role", () => {
+    const result = normalizeParsedJob(
       {
-        title: null,
-        company: null,
-        location: null,
-        platform: null,
+        title: "Full Stack Engineer",
+        company: "Wide and Wise",
+        location: "Turkey",
+        platform: "linkedin",
         seniority: null,
         mustHaveSkills: [],
         niceToHaveSkills: [],
@@ -60,93 +56,447 @@ describe("normalizeParsedJob", () => {
         workAuthorization: null,
       },
       {
-        rawText: "Unknown posting",
-        title: null,
-        company: null,
-        location: null,
-        platform: "generic",
-        applyUrl: null,
-        currentUrl: "https://jobs.example.com/2",
-        descriptionText: null,
-        requirementsText: null,
+        rawText:
+          "Wide and Wise is a leading consultancy hiring a Full Stack Engineer for a hybrid role.",
+        title: "Full Stack Engineer",
+        company: "Wide and Wise",
+        location: "Turkey",
+        platform: "linkedin",
+        applicationType: "easy_apply",
+        applyUrl: "https://www.linkedin.com/jobs/view/1",
+        currentUrl: "https://www.linkedin.com/jobs/view/1",
+        descriptionText:
+          "Join our hybrid team as a Full Stack Engineer. We are a leading consultancy in the region.",
+        requirementsText: "Experience with TypeScript and React.",
         benefitsText: null,
       },
     );
 
-    expect(normalized.remoteType).toBe("unknown");
-    expect(normalized.seniority).toBe("unknown");
-    expect(normalized.openQuestionsCount).toBeGreaterThan(2);
+    expect(result.remoteType).toBe("hybrid");
+    expect(result.seniority).toBe("mid");
   });
 
-  it("canonicalizes hybrid, onsite, lead, principal, and sponsorship fallback values", () => {
-    const hybridLead = normalizeParsedJob(
+  it("detects explicit lead roles from role wording", () => {
+    const result = normalizeParsedJob(
       {
-        title: "Lead Platform Engineer",
+        title: "Lead Backend Engineer",
         company: "Acme",
-        location: "Berlin",
-        platform: "generic",
-        seniority: "Lead",
+        location: "Remote",
+        platform: "greenhouse",
+        seniority: null,
         mustHaveSkills: [],
         niceToHaveSkills: [],
         technologies: [],
-        yearsRequired: 4.6,
-        remoteType: "Hybrid",
+        yearsRequired: null,
+        remoteType: null,
         visaSponsorship: null,
-        workAuthorization: "requires-sponsorship",
+        workAuthorization: null,
       },
       {
-        rawText: "Hybrid role",
-        title: null,
-        company: null,
-        location: null,
-        platform: "generic",
-        applyUrl: null,
-        currentUrl: "https://jobs.example.com/3",
-        descriptionText: null,
+        rawText: "Lead Backend Engineer remote role",
+        title: "Lead Backend Engineer",
+        company: "Acme",
+        location: "Remote",
+        platform: "greenhouse",
+        applicationType: "external",
+        applyUrl: "https://example.com/apply",
+        currentUrl: "https://example.com/job",
+        descriptionText: "We are hiring a lead backend engineer.",
         requirementsText: null,
         benefitsText: null,
       },
     );
 
-    const onsitePrincipal = normalizeParsedJob(
+    expect(result.seniority).toBe("lead");
+  });
+
+  it("infers onsite and junior from descriptive text", () => {
+    const result = normalizeParsedJob(
       {
-        title: "Principal Engineer",
+        title: "Junior Software Developer",
         company: "Acme",
-        location: "London",
+        location: "Istanbul",
         platform: "generic",
         seniority: null,
         mustHaveSkills: [],
         niceToHaveSkills: [],
         technologies: [],
-        yearsRequired: -2,
-        remoteType: "On-site",
-        visaSponsorship: "no",
+        yearsRequired: null,
+        remoteType: null,
+        visaSponsorship: null,
         workAuthorization: null,
       },
       {
-        rawText: "On-site principal role",
-        title: null,
-        company: null,
-        location: null,
+        rawText:
+          "This is an onsite, entry-level Junior Software Developer role based in Istanbul.",
+        title: "Junior Software Developer",
+        company: "Acme",
+        location: "Istanbul",
         platform: "generic",
-        applyUrl: null,
-        currentUrl: "https://jobs.example.com/4",
+        applicationType: "unknown",
+        applyUrl: "https://example.com/apply",
+        currentUrl: "https://example.com/job",
+        descriptionText:
+          "An entry-level software developer role. This is an onsite position.",
+        requirementsText: null,
+        benefitsText: null,
+      },
+    );
+
+    expect(result.remoteType).toBe("onsite");
+    expect(result.seniority).toBe("junior");
+  });
+
+  it("does not infer junior only because the description mentions mentoring junior teammates", () => {
+    const result = normalizeParsedJob(
+      {
+        title: "Full Stack Engineer",
+        company: "Acme",
+        location: "Remote",
+        platform: "linkedin",
+        seniority: null,
+        mustHaveSkills: [],
+        niceToHaveSkills: [],
+        technologies: [],
+        yearsRequired: null,
+        remoteType: null,
+        visaSponsorship: null,
+        workAuthorization: null,
+      },
+      {
+        rawText:
+          "We are hiring a Full Stack Engineer. You will mentor junior team members and contribute to architecture decisions.",
+        title: "Full Stack Engineer",
+        company: "Acme",
+        location: "Remote",
+        platform: "linkedin",
+        applicationType: "easy_apply",
+        applyUrl: "https://example.com/apply",
+        currentUrl: "https://example.com/job",
+        descriptionText:
+          "You will mentor junior team members and collaborate across the stack.",
+        requirementsText: null,
+        benefitsText: null,
+      },
+    );
+
+    expect(result.seniority).toBe("mid");
+  });
+
+  it("does not infer intern from unrelated words in the body", () => {
+    const result = normalizeParsedJob(
+      {
+        title: "Software Engineer",
+        company: "Acme",
+        location: "Remote",
+        platform: "linkedin",
+        seniority: null,
+        mustHaveSkills: [],
+        niceToHaveSkills: [],
+        technologies: [],
+        yearsRequired: null,
+        remoteType: null,
+        visaSponsorship: null,
+        workAuthorization: null,
+      },
+      {
+        rawText:
+          "Software Engineer role at an international company with distributed teams.",
+        title: "Software Engineer",
+        company: "Acme",
+        location: "Remote",
+        platform: "linkedin",
+        applicationType: "easy_apply",
+        applyUrl: "https://example.com/apply",
+        currentUrl: "https://example.com/job",
+        descriptionText:
+          "Join our international engineering team as a software engineer.",
+        requirementsText: null,
+        benefitsText: null,
+      },
+    );
+
+    expect(result.seniority).toBe("mid");
+  });
+
+  it("keeps remote type unknown when the text contains no remote signal", () => {
+    const result = normalizeParsedJob(
+      {
+        title: "Backend Engineer",
+        company: "Acme",
+        location: "Berlin",
+        platform: "generic",
+        seniority: null,
+        mustHaveSkills: [],
+        niceToHaveSkills: [],
+        technologies: [],
+        yearsRequired: null,
+        remoteType: null,
+        visaSponsorship: null,
+        workAuthorization: null,
+      },
+      {
+        rawText: "Backend Engineer role in Berlin.",
+        title: "Backend Engineer",
+        company: "Acme",
+        location: "Berlin",
+        platform: "generic",
+        applicationType: "unknown",
+        applyUrl: "https://example.com/apply",
+        currentUrl: "https://example.com/job",
+        descriptionText: "Build backend systems.",
+        requirementsText: null,
+        benefitsText: null,
+      },
+    );
+
+    expect(result.remoteType).toBe("unknown");
+  });
+
+  it("normalizes unknown visa and work authorization fields when the parser does not know them", () => {
+    const result = normalizeParsedJob(
+      {
+        title: "Backend Engineer",
+        company: "Acme",
+        location: "Remote",
+        platform: "generic",
+        seniority: null,
+        mustHaveSkills: [],
+        niceToHaveSkills: [],
+        technologies: [],
+        yearsRequired: null,
+        remoteType: null,
+        visaSponsorship: "maybe" as never,
+        workAuthorization: "maybe" as never,
+      },
+      {
+        rawText: "Remote backend engineer role.",
+        title: "Backend Engineer",
+        company: "Acme",
+        location: "Remote",
+        platform: "generic",
+        applicationType: "unknown",
+        applyUrl: "https://example.com/apply",
+        currentUrl: "https://example.com/job",
+        descriptionText: "Remote backend role.",
+        requirementsText: null,
+        benefitsText: null,
+      },
+    );
+
+    expect(result.visaSponsorship).toBe("unknown");
+    expect(result.workAuthorization).toBe("unknown");
+  });
+
+  it("keeps explicit remote type and seniority when they are already known", () => {
+    const result = normalizeParsedJob(
+      {
+        title: "Senior Backend Engineer",
+        company: "Acme",
+        location: "Berlin",
+        platform: "greenhouse",
+        seniority: "senior",
+        mustHaveSkills: [],
+        niceToHaveSkills: [],
+        technologies: [],
+        yearsRequired: 5,
+        remoteType: "hybrid",
+        visaSponsorship: "yes",
+        workAuthorization: "authorized",
+      },
+      {
+        rawText: "Senior Backend Engineer hybrid role",
+        title: "Senior Backend Engineer",
+        company: "Acme",
+        location: "Berlin",
+        platform: "greenhouse",
+        applicationType: "external",
+        applyUrl: "https://example.com/apply",
+        currentUrl: "https://example.com/job",
+        descriptionText: "Hybrid senior role",
+        requirementsText: null,
+        benefitsText: null,
+      },
+    );
+
+    expect(result.remoteType).toBe("hybrid");
+    expect(result.seniority).toBe("senior");
+  });
+
+  it.each([
+    [{ title: "Principal Engineer", seniority: null }, "principal"],
+    [{ title: "Platform Engineer", seniority: "staff" }, "staff"],
+    [{ title: "Platform Engineer", seniority: "mid" }, "mid"],
+    [{ title: "Platform Engineer", seniority: "intern" }, "intern"],
+  ])("normalizes explicit seniority markers %o -> %s", (input, expected) => {
+    const result = normalizeParsedJob(
+      {
+        title: input.title,
+        company: "Acme",
+        location: "Remote",
+        platform: "generic",
+        seniority: input.seniority as never,
+        mustHaveSkills: [],
+        niceToHaveSkills: [],
+        technologies: [],
+        yearsRequired: 2,
+        remoteType: "remote",
+        visaSponsorship: "yes",
+        workAuthorization: "authorized",
+      },
+      {
+        rawText: `${input.title} remote role`,
+        title: input.title,
+        company: "Acme",
+        location: "Remote",
+        platform: "generic",
+        applicationType: "unknown",
+        applyUrl: "https://example.com/apply",
+        currentUrl: "https://example.com/job",
+        descriptionText: "Remote role.",
+        requirementsText: null,
+        benefitsText: null,
+      },
+    );
+
+    expect(result.seniority).toBe(expected);
+  });
+
+  it.each([
+    ["on-site", "onsite"],
+    ["work from home", "remote"],
+    ["office-based", "onsite"],
+    ["100% remote", "remote"],
+  ])("infers remote type from text signal %s -> %s", (signal, expected) => {
+    const result = normalizeParsedJob(
+      {
+        title: "Backend Engineer",
+        company: "Acme",
+        location: "Berlin",
+        platform: "generic",
+        seniority: null,
+        mustHaveSkills: [],
+        niceToHaveSkills: [],
+        technologies: [],
+        yearsRequired: null,
+        remoteType: null,
+        visaSponsorship: null,
+        workAuthorization: null,
+      },
+      {
+        rawText: `Backend Engineer role. This is a ${signal} position.`,
+        title: "Backend Engineer",
+        company: "Acme",
+        location: "Berlin",
+        platform: "generic",
+        applicationType: "unknown",
+        applyUrl: "https://example.com/apply",
+        currentUrl: "https://example.com/job",
+        descriptionText: `This is a ${signal} role.`,
+        requirementsText: null,
+        benefitsText: null,
+      },
+    );
+
+    expect(result.remoteType).toBe(expected);
+  });
+
+  it("rounds valid years and discards invalid years", () => {
+    const rounded = normalizeParsedJob(
+      {
+        title: "Backend Engineer",
+        company: "Acme",
+        location: "Remote",
+        platform: "generic",
+        seniority: null,
+        mustHaveSkills: [],
+        niceToHaveSkills: [],
+        technologies: [],
+        yearsRequired: 3.6,
+        remoteType: "remote",
+        visaSponsorship: "yes",
+        workAuthorization: "authorized",
+      },
+      {
+        rawText: "Remote backend engineer role.",
+        title: "Backend Engineer",
+        company: "Acme",
+        location: "Remote",
+        platform: "generic",
+        applicationType: "unknown",
+        applyUrl: "https://example.com/apply",
+        currentUrl: "https://example.com/job",
         descriptionText: null,
         requirementsText: null,
         benefitsText: null,
       },
     );
 
-    expect(hybridLead.remoteType).toBe("hybrid");
-    expect(hybridLead.seniority).toBe("lead");
-    expect(hybridLead.yearsRequired).toBe(5);
-    expect(hybridLead.visaSponsorship).toBe("unknown");
-    expect(hybridLead.workAuthorization).toBe("requires-sponsorship");
+    const invalid = normalizeParsedJob(
+      {
+        title: "Backend Engineer",
+        company: "Acme",
+        location: "Remote",
+        platform: "generic",
+        seniority: null,
+        mustHaveSkills: [],
+        niceToHaveSkills: [],
+        technologies: [],
+        yearsRequired: Number.NaN,
+        remoteType: "remote",
+        visaSponsorship: "yes",
+        workAuthorization: "authorized",
+      },
+      {
+        rawText: "Remote backend engineer role.",
+        title: "Backend Engineer",
+        company: "Acme",
+        location: "Remote",
+        platform: "generic",
+        applicationType: "unknown",
+        applyUrl: "https://example.com/apply",
+        currentUrl: "https://example.com/job",
+        descriptionText: null,
+        requirementsText: null,
+        benefitsText: null,
+      },
+    );
 
-    expect(onsitePrincipal.remoteType).toBe("onsite");
-    expect(onsitePrincipal.seniority).toBe("principal");
-    expect(onsitePrincipal.yearsRequired).toBe(0);
-    expect(onsitePrincipal.visaSponsorship).toBe("no");
-    expect(onsitePrincipal.workAuthorization).toBe("unknown");
+    expect(rounded.yearsRequired).toBe(4);
+    expect(invalid.yearsRequired).toBeNull();
+  });
+
+  it("preserves the extracted application type on the normalized job", () => {
+    const result = normalizeParsedJob(
+      {
+        title: "Backend Engineer",
+        company: "Acme",
+        location: "Remote",
+        platform: "linkedin",
+        seniority: null,
+        mustHaveSkills: [],
+        niceToHaveSkills: [],
+        technologies: [],
+        yearsRequired: null,
+        remoteType: null,
+        visaSponsorship: null,
+        workAuthorization: null,
+      },
+      {
+        rawText: "Easy Apply backend role.",
+        title: "Backend Engineer",
+        company: "Acme",
+        location: "Remote",
+        platform: "linkedin",
+        applicationType: "easy_apply",
+        applyUrl: "https://linkedin.com/jobs/view/1",
+        currentUrl: "https://linkedin.com/jobs/view/1",
+        descriptionText: "Easy Apply backend role.",
+        requirementsText: null,
+        benefitsText: null,
+      },
+    );
+
+    expect(result.applicationType).toBe("easy_apply");
   });
 });

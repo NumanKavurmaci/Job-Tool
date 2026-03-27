@@ -77,6 +77,7 @@ export class GenericAdapter implements JobAdapter {
       company,
       location,
       platform: this.name,
+      applicationType: "unknown",
       applyUrl,
       currentUrl: await getCurrentUrl(page),
       descriptionText,
