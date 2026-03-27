@@ -1,6 +1,6 @@
 # Job Tool
 
-Job Tool is a TypeScript-based job scraping, parsing, scoring, and decisioning project for job postings. It opens a job URL with Playwright, extracts structured content, sends a cleaned prompt to a selected LLM provider, normalizes the result, scores the job against a candidate profile, applies policy rules, and stores both the job and decision in SQLite through Prisma.
+Job Tool is a TypeScript-based job scraping, parsing, scoring, and application-preparation project for job postings. It opens a job URL with Playwright, extracts structured content, sends a cleaned prompt to a selected LLM provider, normalizes the result, scores the job against a candidate profile, applies policy rules, and stores both the job and decision in SQLite through Prisma. It can also ingest a resume, attach a LinkedIn URL, build a reusable candidate master profile, and prepare answers for Easy Apply style questions before any real submission happens.
 
 ## Current Scope
 
@@ -15,6 +15,12 @@ The project currently supports:
 - LM Studio local parsing
 - Candidate-profile-based scoring and decisioning
 - Policy-based rejection rules
+- Resume ingestion from `.pdf`, `.docx`, `.md`, and `.txt`
+- Candidate master profile generation
+- LinkedIn URL support inside the candidate profile
+- Question classification for Easy Apply style prompts
+- Deterministic, resume-derived, generated, and manual-review answer strategies
+- Prepared answer set persistence
 - Prisma and SQLite persistence
 - Automated tests with enforced coverage thresholds
 
@@ -49,15 +55,41 @@ src/
     client.ts
   domain/
     job.ts
+  candidate/
+    types.ts
+    loadCandidateProfile.ts
+    buildMasterProfile.ts
+    linkedin.ts
+    resume/
+      extractResumeText.ts
+      parseResume.ts
+      normalizeResume.ts
   llm/
     types.ts
     prompts.ts
+    completePrompt.ts
     parseJob.ts
     schema.ts
     providers/
       openaiProvider.ts
       lmStudioProvider.ts
       resolveProvider.ts
+  answers/
+    types.ts
+    answerBank.ts
+    confidence.ts
+    resolveAnswer.ts
+  questions/
+    types.ts
+    normalizeQuestion.ts
+    classifyQuestion.ts
+    strategies/
+      deterministic.ts
+      resumeAware.ts
+      generated.ts
+      manualReview.ts
+  materials/
+    generateShortAnswer.ts
   parser/
     extractJobText.ts
     formatJobForLLM.ts
@@ -76,14 +108,18 @@ prisma/
   migrations/
 tests/
   adapters/
+  answers/
   browser/
+  candidate/
   config/
   domain/
   live/
   llm/
+  materials/
   parser/
   policy/
   profile/
+  questions/
   scoring/
   utils/
 ```
@@ -102,6 +138,12 @@ npm install
 
 ```bash
 npx prisma generate
+```
+
+4. Apply the database schema:
+
+```bash
+npx prisma migrate dev
 ```
 
 ## LLM Modes
@@ -162,6 +204,18 @@ Run decide mode:
 npm run dev -- decide "https://job-link-here"
 ```
 
+Build a candidate profile from a resume file and LinkedIn URL:
+
+```bash
+npm run dev -- build-profile --resume "./cv.pdf" --linkedin "https://linkedin.com/in/your-handle"
+```
+
+Prepare answers for a JSON file of application questions:
+
+```bash
+npm run dev -- answer-questions --resume "./cv.pdf" --linkedin "https://linkedin.com/in/your-handle" --questions "./questions.json"
+```
+
 ## Pipeline
 
 The current pipeline works in this order:
@@ -175,6 +229,130 @@ The current pipeline works in this order:
 7. Score the job
 8. Apply policy rules
 9. Save the job and decision to SQLite
+
+The application-preparation pipeline works in this order:
+
+1. Read the resume file
+2. Extract resume text
+3. Parse the resume into structured JSON
+4. Normalize the result into a candidate master profile
+5. Attach the provided LinkedIn URL
+6. Classify each application question
+7. Choose the safest answer strategy
+8. Save the candidate snapshot and prepared answers to SQLite
+
+## Candidate Profile
+
+The candidate master profile combines:
+
+- resume data
+- LinkedIn URL
+- normalized experience, education, projects, and skills
+- candidate preferences already used by the scoring engine
+
+The generated profile includes structured fields such as:
+
+- contact information
+- location
+- current title
+- years of experience
+- preferred roles and tech stack
+- skills and languages
+- work authorization and sponsorship preferences
+- experience timeline
+- education
+- projects
+
+This profile becomes the reusable source of truth for application preparation.
+
+## Resume Support
+
+Phase 5 supports these resume formats:
+
+- `.pdf`
+- `.docx`
+- `.md`
+- `.txt`
+
+The resume pipeline extracts raw text first, then parses it through the shared LLM layer, and finally normalizes the result into a stable candidate profile shape.
+
+## Question Answering
+
+The question engine supports these categories:
+
+- contact info
+- LinkedIn
+- location
+- work authorization
+- sponsorship
+- relocation
+- salary
+- years of experience
+- skill experience
+- education
+- availability
+- motivation short text
+- general short text
+- unknown
+
+Each question is routed through one of these strategies:
+
+- `deterministic`
+- `resume-derived`
+- `generated`
+- `needs-review`
+
+Each resolved answer includes:
+
+- the detected question type
+- the chosen strategy
+- the answer payload
+- a numeric confidence score
+- a confidence label: `high`, `medium`, `low`, or `manual_review`
+- the answer source
+
+The system intentionally does not force an answer when confidence is too low. In those cases it returns a manual-review result instead of guessing.
+
+## Persistence
+
+Phase 5 adds two new persistence models:
+
+- `CandidateProfileSnapshot`
+- `PreparedAnswerSet`
+
+This allows the project to keep:
+
+- the structured candidate profile used at the time of preparation
+- the original question set
+- the generated answers
+
+That history is useful before moving on to any future real apply automation.
+
+## Questions File Format
+
+`answer-questions` expects a JSON array like this:
+
+```json
+[
+  {
+    "label": "LinkedIn Profile",
+    "inputType": "text"
+  },
+  {
+    "label": "Do you require sponsorship?",
+    "inputType": "radio",
+    "options": ["Yes", "No"]
+  },
+  {
+    "label": "How many years of experience do you have with React?",
+    "inputType": "text"
+  },
+  {
+    "label": "Why are you interested in this role?",
+    "inputType": "textarea"
+  }
+]
+```
 
 ## Supported Adapters
 
@@ -210,6 +388,7 @@ This suite:
 - does not require LM Studio to be running
 - does not require the OpenAI API to be reachable
 - is the required success path for CI and everyday development
+- covers the resume, question classification, answer strategy, and application-preparation flows
 
 ### Watch mode
 
@@ -283,5 +462,7 @@ Current coverage is above the required threshold.
 - `headless: false` is currently enabled in the Playwright helper so browser actions remain visible during development.
 - With `DATABASE_URL="file:./dev.db"`, Prisma may create the SQLite database under `prisma/dev.db`.
 - Local and OpenAI parsing both use the same prompt builder and the same `ParsedJobSchema`.
+- Resume parsing and short-answer generation both reuse the same provider abstraction introduced in Phase 4.
+- Deterministic answers do not call the LLM; the LLM is used only where the flow actually needs it.
 - LinkedIn support is currently tested through the generic fallback path, not through a dedicated adapter.
 - The default test suite and the live LM Studio suite are intentionally separate so local API availability never blocks normal test success.

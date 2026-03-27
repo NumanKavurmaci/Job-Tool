@@ -19,6 +19,7 @@ model JobPosting {
   normalizedJson String?
   parseVersion   String?
   decisions      ApplicationDecision[]
+  preparedAnswerSets PreparedAnswerSet[]
   createdAt      DateTime              @default(now())
   updatedAt      DateTime              @updatedAt
 }
@@ -38,4 +39,25 @@ model ApplicationDecision {
   policyAllowed Boolean
   reasons       String
   createdAt     DateTime                @default(now())
+}
+
+model CandidateProfileSnapshot {
+  id          String   @id @default(cuid())
+  fullName    String?
+  linkedinUrl String?
+  resumePath  String?
+  profileJson String
+  createdAt   DateTime @default(now())
+  preparedAnswerSets PreparedAnswerSet[]
+}
+
+model PreparedAnswerSet {
+  id                 String   @id @default(cuid())
+  jobPostingId       String?
+  candidateProfileId String
+  questionsJson      String
+  answersJson        String
+  createdAt          DateTime @default(now())
+  jobPosting         JobPosting? @relation(fields: [jobPostingId], references: [id], onDelete: SetNull)
+  candidateProfile   CandidateProfileSnapshot @relation(fields: [candidateProfileId], references: [id], onDelete: Cascade)
 }

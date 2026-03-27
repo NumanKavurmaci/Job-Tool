@@ -87,4 +87,19 @@ describe("parseJob orchestration", () => {
     );
     expect(errorMock).toHaveBeenCalled();
   });
+
+  it("throws on empty provider responses", async () => {
+    parseJobMock.mockResolvedValue({
+      text: "   ",
+      provider: "local",
+      model: "openai/gpt-oss-20b",
+    });
+
+    const { parseJob } = await import("../../src/llm/parseJob.js");
+
+    await expect(parseJob("Title: Backend Engineer")).rejects.toThrow(
+      "empty response",
+    );
+    expect(errorMock).toHaveBeenCalled();
+  });
 });
