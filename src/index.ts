@@ -10,6 +10,7 @@ import { prisma } from "./db/client.js";
 import { normalizeParsedJob } from "./domain/job.js";
 import {
   runEasyApply,
+  runEasyApplyBatch,
   runEasyApplyBatchDryRun,
   runEasyApplyDryRun,
 } from "./linkedin/easyApply.js";
@@ -68,6 +69,7 @@ export const appDeps = {
   decideJob,
   runEasyApplyDryRun,
   runEasyApply,
+  runEasyApplyBatch,
   runEasyApplyBatchDryRun,
   createEasyApplyDriver: async (page: unknown) => {
     const { PlaywrightLinkedInEasyApplyDriver } =
@@ -81,6 +83,14 @@ export const appDeps = {
 export type CliArgs =
   | { mode: "score" | "decide"; url: string }
   | { mode: "easy-apply"; url: string; resumePath: string }
+  | {
+      mode: "easy-apply-batch";
+      url: string;
+      resumePath: string;
+      count: number;
+      disableAiEvaluation: boolean;
+      scoreThreshold: number;
+    }
   | {
       mode: "easy-apply-dry-run";
       url: string;
@@ -205,7 +215,8 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
         ? Number.parseInt(trailingPositional, 10)
         : undefined;
     const count = countFromFlag ?? positionalCount ?? 1;
-    const url = (positionalCount ? positionalArgs.slice(0, -1) : positionalArgs)[0] ??
+    const url =
+      (positionalCount ? positionalArgs.slice(0, -1) : positionalArgs)[0] ??
       DEFAULT_LINKEDIN_EASY_APPLY_URL;
 
     if (!resumePath) {
@@ -240,13 +251,53 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
     }
 
     if (isLinkedInCollectionUrl(url)) {
-      throw new Error("easy-apply requires a single LinkedIn job URL, not a collection URL.");
+      throw new Error(
+        "easy-apply requires a single LinkedIn job URL, not a collection URL.",
+      );
     }
 
     return {
       mode: "easy-apply",
       url,
       resumePath,
+    };
+  }
+
+  if (first === "easy-apply-batch") {
+    const resumePath = getFlag("--resume") ?? DEFAULT_RESUME_PATH;
+    const positionalArgs = getPositionalTailArgs();
+    const countFromFlag = getIntegerFlag("--count");
+    const scoreThreshold = getIntegerFlag("--score-threshold") ?? 75;
+    const disableAiEvaluation = hasFlag("--disable-ai-evaluation");
+    const trailingPositional = positionalArgs.at(-1);
+    const positionalCount =
+      !countFromFlag && trailingPositional && /^\d+$/.test(trailingPositional)
+        ? Number.parseInt(trailingPositional, 10)
+        : undefined;
+    const count = countFromFlag ?? positionalCount ?? 1;
+    const url =
+      (positionalCount ? positionalArgs.slice(0, -1) : positionalArgs)[0] ??
+      DEFAULT_LINKEDIN_EASY_APPLY_URL;
+
+    if (!resumePath) {
+      throw new Error(
+        "--resume is required for easy-apply-batch when no default CV is available.",
+      );
+    }
+
+    if (!isLinkedInCollectionUrl(url)) {
+      throw new Error(
+        "easy-apply-batch requires a LinkedIn collection URL or the default collection.",
+      );
+    }
+
+    return {
+      mode: "easy-apply-batch",
+      url,
+      resumePath,
+      count,
+      disableAiEvaluation,
+      scoreThreshold,
     };
   }
 
@@ -430,10 +481,15 @@ async function loadMasterProfileForArgs(
 }
 
 function createCandidateAnswerResolver(
-  candidateProfile: Awaited<ReturnType<typeof appDeps.loadCandidateMasterProfile>>,
+  candidateProfile: Awaited<
+    ReturnType<typeof appDeps.loadCandidateMasterProfile>
+  >,
   deps = appDeps,
 ) {
-  return ({ question, candidateProfile: profileOverride }: {
+  return ({
+    question,
+    candidateProfile: profileOverride,
+  }: {
     question: InputQuestion;
     candidateProfile: typeof candidateProfile;
   }) =>
@@ -468,7 +524,10 @@ function createBatchJobEvaluator(args: {
         const extracted = await deps.extractJobText(evaluationPage, url);
         const llmInput = deps.formatJobForLLM(extracted);
         const parseResult = await deps.parseJob(llmInput);
-        const normalized = deps.normalizeParsedJob(parseResult.parsed, extracted);
+        const normalized = deps.normalizeParsedJob(
+          parseResult.parsed,
+          extracted,
+        );
         const score = deps.scoreJob(normalized, args.scoringProfile);
         const policy = deps.evaluatePolicy(normalized, args.scoringProfile);
         const meetsThreshold = score.totalScore >= args.scoreThreshold;
@@ -595,8 +654,9 @@ async function runEasyApplyDryRunFlow(
 
   let result;
   try {
-    result = await deps.withPage(LINKEDIN_BROWSER_SESSION_OPTIONS, async (page) =>
-      {
+    result = await deps.withPage(
+      LINKEDIN_BROWSER_SESSION_OPTIONS,
+      async (page) => {
         const driver = await deps.createEasyApplyDriver(page);
         const sharedInput = {
           driver,
@@ -671,15 +731,18 @@ async function runEasyApplyFlow(
 
   let result;
   try {
-    result = await deps.withPage(LINKEDIN_BROWSER_SESSION_OPTIONS, async (page) => {
-      const driver = await deps.createEasyApplyDriver(page);
-      return deps.runEasyApply({
-        driver,
-        url: args.url,
-        candidateProfile: profile,
-        resolveAnswer: resolveCandidateAnswer,
-      });
-    });
+    result = await deps.withPage(
+      LINKEDIN_BROWSER_SESSION_OPTIONS,
+      async (page) => {
+        const driver = await deps.createEasyApplyDriver(page);
+        return deps.runEasyApply({
+          driver,
+          url: args.url,
+          candidateProfile: profile,
+          resolveAnswer: resolveCandidateAnswer,
+        });
+      },
+    );
   } catch (error) {
     deps.logger.error(
       {
@@ -703,9 +766,81 @@ async function runEasyApplyFlow(
       status: result.status,
       stepCount: result.steps.length,
       stopReason: result.stopReason,
-      ...(result.externalApplyUrl ? { externalApplyUrl: result.externalApplyUrl } : {}),
+      ...(result.externalApplyUrl
+        ? { externalApplyUrl: result.externalApplyUrl }
+        : {}),
     },
     "LinkedIn Easy Apply finished",
+  );
+
+  return {
+    mode: args.mode,
+    profile,
+    easyApply: result,
+  };
+}
+
+async function runEasyApplyBatchFlow(
+  args: Extract<CliArgs, { mode: "easy-apply-batch" }>,
+  deps = appDeps,
+) {
+  const profile = await loadMasterProfileForArgs(args, deps);
+  const scoringProfile = await deps.loadCandidateProfile();
+  const resolveCandidateAnswer = createCandidateAnswerResolver(profile, deps);
+  const evaluateJob = createBatchJobEvaluator({
+    disableAiEvaluation: args.disableAiEvaluation,
+    scoreThreshold: args.scoreThreshold,
+    scoringProfile,
+    deps,
+  });
+
+  let result;
+  try {
+    result = await deps.withPage(
+      LINKEDIN_BROWSER_SESSION_OPTIONS,
+      async (page) => {
+        const driver = await deps.createEasyApplyDriver(page);
+        return deps.runEasyApplyBatch({
+          driver,
+          url: args.url,
+          targetCount: args.count,
+          candidateProfile: profile,
+          evaluateJob,
+          resolveAnswer: resolveCandidateAnswer,
+        });
+      },
+    );
+  } catch (error) {
+    deps.logger.error(
+      {
+        event: "linkedin.easy_apply.failed",
+        url: args.url,
+        error: serializeError(error),
+      },
+      "LinkedIn Easy Apply run failed",
+    );
+    throw new AppError({
+      message: "LinkedIn Easy Apply flow failed.",
+      phase: "linkedin_easy_apply",
+      code: "LINKEDIN_EASY_APPLY_FAILED",
+      cause: error,
+      details: { url: args.url },
+    });
+  }
+
+  deps.logger.info(
+    {
+      status: result.status,
+      attemptedCount: result.attemptedCount,
+      evaluatedCount: result.evaluatedCount,
+      skippedCount: result.skippedCount,
+      requestedCount: result.requestedCount,
+      pagesVisited: result.pagesVisited,
+      disableAiEvaluation: args.disableAiEvaluation,
+      scoreThreshold: args.scoreThreshold,
+      stopReason: result.stopReason,
+    },
+    "LinkedIn Easy Apply batch finished",
   );
 
   return {
@@ -737,6 +872,8 @@ export async function main(cliArgs = process.argv.slice(2), deps = appDeps) {
     result = await runAnswerQuestionsFlow(args, deps);
   } else if (args.mode === "easy-apply") {
     result = await runEasyApplyFlow(args, deps);
+  } else if (args.mode === "easy-apply-batch") {
+    result = await runEasyApplyBatchFlow(args, deps);
   } else if (args.mode === "easy-apply-dry-run") {
     result = await runEasyApplyDryRunFlow(args, deps);
   } else {

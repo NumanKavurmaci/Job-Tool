@@ -178,6 +178,12 @@ Run a real Easy Apply flow for one specific LinkedIn job:
 npm run dev -- easy-apply "https://www.linkedin.com/jobs/view/123"
 ```
 
+Run a real batch Easy Apply flow from the default collection:
+
+```bash
+npm run dev -- easy-apply-batch 5
+```
+
 Run a batch dry run from the default Easy Apply collection:
 
 ```bash
@@ -190,13 +196,17 @@ Run a batch dry run from a specific collection URL:
 npm run dev -- easy-apply-dry-run "https://www.linkedin.com/jobs/collections/easy-apply" 10
 ```
 
-The current CLI only supports batch processing in dry-run mode. `easy-apply` is reserved for a single LinkedIn job URL and will reject collection URLs.
+`easy-apply` is reserved for a single LinkedIn job URL and will reject collection URLs.
+
+`easy-apply-batch` is the live batch command for LinkedIn collection runs.
 
 Optional batch controls:
 
 ```bash
 npm run dev -- easy-apply-dry-run --score-threshold 60 10
 npm run dev -- easy-apply-dry-run --disable-ai-evaluation 10
+npm run dev -- easy-apply-batch --score-threshold 60 5
+npm run dev -- easy-apply-batch --disable-ai-evaluation 5
 ```
 
 - `--score-threshold` changes the score gate used before a job is attempted in batch mode
@@ -250,6 +260,16 @@ npm run dev -- easy-apply-dry-run --disable-ai-evaluation 10
 7. Dismiss the LinkedIn post-submit modal when it appears
 
 This path is intentionally limited to a single job URL in the CLI.
+
+### LinkedIn Easy Apply live batch run
+
+1. Open a LinkedIn collection URL
+2. Reuse persisted LinkedIn session state when available
+3. Discover visible LinkedIn job cards
+4. Optionally evaluate jobs with the AI fit gate
+5. Only keep jobs that pass the current batch rules
+6. Run the live Easy Apply flow on approved jobs
+7. Continue until the requested count is reached or no more eligible jobs remain
 
 ### LinkedIn batch Easy Apply dry run
 

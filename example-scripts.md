@@ -136,6 +136,33 @@ $env:LOCAL_LLM_MODEL='openai/gpt-oss-20b'
 npm run dev -- easy-apply "https://www.linkedin.com/jobs/view/1234567890"
 ```
 
+Run a real Easy Apply batch from the default collection:
+
+```powershell
+$env:LLM_PROVIDER='local'
+$env:LOCAL_LLM_BASE_URL='http://127.0.0.1:1234/v1'
+$env:LOCAL_LLM_MODEL='openai/gpt-oss-20b'
+npm run dev -- easy-apply-batch 5
+```
+
+Run a real Easy Apply batch with a custom score threshold:
+
+```powershell
+$env:LLM_PROVIDER='local'
+$env:LOCAL_LLM_BASE_URL='http://127.0.0.1:1234/v1'
+$env:LOCAL_LLM_MODEL='openai/gpt-oss-20b'
+npm run dev -- easy-apply-batch --score-threshold 60 5
+```
+
+Run a real Easy Apply batch with AI evaluation disabled:
+
+```powershell
+$env:LLM_PROVIDER='local'
+$env:LOCAL_LLM_BASE_URL='http://127.0.0.1:1234/v1'
+$env:LOCAL_LLM_MODEL='openai/gpt-oss-20b'
+npm run dev -- easy-apply-batch --disable-ai-evaluation 5
+```
+
 ## Print Full Dry Run JSON
 
 Use this when you want the full result object in the terminal:
@@ -162,6 +189,20 @@ $env:LOCAL_LLM_MODEL='openai/gpt-oss-20b'
 import { main, appDeps } from "./src/index.ts";
 const result = await main(["easy-apply-dry-run", "https://www.linkedin.com/jobs/view/JOB_ID"], appDeps);
 console.log(JSON.stringify(result, null, 2));
+await appDeps.prisma.$disconnect();
+'@ | npx tsx -
+```
+
+Print the full dry batch result for 10 jobs from the default collection:
+
+```powershell
+$env:LLM_PROVIDER='local'
+$env:LOCAL_LLM_BASE_URL='http://127.0.0.1:1234/v1'
+$env:LOCAL_LLM_MODEL='openai/gpt-oss-20b'
+@'
+import { main, appDeps } from "./src/index.ts";
+const result = await main(["easy-apply-dry-run", "10"], appDeps);
+console.log(JSON.stringify(result.easyApply, null, 2));
 await appDeps.prisma.$disconnect();
 '@ | npx tsx -
 ```
@@ -213,7 +254,7 @@ npm run test:local-llm
 
 - `easy-apply-dry-run` stops before final submission.
 - `easy-apply` accepts a single LinkedIn job URL only.
-- Collection/batch processing is currently exposed only through `easy-apply-dry-run`.
+- `easy-apply-batch` is the live batch command for LinkedIn collection runs.
 - The default Easy Apply root URL is `https://www.linkedin.com/jobs/collections/easy-apply`.
 - `--score-threshold` changes the fit gate for batch runs.
 - `--disable-ai-evaluation` disables the batch fit gate and processes jobs directly.
