@@ -20,7 +20,7 @@ function estimateYearsForSkill(profile: CandidateProfile, text: string): number 
     ?? profile.preferredTechStack.find((skill) => lower.includes(skill.toLowerCase()));
 
   if (!matchedSkill) {
-    return null;
+    return 0;
   }
 
   const matchingExperiences = profile.experience.filter((item) =>
@@ -31,7 +31,7 @@ function estimateYearsForSkill(profile: CandidateProfile, text: string): number 
   );
 
   if (matchingExperiences.length === 0) {
-    return profile.yearsOfExperienceTotal;
+    return 0;
   }
 
   return profile.yearsOfExperienceTotal ?? matchingExperiences.length;
@@ -42,17 +42,20 @@ export function resolveResumeAwareAnswer(
   profile: CandidateProfile,
 ): ResolvedAnswer | null {
   if (question.type === "years_of_experience") {
-    const years = estimateYearsForSkill(profile, question.normalizedText)
-      ?? profile.yearsOfExperienceTotal;
+    const years = estimateYearsForSkill(profile, question.normalizedText);
+    const hasConfidentYears = years != null;
 
     return {
       questionType: question.type,
       strategy: "resume-derived",
-      answer: years == null ? null : String(years),
-      confidence: years == null ? 0.45 : 0.75,
-      confidenceLabel: labelConfidence(years == null ? 0.45 : 0.75, years == null),
-      source: years == null ? "manual" : "resume",
-      ...(years == null
+      answer: hasConfidentYears ? String(years) : null,
+      confidence: hasConfidentYears ? (years === 0 ? 0.72 : 0.75) : 0.45,
+      confidenceLabel: labelConfidence(
+        hasConfidentYears ? (years === 0 ? 0.72 : 0.75) : 0.45,
+        !hasConfidentYears,
+      ),
+      source: hasConfidentYears ? "resume" : "manual",
+      ...(!hasConfidentYears
         ? { notes: ["Could not determine years confidently from resume."] }
         : {}),
     };

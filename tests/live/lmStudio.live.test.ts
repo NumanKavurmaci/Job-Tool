@@ -57,4 +57,83 @@ describe("LM Studio live integration", () => {
     expect(result.model).toBe("openai/gpt-oss-20b");
     expect(result.parsed.title).toBeTruthy();
   });
+
+  it("parses a resume through the real local provider pipeline", async () => {
+    const { parseResume } = await import("../../src/candidate/resume/parseResume.js");
+    const result = await parseResume([
+      "Jane Doe",
+      "jane@example.com",
+      "Backend Engineer",
+      "Skills: TypeScript, Node.js, React",
+      "Experience:",
+      "Backend Engineer at Acme - Built TypeScript APIs and React dashboards",
+      "Education:",
+      "BSc in Computer Science",
+    ].join("\n"));
+
+    expect(result.fullName).toBeTruthy();
+    expect(Array.isArray(result.skills)).toBe(true);
+  }, 20000);
+
+  it("generates a short answer through the real local provider path", async () => {
+    const { generateShortAnswer } = await import("../../src/materials/generateShortAnswer.js");
+    const result = await generateShortAnswer({
+      question: "Why are you interested in this role?",
+      candidateProfile: {
+        fullName: "Jane Doe",
+        email: "jane@example.com",
+        phone: "123",
+        location: "Berlin",
+        linkedinUrl: "https://linkedin.com/in/jane",
+        githubUrl: null,
+        portfolioUrl: null,
+        summary: "Backend engineer focused on TypeScript and Node.js.",
+        gpa: null,
+        yearsOfExperienceTotal: 4,
+        currentTitle: "Backend Engineer",
+        preferredRoles: ["Backend Engineer"],
+        preferredTechStack: ["TypeScript", "Node.js", "React"],
+        skills: ["TypeScript", "Node.js", "React"],
+        languages: ["English"],
+        salaryExpectations: { usd: null, eur: null, try: null },
+        salaryExpectation: null,
+        experienceOverrides: {},
+        workAuthorization: "authorized",
+        requiresSponsorship: false,
+        willingToRelocate: false,
+        remotePreference: "remote",
+        remoteOnly: true,
+        disability: {
+          hasVisualDisability: false,
+          disabilityPercentage: null,
+          requiresAccommodation: null,
+          accommodationNotes: null,
+          disclosurePreference: "manual-review",
+        },
+        education: [],
+        experience: [
+          {
+            company: "Acme",
+            title: "Backend Engineer",
+            summary: "Built TypeScript APIs and React dashboards",
+            technologies: ["TypeScript", "Node.js", "React"],
+            startDate: null,
+            endDate: null,
+          },
+        ],
+        projects: [],
+        resumeText: "resume text",
+        sourceMetadata: {},
+      },
+      targetJobContext: {
+        title: "Backend Engineer",
+        company: "Acme",
+        location: "Remote",
+      },
+      maxCharacters: 220,
+    });
+
+    expect(result.text.length).toBeGreaterThan(0);
+    expect(result.text.length).toBeLessThanOrEqual(220);
+  }, 20000);
 });

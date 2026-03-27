@@ -300,6 +300,20 @@ describe("question strategies", () => {
     expect(result?.confidenceLabel).toBe("manual_review");
   });
 
+  it("does not map unsupported technologies to total experience", async () => {
+    const { resolveResumeAwareAnswer } = await import(
+      "../../src/questions/strategies/resumeAware.js"
+    );
+
+    const result = resolveResumeAwareAnswer(
+      { type: "years_of_experience", normalizedText: "how many years of professional experience do you have working with angular", confidence: 0.9 },
+      profile,
+    );
+
+    expect(result?.answer).toBeNull();
+    expect(result?.confidenceLabel).toBe("manual_review");
+  });
+
   it("generates answers for short-text questions", async () => {
     generateShortAnswerMock.mockResolvedValue({
       text: "I am interested because the role fits my background.",

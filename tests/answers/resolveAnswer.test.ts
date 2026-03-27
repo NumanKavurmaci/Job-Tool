@@ -1,9 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const resolveGeneratedAnswerMock = vi.fn();
+const persistResolvedAnswerMock = vi.fn();
 
 vi.mock("../../src/questions/strategies/generated.js", () => ({
   resolveGeneratedAnswer: resolveGeneratedAnswerMock,
+}));
+
+vi.mock("../../src/answers/cache.js", () => ({
+  persistResolvedAnswer: persistResolvedAnswerMock,
 }));
 
 const profile = {
@@ -65,6 +70,7 @@ describe("resolveAnswer", () => {
   beforeEach(() => {
     vi.resetModules();
     resolveGeneratedAnswerMock.mockReset();
+    persistResolvedAnswerMock.mockReset();
   });
 
   it("returns deterministic linkedin answers", async () => {
@@ -76,6 +82,7 @@ describe("resolveAnswer", () => {
 
     expect(result.strategy).toBe("deterministic");
     expect(result.answer).toBe("https://linkedin.com/in/jane");
+    expect(persistResolvedAnswerMock).toHaveBeenCalled();
   });
 
   it("returns the email address for email-style LinkedIn questions", async () => {
@@ -219,6 +226,21 @@ describe("resolveAnswer", () => {
     expect(result.answer).toBe("0");
   });
 
+  it("does not invent years for unsupported technologies", async () => {
+    const { resolveAnswer } = await import("../../src/answers/resolveAnswer.js");
+    const result = await resolveAnswer({
+      question: {
+        label: "How many years of professional experience do you have working with Angular?",
+        inputType: "text",
+      },
+      candidateProfile: profile,
+    });
+
+    expect(result.strategy).toBe("resume-derived");
+    expect(result.answer).toBeNull();
+    expect(result.confidenceLabel).toBe("manual_review");
+  });
+
   it("routes motivation questions to the generated path", async () => {
     resolveGeneratedAnswerMock.mockResolvedValue({
       questionType: "motivation_short_text",
@@ -319,5 +341,28 @@ describe("resolveAnswer", () => {
 
     expect(result.strategy).toBe("needs-review");
     expect(result.confidenceLabel).toBe("manual_review");
+  });
+
+  it("persists manual-review answers to the cache layer", async () => {
+    const { resolveAnswer } = await import("../../src/answers/resolveAnswer.js");
+    await resolveAnswer({
+      question: {
+        label: "How many years of professional experience do you have working with Angular?",
+        inputType: "text",
+      },
+      candidateProfile: profile,
+    });
+
+    expect(persistResolvedAnswerMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        question: expect.objectContaining({
+          label: "How many years of professional experience do you have working with Angular?",
+        }),
+        resolved: expect.objectContaining({
+          answer: null,
+          confidenceLabel: "manual_review",
+        }),
+      }),
+    );
   });
 });
