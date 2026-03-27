@@ -14,7 +14,7 @@ export const ParsedJobSchema = z.object({
 
 export type ParsedJob = z.infer<typeof ParsedJobSchema>;
 
-export async function parseJobWithLLM(rawText: string): Promise<ParsedJob> {
+export async function parseJobWithLLM(jobText: string): Promise<ParsedJob> {
   const prompt = `
 Extract the job posting into JSON.
 
@@ -22,6 +22,7 @@ Rules:
 - Return only valid JSON
 - Use null when unknown
 - mustHaveSkills and niceToHaveSkills must be arrays
+- Prefer the explicitly labeled fields over inferring from unrelated text
 
 Schema:
 {
@@ -36,7 +37,7 @@ Schema:
 }
 
 Job posting text:
-"""${rawText.slice(0, 12000)}"""
+"""${jobText.slice(0, 12000)}"""
 `;
 
   const response = await openai.responses.create({

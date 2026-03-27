@@ -1,6 +1,7 @@
 import { withPage } from "./browser/playwright.js";
 import { prisma } from "./db/client.js";
 import { extractJobText } from "./parser/extractJobText.js";
+import { formatJobForLLM } from "./parser/formatJobForLLM.js";
 import { parseJobWithLLM } from "./parser/parseJobWithLLM.js";
 import { logger } from "./utils/logger.js";
 
@@ -13,33 +14,43 @@ async function main() {
 
   logger.info({ url }, "Starting job fetch");
 
-  const rawText = await withPage(async (page) => {
+  const extracted = await withPage(async (page) => {
     return extractJobText(page, url);
   });
 
-  logger.info({ length: rawText.length }, "Job text extracted");
+  logger.info(
+    {
+      adapterPlatform: extracted.platform,
+      rawTextLength: extracted.rawText.length,
+      title: extracted.title,
+      company: extracted.company,
+      location: extracted.location,
+    },
+    "Job content extracted",
+  );
 
-  const parsed = await parseJobWithLLM(rawText);
+  const llmInput = formatJobForLLM(extracted);
+  const parsed = await parseJobWithLLM(llmInput);
 
   logger.info({ parsed }, "Job parsed");
 
   const saved = await prisma.jobPosting.upsert({
     where: { url },
     update: {
-      rawText,
-      title: parsed.title,
-      company: parsed.company,
-      location: parsed.location,
-      platform: parsed.platform,
+      rawText: extracted.rawText,
+      title: parsed.title ?? extracted.title,
+      company: parsed.company ?? extracted.company,
+      location: parsed.location ?? extracted.location,
+      platform: parsed.platform ?? extracted.platform,
       parsedJson: JSON.stringify(parsed),
     },
     create: {
       url,
-      rawText,
-      title: parsed.title,
-      company: parsed.company,
-      location: parsed.location,
-      platform: parsed.platform,
+      rawText: extracted.rawText,
+      title: parsed.title ?? extracted.title,
+      company: parsed.company ?? extracted.company,
+      location: parsed.location ?? extracted.location,
+      platform: parsed.platform ?? extracted.platform,
       parsedJson: JSON.stringify(parsed),
     },
   });
