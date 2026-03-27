@@ -76,6 +76,7 @@ export function createMockPage(options?: {
   routes?: Record<string, RouteValue>;
   onFill?: (selector: string, value: string, context: MockPageContext) => void | Promise<void>;
   onClick?: (selector: string, context: MockPageContext) => void | Promise<void>;
+  onWaitForTimeout?: (timeoutMs: number, context: MockPageContext) => void | Promise<void>;
 }) {
   let state: MockPageState = {
     selectors: options?.selectors,
@@ -120,7 +121,12 @@ export function createMockPage(options?: {
     };
     return undefined;
   };
-  const waitForTimeout = async () => undefined;
+  const waitForTimeout = async (timeoutMs: number) => {
+    if (options?.onWaitForTimeout) {
+      await options.onWaitForTimeout(timeoutMs, context);
+    }
+    return undefined;
+  };
 
   return {
     locator(selector: string) {

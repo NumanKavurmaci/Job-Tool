@@ -15,6 +15,13 @@ const EASY_APPLY_TRIGGER_SELECTOR = [
   "a[aria-label*='Easy Apply']",
   "a[href*='/apply/'][href*='openSDUIApplyFlow=true']",
 ].join(", ");
+const EXTERNAL_APPLY_TRIGGER_SELECTOR = [
+  "button[aria-label*='Apply to'][aria-label*='company website']",
+  "button[aria-label^='Apply to ']:has(svg use[href='#link-external-small'])",
+  "button#jobs-apply-button-id[role='link']",
+  "button.jobs-apply-button[aria-label*='company website']",
+  "a[aria-label*='company website']",
+].join(", ");
 
 async function annotateQuestions(page: Page): Promise<EasyApplyQuestionView[]> {
   const dialog = page.locator(".jobs-easy-apply-modal, [role='dialog']").first();
@@ -153,6 +160,26 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
   async isEasyApplyAvailable(): Promise<boolean> {
     const locator = this.page.locator(EASY_APPLY_TRIGGER_SELECTOR).first();
     return (await locator.count()) > 0;
+  }
+
+  async isExternalApplyAvailable(): Promise<boolean> {
+    const locator = this.page.locator(EXTERNAL_APPLY_TRIGGER_SELECTOR).first();
+    return (await locator.count()) > 0;
+  }
+
+  async getExternalApplyUrl(): Promise<string | null> {
+    const locator = this.page.locator(EXTERNAL_APPLY_TRIGGER_SELECTOR).first();
+    if ((await locator.count()) === 0) {
+      return null;
+    }
+
+    const href = await locator.getAttribute("href").catch(() => null);
+    if (href) {
+      return href;
+    }
+
+    const ariaLabel = await locator.getAttribute("aria-label").catch(() => null);
+    return ariaLabel ? `linkedin-external:${ariaLabel}` : null;
   }
 
   async isAlreadyApplied(): Promise<boolean> {
@@ -352,18 +379,24 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
     return "unknown";
   }
 
-  async advance(action: "next" | "review"): Promise<void> {
+  async advance(action: "next" | "review" | "submit"): Promise<void> {
     const locator = action === "review"
       ? this.page
         .locator(
           "[data-live-test-easy-apply-review-button], button[aria-label*='Review your application'], button:has-text('Review')",
         )
         .first()
-      : this.page
-        .locator(
-          "[data-live-test-easy-apply-next-button], [data-easy-apply-next-button], button[aria-label*='Continue to next step'], button:has-text('Next')",
-        )
-        .first();
+      : action === "submit"
+        ? this.page
+          .locator(
+            "[data-live-test-easy-apply-submit-button], button[aria-label*='Submit application'], button:has-text('Submit application')",
+          )
+          .first()
+        : this.page
+          .locator(
+            "[data-live-test-easy-apply-next-button], [data-easy-apply-next-button], button[aria-label*='Continue to next step'], button:has-text('Next')",
+          )
+          .first();
     await locator.click();
     await this.page.waitForTimeout(1_500);
   }

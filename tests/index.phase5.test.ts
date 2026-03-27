@@ -18,6 +18,7 @@ async function loadIndexModule(readFileMock?: ReturnType<typeof vi.fn>) {
   const loadCandidateProfileMock = vi.fn();
   const resolveAnswerMock = vi.fn();
   const withPageMock = vi.fn();
+  const runEasyApplyMock = vi.fn();
   const runEasyApplyDryRunMock = vi.fn();
   const runEasyApplyBatchDryRunMock = vi.fn();
   const createEasyApplyDriverMock = vi.fn();
@@ -36,6 +37,7 @@ async function loadIndexModule(readFileMock?: ReturnType<typeof vi.fn>) {
       loadCandidateProfileMock,
       resolveAnswerMock,
       withPageMock,
+      runEasyApplyMock,
       runEasyApplyDryRunMock,
       runEasyApplyBatchDryRunMock,
       createEasyApplyDriverMock,
@@ -52,6 +54,7 @@ async function loadIndexModule(readFileMock?: ReturnType<typeof vi.fn>) {
       loadCandidateProfile: loadCandidateProfileMock,
       resolveAnswer: resolveAnswerMock,
       withPage: withPageMock,
+      runEasyApply: runEasyApplyMock,
       runEasyApplyDryRun: runEasyApplyDryRunMock,
       runEasyApplyBatchDryRun: runEasyApplyBatchDryRunMock,
       createEasyApplyDriver: createEasyApplyDriverMock,
@@ -342,6 +345,12 @@ describe("phase 5 index flows", () => {
       resumePath: expect.any(String),
       count: 2,
     });
+
+    expect(module.parseCliArgs(["easy-apply", "https://www.linkedin.com/jobs/view/1"])).toEqual({
+      mode: "easy-apply",
+      url: "https://www.linkedin.com/jobs/view/1",
+      resumePath: expect.any(String),
+    });
   });
 
   it("rejects missing candidate prep flags", async () => {
@@ -350,9 +359,78 @@ describe("phase 5 index flows", () => {
     expect(() => module.parseCliArgs(["answer-questions", "--resume", "./resume.txt"])).toThrow(
       "--questions is required",
     );
+    expect(() => module.parseCliArgs(["easy-apply"])).toThrow("--url is required for easy-apply.");
+    expect(() =>
+      module.parseCliArgs(["easy-apply", "https://www.linkedin.com/jobs/collections/easy-apply"]),
+    ).toThrow("easy-apply requires a single LinkedIn job URL");
     expect(() => module.parseCliArgs(["easy-apply-dry-run", "--count", "0"])).toThrow(
       "--count must be a positive integer.",
     );
+  });
+
+  it("runs the real easy apply flow", async () => {
+    const { module, mocks, deps } = await loadIndexModule();
+    mocks.loadCandidateMasterProfileMock.mockResolvedValue({
+      fullName: "Jane Doe",
+      linkedinUrl: "https://linkedin.com/in/jane",
+      sourceMetadata: { resumePath: "./resume.txt" },
+    });
+    mocks.createEasyApplyDriverMock.mockReturnValue({ driver: true });
+    mockWithPageSuccess(mocks.withPageMock);
+    mocks.runEasyApplyMock.mockResolvedValue({
+      status: "submitted",
+      steps: [],
+      stopReason: "Application submitted successfully.",
+      url: "https://www.linkedin.com/jobs/view/1",
+    });
+
+    const result = await module.main(
+      ["easy-apply", "https://www.linkedin.com/jobs/view/1", "--resume", "./resume.txt"],
+      deps,
+    );
+
+    expect(result.easyApply.status).toBe("submitted");
+    expect(mocks.runEasyApplyMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: "https://www.linkedin.com/jobs/view/1",
+        candidateProfile: expect.objectContaining({
+          fullName: "Jane Doe",
+        }),
+      }),
+    );
+    expect(mocks.runEasyApplyDryRunMock).not.toHaveBeenCalled();
+    expect(mocks.runEasyApplyBatchDryRunMock).not.toHaveBeenCalled();
+    expect(mocks.infoMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "submitted",
+        stepCount: 0,
+      }),
+      "LinkedIn Easy Apply finished",
+    );
+  });
+
+  it("wraps real easy apply flow failures with a linkedin phase error", async () => {
+    const { module, mocks, deps } = await loadIndexModule();
+    mocks.loadCandidateMasterProfileMock.mockResolvedValue({
+      fullName: "Jane Doe",
+      linkedinUrl: "https://linkedin.com/in/jane",
+      sourceMetadata: { resumePath: "./resume.txt" },
+    });
+    mocks.createEasyApplyDriverMock.mockReturnValue({ driver: true });
+    mockWithPageSuccess(mocks.withPageMock);
+    mocks.runEasyApplyMock.mockRejectedValue(new Error("submit failed"));
+
+    await expect(
+      module.main(
+        ["easy-apply", "https://www.linkedin.com/jobs/view/1", "--resume", "./resume.txt"],
+        deps,
+      ),
+    ).rejects.toMatchObject({
+      name: "AppError",
+      phase: "linkedin_easy_apply",
+      code: "LINKEDIN_EASY_APPLY_FAILED",
+      message: "LinkedIn Easy Apply flow failed.",
+    });
   });
 
   it("supports score and default decide parsing", async () => {
@@ -643,6 +721,24 @@ describe("phase 5 index flows", () => {
       }),
       expect.any(Function),
     );
+    expect(mocks.withPageMock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        persistentProfilePath: ".auth/linkedin-profile",
+        storageStatePath: ".auth/linkedin-session.json",
+        persistStorageState: true,
+      }),
+      expect.any(Function),
+    );
+    expect(mocks.withPageMock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        storageStatePath: ".auth/linkedin-session.json",
+        persistStorageState: true,
+      }),
+      expect.any(Function),
+    );
+    expect(mocks.withPageMock.mock.calls[1]?.[0]).not.toHaveProperty("persistentProfilePath");
   });
 
   it("wraps build-profile snapshot failures with a database phase error", async () => {

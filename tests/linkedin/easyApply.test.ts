@@ -4,6 +4,7 @@ import {
   isAutoHandledQuestion,
   isManualReviewAnswer,
   isSubmitButtonLabel,
+  runEasyApply,
   runEasyApplyBatchDryRun,
   runEasyApplyDryRun,
 } from "../../src/linkedin/easyApply.js";
@@ -395,6 +396,39 @@ describe("runEasyApplyDryRun", () => {
     });
 
     expect(result.status).toBe("stopped_not_easy_apply");
+  });
+
+  it("stops cleanly for external-apply jobs and returns the external target", async () => {
+    const driver = {
+      open: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(false),
+      isExternalApplyAvailable: vi.fn().mockResolvedValue(true),
+      getExternalApplyUrl: vi.fn().mockResolvedValue("https://company.example.com/apply"),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn(),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn(),
+      advance: vi.fn(),
+    };
+
+    const result = await runEasyApplyDryRun({
+      driver,
+      url: "https://www.linkedin.com/jobs/view/1",
+      candidateProfile: profile,
+      resolveAnswer: async () => ({
+        questionType: "contact_info",
+        strategy: "deterministic",
+        answer: "123",
+        confidence: 0.95,
+        confidenceLabel: "high",
+        source: "candidate-profile",
+      }),
+    });
+
+    expect(result.status).toBe("stopped_external_apply");
+    expect(result.externalApplyUrl).toBe("https://company.example.com/apply");
+    expect(result.stopReason).toContain("external application page");
   });
 
   it("skips jobs that already have an applied badge", async () => {
@@ -849,5 +883,251 @@ describe("runEasyApplyBatchDryRun", () => {
     expect(result.jobs[0]?.evaluation.reason).toContain("already");
     expect(evaluateJob).toHaveBeenCalledTimes(1);
     expect(evaluateJob).toHaveBeenCalledWith("https://www.linkedin.com/jobs/view/2");
+  });
+});
+
+describe("runEasyApply", () => {
+  it("submits the application when the submit step is reached", async () => {
+    const driver = {
+      open: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn().mockResolvedValue([]),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn().mockResolvedValue("submit"),
+      advance: vi.fn(),
+      dismissCompletionModal: vi.fn().mockResolvedValue(true),
+    };
+
+    const result = await runEasyApply({
+      driver,
+      url: "https://www.linkedin.com/jobs/view/1",
+      candidateProfile: profile,
+      resolveAnswer: async () => ({
+        questionType: "contact_info",
+        strategy: "deterministic",
+        answer: "123",
+        confidence: 0.95,
+        confidenceLabel: "high",
+        source: "candidate-profile",
+      }),
+    });
+
+    expect(result.status).toBe("submitted");
+    expect(driver.advance).toHaveBeenCalledWith("submit");
+    expect(driver.dismissCompletionModal).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops before submitting when the final step still has required manual-review blockers", async () => {
+    const driver = {
+      open: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn().mockResolvedValue([
+        {
+          fieldKey: "q1",
+          label: "Salary expectation",
+          inputType: "text",
+          required: true,
+        },
+      ]),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn().mockResolvedValue("submit"),
+      advance: vi.fn(),
+      dismissCompletionModal: vi.fn(),
+    };
+
+    const result = await runEasyApply({
+      driver,
+      url: "https://www.linkedin.com/jobs/view/1",
+      candidateProfile: profile,
+      resolveAnswer: async () => ({
+        questionType: "salary",
+        strategy: "needs-review",
+        answer: null,
+        confidence: 0.2,
+        confidenceLabel: "manual_review",
+        source: "manual",
+      }),
+    });
+
+    expect(result.status).toBe("stopped_manual_review");
+    expect(driver.advance).not.toHaveBeenCalled();
+    expect(driver.dismissCompletionModal).not.toHaveBeenCalled();
+  });
+
+  it("returns external-apply status when the job redirects to a company website", async () => {
+    const driver = {
+      open: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(false),
+      isExternalApplyAvailable: vi.fn().mockResolvedValue(true),
+      getExternalApplyUrl: vi.fn().mockResolvedValue("https://company.example.com/apply"),
+      isAlreadyApplied: vi.fn().mockResolvedValue(false),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn(),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn(),
+      advance: vi.fn(),
+    };
+
+    const result = await runEasyApply({
+      driver,
+      url: "https://www.linkedin.com/jobs/view/1",
+      candidateProfile: profile,
+      resolveAnswer: async () => ({
+        questionType: "contact_info",
+        strategy: "deterministic",
+        answer: "123",
+        confidence: 0.95,
+        confidenceLabel: "high",
+        source: "candidate-profile",
+      }),
+    });
+
+    expect(result.status).toBe("stopped_external_apply");
+    expect(result.externalApplyUrl).toBe("https://company.example.com/apply");
+  });
+
+  it("stops when the job has already been applied to", async () => {
+    const driver = {
+      open: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(false),
+      isExternalApplyAvailable: vi.fn().mockResolvedValue(false),
+      isAlreadyApplied: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn(),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn(),
+      advance: vi.fn(),
+    };
+
+    const result = await runEasyApply({
+      driver,
+      url: "https://www.linkedin.com/jobs/view/1",
+      candidateProfile: profile,
+      resolveAnswer: async () => ({
+        questionType: "contact_info",
+        strategy: "deterministic",
+        answer: "123",
+        confidence: 0.95,
+        confidenceLabel: "high",
+        source: "candidate-profile",
+      }),
+    });
+
+    expect(result.status).toBe("stopped_not_easy_apply");
+    expect(result.stopReason).toContain("already been applied");
+  });
+
+  it("stops when no apply path is available", async () => {
+    const driver = {
+      open: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(false),
+      isExternalApplyAvailable: vi.fn().mockResolvedValue(false),
+      isAlreadyApplied: vi.fn().mockResolvedValue(false),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn(),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn(),
+      advance: vi.fn(),
+    };
+
+    const result = await runEasyApply({
+      driver,
+      url: "https://www.linkedin.com/jobs/view/1",
+      candidateProfile: profile,
+      resolveAnswer: async () => ({
+        questionType: "contact_info",
+        strategy: "deterministic",
+        answer: "123",
+        confidence: 0.95,
+        confidenceLabel: "high",
+        source: "candidate-profile",
+      }),
+    });
+
+    expect(result.status).toBe("stopped_not_easy_apply");
+    expect(result.stopReason).toContain("Easy Apply button was not found");
+  });
+
+  it("skips non-required manual-review answers and stops on unknown actions", async () => {
+    const driver = {
+      open: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn().mockResolvedValue([
+        {
+          fieldKey: "q1",
+          label: "Optional note",
+          inputType: "text",
+          required: false,
+        },
+      ]),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn().mockResolvedValue("unknown"),
+      advance: vi.fn(),
+    };
+
+    const result = await runEasyApply({
+      driver,
+      url: "https://www.linkedin.com/jobs/view/1",
+      candidateProfile: profile,
+      resolveAnswer: async () => ({
+        questionType: "general_short_text",
+        strategy: "needs-review",
+        answer: null,
+        confidence: 0.2,
+        confidenceLabel: "manual_review",
+        source: "manual",
+      }),
+    });
+
+    expect(result.status).toBe("stopped_unknown_action");
+    expect(result.steps[0]?.questions[0]?.details).toContain("manual review");
+    expect(driver.fillAnswer).not.toHaveBeenCalled();
+  });
+
+  it("stops when review repeats without advancing", async () => {
+    const driver = {
+      open: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn().mockResolvedValue([
+        {
+          fieldKey: "q1",
+          label: "Portfolio URL",
+          inputType: "text",
+          required: false,
+        },
+      ]),
+      fillAnswer: vi.fn().mockResolvedValue({ filled: true }),
+      getPrimaryAction: vi.fn().mockResolvedValue("review"),
+      advance: vi.fn(),
+    };
+
+    const result = await runEasyApply({
+      driver,
+      url: "https://www.linkedin.com/jobs/view/1",
+      candidateProfile: profile,
+      resolveAnswer: async () => ({
+        questionType: "contact_info",
+        strategy: "deterministic",
+        answer: "https://example.com",
+        confidence: 0.9,
+        confidenceLabel: "high",
+        source: "candidate-profile",
+      }),
+      maxSteps: 3,
+    });
+
+    expect(result.status).toBe("stopped_unknown_action");
+    expect(result.stopReason).toContain("repeated without advancing");
   });
 });

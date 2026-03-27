@@ -15,6 +15,7 @@ import {
 } from "./helpers.js";
 
 const LINKEDIN_LOGIN_URL = "https://www.linkedin.com/login";
+const LINKEDIN_MANUAL_AUTH_WINDOW_MS = 120_000;
 const LINKEDIN_USERNAME_SELECTORS = [
   "input[name='session_key']",
   "input[name='username']",
@@ -139,6 +140,53 @@ async function waitForLinkedInAuthResolution(
   }
 
   return getLinkedInAuthState(page);
+}
+
+async function waitForManualLinkedInIntervention(
+  page: Page,
+  url: string,
+  timeoutMs = LINKEDIN_MANUAL_AUTH_WINDOW_MS,
+): Promise<boolean> {
+  logger.info(
+    {
+      event: "linkedin.auth.manual_recovery.started",
+      url: page.url(),
+      timeoutMs,
+    },
+    "Waiting for manual LinkedIn authentication recovery",
+  );
+
+  const attempts = Math.max(1, Math.ceil(timeoutMs / 500));
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const state = await getLinkedInAuthState(page);
+    if (state === "authenticated") {
+      await gotoJobPage(page, url);
+      const unlockedState = await waitForLinkedInAuthResolution(page, 2_000);
+      if (unlockedState === "authenticated") {
+        logger.info(
+          {
+            event: "linkedin.auth.manual_recovery.succeeded",
+            url: page.url(),
+          },
+          "LinkedIn authentication recovered after manual intervention",
+        );
+        return true;
+      }
+    }
+
+    await page.waitForTimeout(500);
+  }
+
+  logger.info(
+    {
+      event: "linkedin.auth.manual_recovery.timed_out",
+      url: page.url(),
+      timeoutMs,
+    },
+    "Manual LinkedIn authentication recovery timed out",
+  );
+  return false;
 }
 
 export class LinkedInAdapter implements JobAdapter {
@@ -300,6 +348,11 @@ export async function ensureLinkedInAuthenticated(page: Page, url: string): Prom
     const submitButton = page.locator("button[type='submit']").first();
 
     if (!usernameInput || !passwordInput) {
+      const recovered = await waitForManualLinkedInIntervention(page, url);
+      if (recovered) {
+        return;
+      }
+
       const artifacts = await capturePageArtifacts(page, "linkedin-login-form-not-found");
       throw new AppError({
         message: "LinkedIn login form was not detected.",
@@ -320,6 +373,11 @@ export async function ensureLinkedInAuthenticated(page: Page, url: string): Prom
     const postSubmitState = await waitForLinkedInAuthResolution(page);
 
     if (postSubmitState === "challenge") {
+      const recovered = await waitForManualLinkedInIntervention(page, url);
+      if (recovered) {
+        return;
+      }
+
       const artifacts = await capturePageArtifacts(page, "linkedin-auth-challenge-post-submit");
       throw new AppError({
         message: "LinkedIn login reached a verification challenge. Manual verification is required before automation can continue.",
@@ -337,6 +395,11 @@ export async function ensureLinkedInAuthenticated(page: Page, url: string): Prom
 
     const finalState = await waitForLinkedInAuthResolution(page, 5_000);
     if (finalState === "challenge") {
+      const recovered = await waitForManualLinkedInIntervention(page, url);
+      if (recovered) {
+        return;
+      }
+
       const artifacts = await capturePageArtifacts(page, "linkedin-auth-challenge-after-login");
       throw new AppError({
         message: "LinkedIn redirected to a verification challenge after login. Manual verification is required before automation can continue.",
@@ -351,6 +414,11 @@ export async function ensureLinkedInAuthenticated(page: Page, url: string): Prom
     }
 
     if (finalState !== "authenticated") {
+      const recovered = await waitForManualLinkedInIntervention(page, url);
+      if (recovered) {
+        return;
+      }
+
       const artifacts = await capturePageArtifacts(page, "linkedin-auth-not-unlocked");
       throw new AppError({
         message: "LinkedIn authentication did not unlock the job page. The session may need manual verification.",

@@ -9,6 +9,7 @@ import { env } from "./config/env.js";
 import { prisma } from "./db/client.js";
 import { normalizeParsedJob } from "./domain/job.js";
 import {
+  runEasyApply,
   runEasyApplyBatchDryRun,
   runEasyApplyDryRun,
 } from "./linkedin/easyApply.js";
@@ -30,6 +31,10 @@ export const DEFAULT_LINKEDIN_EASY_APPLY_URL =
   "https://www.linkedin.com/jobs/collections/easy-apply";
 const LINKEDIN_BROWSER_SESSION_OPTIONS = {
   persistentProfilePath: env.LINKEDIN_BROWSER_PROFILE_PATH,
+  storageStatePath: env.LINKEDIN_SESSION_STATE_PATH,
+  persistStorageState: true,
+} as const;
+const LINKEDIN_EVALUATION_SESSION_OPTIONS = {
   storageStatePath: env.LINKEDIN_SESSION_STATE_PATH,
   persistStorageState: true,
 } as const;
@@ -62,6 +67,7 @@ export const appDeps = {
   evaluatePolicy,
   decideJob,
   runEasyApplyDryRun,
+  runEasyApply,
   runEasyApplyBatchDryRun,
   createEasyApplyDriver: async (page: unknown) => {
     const { PlaywrightLinkedInEasyApplyDriver } =
@@ -74,6 +80,7 @@ export const appDeps = {
 
 export type CliArgs =
   | { mode: "score" | "decide"; url: string }
+  | { mode: "easy-apply"; url: string; resumePath: string }
   | { mode: "easy-apply-dry-run"; url: string; resumePath: string; count: number }
   | {
       mode: "build-profile";
@@ -196,6 +203,32 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
       url,
       resumePath,
       count,
+    };
+  }
+
+  if (first === "easy-apply") {
+    const resumePath = getFlag("--resume") ?? DEFAULT_RESUME_PATH;
+    const positionalArgs = getPositionalTailArgs();
+    const url = positionalArgs[0];
+
+    if (!resumePath) {
+      throw new Error(
+        "--resume is required for easy-apply when no default CV is available.",
+      );
+    }
+
+    if (!url) {
+      throw new Error("--url is required for easy-apply.");
+    }
+
+    if (isLinkedInCollectionUrl(url)) {
+      throw new Error("easy-apply requires a single LinkedIn job URL, not a collection URL.");
+    }
+
+    return {
+      mode: "easy-apply",
+      url,
+      resumePath,
     };
   }
 
@@ -459,7 +492,7 @@ async function runEasyApplyDryRunFlow(
       {
         const driver = await deps.createEasyApplyDriver(page);
         const evaluateJob = async (url: string) => {
-          const evaluationResult = await deps.withPage(LINKEDIN_BROWSER_SESSION_OPTIONS, async (evaluationPage) => {
+          const evaluationResult = await deps.withPage(LINKEDIN_EVALUATION_SESSION_OPTIONS, async (evaluationPage) => {
             const extracted = await deps.extractJobText(evaluationPage, url);
             const llmInput = deps.formatJobForLLM(extracted);
             const parseResult = await deps.parseJob(llmInput);
@@ -557,6 +590,63 @@ async function runEasyApplyDryRunFlow(
   };
 }
 
+async function runEasyApplyFlow(
+  args: Extract<CliArgs, { mode: "easy-apply" }>,
+  deps = appDeps,
+) {
+  const profile = await deps.loadCandidateMasterProfile({
+    resumePath: args.resumePath,
+  });
+
+  let result;
+  try {
+    result = await deps.withPage(LINKEDIN_BROWSER_SESSION_OPTIONS, async (page) => {
+      const driver = await deps.createEasyApplyDriver(page);
+      return deps.runEasyApply({
+        driver,
+        url: args.url,
+        candidateProfile: profile,
+        resolveAnswer: ({ question, candidateProfile }: {
+          question: InputQuestion;
+          candidateProfile: typeof profile;
+        }) => deps.resolveAnswer({ question, candidateProfile }),
+      });
+    });
+  } catch (error) {
+    deps.logger.error(
+      {
+        event: "linkedin.easy_apply.failed",
+        url: args.url,
+        error: serializeError(error),
+      },
+      "LinkedIn Easy Apply run failed",
+    );
+    throw new AppError({
+      message: "LinkedIn Easy Apply flow failed.",
+      phase: "linkedin_easy_apply",
+      code: "LINKEDIN_EASY_APPLY_FAILED",
+      cause: error,
+      details: { url: args.url },
+    });
+  }
+
+  deps.logger.info(
+    {
+      status: result.status,
+      stepCount: result.steps.length,
+      stopReason: result.stopReason,
+      ...(result.externalApplyUrl ? { externalApplyUrl: result.externalApplyUrl } : {}),
+    },
+    "LinkedIn Easy Apply finished",
+  );
+
+  return {
+    mode: args.mode,
+    profile,
+    easyApply: result,
+  };
+}
+
 export async function main(cliArgs = process.argv.slice(2), deps = appDeps) {
   const startedAt = performance.now();
   const args = Array.isArray(cliArgs)
@@ -577,6 +667,8 @@ export async function main(cliArgs = process.argv.slice(2), deps = appDeps) {
     result = await runBuildProfileFlow(args, deps);
   } else if (args.mode === "answer-questions") {
     result = await runAnswerQuestionsFlow(args, deps);
+  } else if (args.mode === "easy-apply") {
+    result = await runEasyApplyFlow(args, deps);
   } else if (args.mode === "easy-apply-dry-run") {
     result = await runEasyApplyDryRunFlow(args, deps);
   } else {
