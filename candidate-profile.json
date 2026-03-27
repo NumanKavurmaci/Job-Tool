@@ -21,6 +21,11 @@
   "visaRequirement": "not-required",
   "workAuthorizationStatus": "authorized",
   "languages": ["English"],
+  "experienceOverrides": {
+    "linux": 0,
+    "docker": 0,
+    "ci/cd": 0
+  },
   "salaryExpectations": {
     "usd": 2000,
     "eur": 1800,

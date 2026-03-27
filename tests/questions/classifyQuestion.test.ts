@@ -6,6 +6,8 @@ describe("classifyQuestion", () => {
     [{ label: "LinkedIn Profile", inputType: "text" }, "linkedin"],
     [{ label: "What is your email address?", inputType: "text" }, "contact_info"],
     [{ label: "What is your phone number?", inputType: "text" }, "contact_info"],
+    [{ label: "First name", inputType: "text" }, "contact_info"],
+    [{ label: "Last name", inputType: "text" }, "contact_info"],
     [{ label: "Are you legally authorized to work in Germany?", inputType: "radio" }, "work_authorization"],
     [
       {

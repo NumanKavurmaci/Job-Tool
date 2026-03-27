@@ -22,6 +22,15 @@ const profile = {
   preferredTechStack: ["TypeScript", "React", "Node.js"],
   skills: ["TypeScript", "React", "Node.js"],
   languages: ["English"],
+  experienceOverrides: {
+    linux: 0,
+  },
+  salaryExpectations: {
+    usd: "50000-60000 USD yearly",
+    eur: "3000-3500 EUR net monthly",
+    try: "120000-140000 TRY net monthly",
+  },
+  salaryExpectation: "Open to market-rate mid-level backend roles",
   workAuthorization: "EU",
   requiresSponsorship: false,
   willingToRelocate: true,
@@ -89,6 +98,20 @@ describe("question strategies", () => {
         profile,
       )?.answer,
     ).toBe("jane@example.com");
+
+    expect(
+      resolveDeterministicAnswer(
+        { type: "contact_info", normalizedText: "first name", confidence: 0.9 },
+        profile,
+      )?.answer,
+    ).toBe("Jane");
+
+    expect(
+      resolveDeterministicAnswer(
+        { type: "contact_info", normalizedText: "last name", confidence: 0.9 },
+        profile,
+      )?.answer,
+    ).toBe("Doe");
 
     expect(
       resolveDeterministicAnswer(
@@ -227,6 +250,20 @@ describe("question strategies", () => {
         profile,
       )?.strategy,
     ).toBe("resume-derived");
+
+    expect(
+      resolveResumeAwareAnswer(
+        { type: "years_of_experience", normalizedText: "how many years of work experience do you have with full-stack development", confidence: 0.9 },
+        profile,
+      )?.answer,
+    ).toBe("4");
+
+    expect(
+      resolveResumeAwareAnswer(
+        { type: "years_of_experience", normalizedText: "how many years of experience do you have with linux environments, docker, and ci/cd pipelines", confidence: 0.9 },
+        profile,
+      )?.answer,
+    ).toBe("0");
 
     expect(
       resolveResumeAwareAnswer(

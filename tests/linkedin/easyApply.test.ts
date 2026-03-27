@@ -106,6 +106,51 @@ describe("runEasyApplyDryRun", () => {
     expect(result.steps).toHaveLength(2);
   });
 
+  it("skips required fields that LinkedIn already pre-filled", async () => {
+    const driver = {
+      open: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi
+        .fn()
+        .mockResolvedValueOnce([
+          {
+            fieldKey: "q1",
+            label: "First name",
+            inputType: "text",
+            required: true,
+            currentValue: "Jane",
+            isPrefilled: true,
+          },
+        ])
+        .mockResolvedValueOnce([]),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn().mockResolvedValueOnce("next").mockResolvedValueOnce("submit"),
+      advance: vi.fn(),
+    };
+
+    const resolveAnswerMock = vi.fn().mockResolvedValue({
+      questionType: "contact_info",
+      strategy: "deterministic",
+      answer: "Jane",
+      confidence: 0.95,
+      confidenceLabel: "high",
+      source: "candidate-profile",
+    });
+
+    const result = await runEasyApplyDryRun({
+      driver,
+      url: "https://www.linkedin.com/jobs/view/1",
+      candidateProfile: profile,
+      resolveAnswer: resolveAnswerMock,
+    });
+
+    expect(result.status).toBe("ready_to_submit");
+    expect(resolveAnswerMock).not.toHaveBeenCalled();
+    expect(driver.fillAnswer).not.toHaveBeenCalled();
+  });
+
   it("stops when a required question needs manual review", async () => {
     const driver = {
       open: vi.fn(),
@@ -142,6 +187,46 @@ describe("runEasyApplyDryRun", () => {
 
     expect(result.status).toBe("stopped_manual_review");
     expect(driver.advance).not.toHaveBeenCalled();
+  });
+
+  it("stops when a required field fails validation after filling", async () => {
+    const driver = {
+      open: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn().mockResolvedValue([
+        {
+          fieldKey: "q1",
+          label: "How many years of experience do you have with Linux?",
+          inputType: "text",
+          required: true,
+        },
+      ]),
+      fillAnswer: vi.fn().mockResolvedValue({
+        filled: false,
+        details: "Enter a decimal number larger than 0.0",
+      }),
+      getPrimaryAction: vi.fn().mockResolvedValue("next"),
+      advance: vi.fn(),
+    };
+
+    const result = await runEasyApplyDryRun({
+      driver,
+      url: "https://www.linkedin.com/jobs/view/1",
+      candidateProfile: profile,
+      resolveAnswer: async () => ({
+        questionType: "years_of_experience",
+        strategy: "resume-derived",
+        answer: "0",
+        confidence: 0.75,
+        confidenceLabel: "medium",
+        source: "resume",
+      }),
+    });
+
+    expect(result.status).toBe("stopped_manual_review");
+    expect(result.steps[0]?.questions[0]?.details).toContain("decimal number");
   });
 
   it("can advance to review even when review-only questions need manual review", async () => {
@@ -182,6 +267,44 @@ describe("runEasyApplyDryRun", () => {
 
     expect(result.status).toBe("ready_to_submit");
     expect(driver.advance).toHaveBeenCalledWith("review");
+  });
+
+  it("stops when review repeats without advancing and required fields are unresolved", async () => {
+    const driver = {
+      open: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn().mockResolvedValue([
+        {
+          fieldKey: "q1",
+          label: "What is your salary expectation?",
+          inputType: "text",
+          required: true,
+        },
+      ]),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn().mockResolvedValue("review"),
+      advance: vi.fn(),
+    };
+
+    const result = await runEasyApplyDryRun({
+      driver,
+      url: "https://www.linkedin.com/jobs/view/1",
+      candidateProfile: profile,
+      resolveAnswer: async () => ({
+        questionType: "salary",
+        strategy: "needs-review",
+        answer: null,
+        confidence: 0.2,
+        confidenceLabel: "manual_review",
+        source: "manual",
+      }),
+      maxSteps: 3,
+    });
+
+    expect(result.status).toBe("stopped_manual_review");
+    expect(result.stopReason).toContain("did not advance");
   });
 
   it("stops when easy apply is unavailable", async () => {
@@ -241,6 +364,44 @@ describe("runEasyApplyDryRun", () => {
 
     expect(result.status).toBe("stopped_unknown_action");
     expect(result.stopReason).toContain("Could not determine");
+  });
+
+  it("stops on repeated review when the step does not advance without manual review blockers", async () => {
+    const driver = {
+      open: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn().mockResolvedValue([
+        {
+          fieldKey: "q1",
+          label: "Portfolio URL",
+          inputType: "text",
+          required: false,
+        },
+      ]),
+      fillAnswer: vi.fn().mockResolvedValue({ filled: true }),
+      getPrimaryAction: vi.fn().mockResolvedValue("review"),
+      advance: vi.fn(),
+    };
+
+    const result = await runEasyApplyDryRun({
+      driver,
+      url: "https://www.linkedin.com/jobs/view/1",
+      candidateProfile: profile,
+      resolveAnswer: async () => ({
+        questionType: "contact_info",
+        strategy: "deterministic",
+        answer: "https://example.com",
+        confidence: 0.9,
+        confidenceLabel: "high",
+        source: "candidate-profile",
+      }),
+      maxSteps: 3,
+    });
+
+    expect(result.status).toBe("stopped_unknown_action");
+    expect(result.stopReason).toContain("repeated without advancing");
   });
 
   it("stops when the step limit is exceeded", async () => {

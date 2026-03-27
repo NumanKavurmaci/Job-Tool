@@ -21,7 +21,7 @@ const RULES: Rule[] = [
   { type: "education", patterns: [/degree/, /education/, /university/, /graduat/], confidence: 0.9 },
   { type: "availability", patterns: [/start date/, /available/, /notice period/], confidence: 0.88 },
   { type: "location", patterns: [/location/, /where are you based/, /current city/], confidence: 0.88 },
-  { type: "contact_info", patterns: [/email/, /phone/, /contact/], confidence: 0.92 },
+  { type: "contact_info", patterns: [/email/, /phone/, /contact/, /first name/, /last name/, /full name/, /address/], confidence: 0.92 },
   { type: "motivation_short_text", patterns: [/why are you interested/, /why this role/, /why do you want/], confidence: 0.9 },
   { type: "general_short_text", patterns: [/describe/, /tell us about/, /briefly explain/], confidence: 0.72 },
 ];

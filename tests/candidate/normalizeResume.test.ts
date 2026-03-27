@@ -41,7 +41,9 @@ describe("normalizeResume", () => {
     );
 
     expect(result.linkedinUrl).toBe("https://linkedin.com/in/jane");
+    expect(result.experienceOverrides).toEqual({});
     expect(result.salaryExpectations).toEqual({ usd: null, eur: null, try: null });
+    expect(result.salaryExpectation).toBeNull();
     expect(result.gpa).toBeNull();
     expect(result.preferredRoles).toContain("Backend Engineer");
     expect(result.preferredTechStack).toEqual(["TypeScript", "Node.js"]);

@@ -7,6 +7,10 @@ export type EasyApplyPrimaryAction = "next" | "review" | "submit" | "unknown";
 export interface EasyApplyQuestionView extends InputQuestion {
   fieldKey: string;
   required: boolean;
+  currentValue?: string | null;
+  isPrefilled?: boolean;
+  expectsDecimal?: boolean;
+  validationMessage?: string | null;
 }
 
 export interface EasyApplyAnsweredQuestion {
@@ -102,13 +106,39 @@ export async function runEasyApplyDryRun(input: {
   await input.driver.openEasyApply();
 
   const steps: EasyApplyStepReport[] = [];
+  let lastStepSignature: string | null = null;
 
   for (let stepIndex = 0; stepIndex < maxSteps; stepIndex += 1) {
     const questions = await input.driver.collectQuestions();
+    const stepSignature = JSON.stringify(
+      questions.map((question) => ({
+        key: question.fieldKey,
+        label: question.label,
+        required: question.required,
+      })),
+    );
     const answeredQuestions: EasyApplyAnsweredQuestion[] = [];
     let hasRequiredManualReview = false;
 
     for (const question of questions) {
+      if (question.isPrefilled) {
+        answeredQuestions.push({
+          question,
+          resolved: {
+            questionType: "contact_info",
+            strategy: "deterministic",
+            answer: question.currentValue ?? null,
+            confidence: 0.99,
+            confidenceLabel: "high",
+            source: "candidate-profile",
+            notes: ["Skipped because LinkedIn already pre-filled this field."],
+          },
+          filled: true,
+          details: "Skipped because LinkedIn already pre-filled this field.",
+        });
+        continue;
+      }
+
       const resolved = await input.resolveAnswer({
         question,
         candidateProfile: input.candidateProfile,
@@ -128,6 +158,10 @@ export async function runEasyApplyDryRun(input: {
       const filled = isManualReviewAnswer(resolved)
         ? { filled: false, details: "Skipped because it is marked for manual review." }
         : await input.driver.fillAnswer(question, resolved);
+
+      if (question.required && !filled.filled) {
+        hasRequiredManualReview = true;
+      }
 
       answeredQuestions.push({
         question,
@@ -154,6 +188,18 @@ export async function runEasyApplyDryRun(input: {
     }
 
     if (action === "review") {
+      if (lastStepSignature === stepSignature) {
+        return {
+          status: hasRequiredManualReview ? "stopped_manual_review" : "stopped_unknown_action",
+          steps,
+          stopReason: hasRequiredManualReview
+            ? "Review step did not advance because required questions still need review or valid input."
+            : "Review step repeated without advancing.",
+          url: input.url,
+        };
+      }
+
+      lastStepSignature = stepSignature;
       await input.driver.advance(action);
       continue;
     }
@@ -168,6 +214,7 @@ export async function runEasyApplyDryRun(input: {
     }
 
     if (action === "next") {
+      lastStepSignature = stepSignature;
       await input.driver.advance(action);
       continue;
     }

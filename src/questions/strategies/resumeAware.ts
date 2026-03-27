@@ -5,6 +5,17 @@ import type { ClassifiedQuestion } from "../types.js";
 
 function estimateYearsForSkill(profile: CandidateProfile, text: string): number | null {
   const lower = text.toLowerCase();
+  const override = Object.entries(profile.experienceOverrides).find(([keyword]) =>
+    lower.includes(keyword.toLowerCase()),
+  );
+  if (override) {
+    return override[1];
+  }
+
+  if (/\b(full[\s-]?stack|front[\s-]?end|backend|software development|software engineering)\b/.test(lower)) {
+    return profile.yearsOfExperienceTotal;
+  }
+
   const matchedSkill = profile.skills.find((skill) => lower.includes(skill.toLowerCase()))
     ?? profile.preferredTechStack.find((skill) => lower.includes(skill.toLowerCase()));
 
@@ -23,7 +34,7 @@ function estimateYearsForSkill(profile: CandidateProfile, text: string): number 
     return profile.yearsOfExperienceTotal;
   }
 
-  return Math.max(1, Math.min(profile.yearsOfExperienceTotal ?? matchingExperiences.length, matchingExperiences.length * 2));
+  return profile.yearsOfExperienceTotal ?? matchingExperiences.length;
 }
 
 export function resolveResumeAwareAnswer(

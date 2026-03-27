@@ -8,6 +8,14 @@ import type {
 import { chooseRadioValue } from "./easyApply.js";
 import type { ResolvedAnswer } from "../answers/types.js";
 
+const EASY_APPLY_TRIGGER_SELECTOR = [
+  "button[aria-label*='Easy Apply']",
+  "button.jobs-apply-button",
+  ".jobs-apply-button",
+  "a[aria-label*='Easy Apply']",
+  "a[href*='/apply/'][href*='openSDUIApplyFlow=true']",
+].join(", ");
+
 async function annotateQuestions(page: Page): Promise<EasyApplyQuestionView[]> {
   const dialog = page.locator(".jobs-easy-apply-modal, [role='dialog']").first();
   const script = `
@@ -89,6 +97,18 @@ async function annotateQuestions(page: Page): Promise<EasyApplyQuestionView[]> {
       const options = control.tagName === "SELECT"
         ? Array.from(control.options).map((option) => option.textContent ? option.textContent.trim() : "").filter(Boolean)
         : undefined;
+      const currentValue = control.tagName === "SELECT"
+        ? (control.selectedOptions && control.selectedOptions[0] && control.selectedOptions[0].textContent
+          ? control.selectedOptions[0].textContent.trim()
+          : "")
+        : ((control.value || "").trim());
+      const expectsDecimal = (control.getAttribute("inputmode") || "").toLowerCase() === "decimal"
+        || (control.getAttribute("type") || "").toLowerCase() === "number"
+        || (control.getAttribute("step") || "").includes(".");
+      const isPrefilled = Boolean(
+        currentValue &&
+        (!options || !["select an option", "choose an option", "please select"].includes(currentValue.toLowerCase())),
+      );
 
       results.push({
         fieldKey,
@@ -96,6 +116,10 @@ async function annotateQuestions(page: Page): Promise<EasyApplyQuestionView[]> {
         helpText: control.getAttribute("aria-describedby"),
         placeholder: control.getAttribute("placeholder"),
         inputType: normalizeFieldType(inputType),
+        currentValue: currentValue || null,
+        isPrefilled,
+        expectsDecimal,
+        validationMessage: control.validationMessage || null,
         ...(options && options.length > 0 ? { options } : {}),
         required: control.hasAttribute("required") || control.getAttribute("aria-required") === "true",
       });
@@ -123,16 +147,12 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
   }
 
   async isEasyApplyAvailable(): Promise<boolean> {
-    const locator = this.page
-      .locator("button[aria-label*='Easy Apply'], button.jobs-apply-button, .jobs-apply-button")
-      .first();
+    const locator = this.page.locator(EASY_APPLY_TRIGGER_SELECTOR).first();
     return (await locator.count()) > 0;
   }
 
   async openEasyApply(): Promise<void> {
-    const locator = this.page
-      .locator("button[aria-label*='Easy Apply'], button.jobs-apply-button, .jobs-apply-button")
-      .first();
+    const locator = this.page.locator(EASY_APPLY_TRIGGER_SELECTOR).first();
     await locator.click();
     await this.page.waitForTimeout(1_500);
   }
@@ -198,6 +218,15 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
     }
 
     await locator.fill(value);
+    await locator.blur();
+
+    const validationMessage = await locator.evaluate((element) =>
+      "validationMessage" in element ? String((element as { validationMessage?: string }).validationMessage || "") : "",
+    );
+    if (validationMessage) {
+      return { filled: false, details: validationMessage };
+    }
+
     return { filled: true };
   }
 

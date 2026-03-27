@@ -22,11 +22,15 @@ const profile = {
   preferredTechStack: ["TypeScript", "React", "Node.js"],
   skills: ["TypeScript", "React", "Node.js"],
   languages: ["English"],
+  experienceOverrides: {
+    linux: 0,
+  },
   salaryExpectations: {
     usd: "50000-60000 USD yearly",
     eur: "3000-3500 EUR net monthly",
     try: "120000-140000 TRY net monthly",
   },
+  salaryExpectation: "Open to market-rate mid-level backend roles",
   workAuthorization: "EU",
   requiresSponsorship: false,
   willingToRelocate: true,
@@ -94,6 +98,23 @@ describe("resolveAnswer", () => {
 
     expect(result.strategy).toBe("deterministic");
     expect(result.answer).toBe("123");
+  });
+
+  it("returns first and last name answers for common LinkedIn profile fields", async () => {
+    const { resolveAnswer } = await import("../../src/answers/resolveAnswer.js");
+
+    const firstName = await resolveAnswer({
+      question: { label: "First name", inputType: "text" },
+      candidateProfile: profile,
+    });
+
+    const lastName = await resolveAnswer({
+      question: { label: "Last name", inputType: "text" },
+      candidateProfile: profile,
+    });
+
+    expect(firstName.answer).toBe("Jane");
+    expect(lastName.answer).toBe("Doe");
   });
 
   it("returns deterministic answers for work authorization and relocation questions", async () => {
@@ -184,6 +205,20 @@ describe("resolveAnswer", () => {
     expect(result.strategy).toBe("resume-derived");
   });
 
+  it("uses configured numeric overrides for years-of-experience questions", async () => {
+    const { resolveAnswer } = await import("../../src/answers/resolveAnswer.js");
+    const result = await resolveAnswer({
+      question: {
+        label: "How many years of experience do you have with Linux environments, Docker, and CI/CD pipelines?",
+        inputType: "text",
+      },
+      candidateProfile: profile,
+    });
+
+    expect(result.strategy).toBe("resume-derived");
+    expect(result.answer).toBe("0");
+  });
+
   it("routes motivation questions to the generated path", async () => {
     resolveGeneratedAnswerMock.mockResolvedValue({
       questionType: "motivation_short_text",
@@ -256,6 +291,20 @@ describe("resolveAnswer", () => {
 
     expect(result.strategy).toBe("needs-review");
     expect(result.notes?.some((note) => note.includes("candidate-profile.json"))).toBe(true);
+  });
+
+  it("uses the generic salary expectation when no currency is specified", async () => {
+    const { resolveAnswer } = await import("../../src/answers/resolveAnswer.js");
+    const result = await resolveAnswer({
+      question: {
+        label: "What is your net salary expectation for this position?",
+        inputType: "text",
+      },
+      candidateProfile: profile,
+    });
+
+    expect(result.strategy).toBe("deterministic");
+    expect(result.answer).toBe("Open to market-rate mid-level backend roles");
   });
 
   it("routes notice period questions to manual review", async () => {

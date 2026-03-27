@@ -21,11 +21,21 @@ const CandidateProfileSchema = z.object({
     .enum(["authorized", "requires-sponsorship", "unknown"])
     .default("unknown"),
   languages: z.array(z.string()).default([]),
+  experienceOverrides: z.record(z.string(), z.number().min(0)).default({}),
   salaryExpectations: z
     .object({
-      usd: z.string().nullable().default(null),
-      eur: z.string().nullable().default(null),
-      try: z.string().nullable().default(null),
+      usd: z
+        .union([z.string(), z.number(), z.null()])
+        .transform((value) => (value == null ? null : String(value)))
+        .default(null),
+      eur: z
+        .union([z.string(), z.number(), z.null()])
+        .transform((value) => (value == null ? null : String(value)))
+        .default(null),
+      try: z
+        .union([z.string(), z.number(), z.null()])
+        .transform((value) => (value == null ? null : String(value)))
+        .default(null),
     })
     .default({
       usd: null,
@@ -78,6 +88,7 @@ export const DEFAULT_CANDIDATE_PROFILE: CandidateProfile = {
   visaRequirement: "not-required",
   workAuthorizationStatus: "authorized",
   languages: ["English"],
+  experienceOverrides: {},
   salaryExpectations: {
     usd: null,
     eur: null,

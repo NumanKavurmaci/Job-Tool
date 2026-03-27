@@ -48,11 +48,13 @@ export function normalizeResume(
     ]),
     skills: unique(parsed.skills),
     languages: unique(parsed.languages),
+    experienceOverrides: {},
     salaryExpectations: {
       usd: null,
       eur: null,
       try: null,
     },
+    salaryExpectation: null,
     workAuthorization: parsed.workAuthorization,
     requiresSponsorship: parsed.requiresSponsorship,
     willingToRelocate: parsed.willingToRelocate,

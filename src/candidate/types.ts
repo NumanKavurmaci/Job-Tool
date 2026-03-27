@@ -35,6 +35,10 @@ export interface CandidateSalaryExpectations {
   try: string | null;
 }
 
+export interface CandidateExperienceOverrides {
+  [normalizedKeyword: string]: number;
+}
+
 export interface CandidateProfile {
   fullName: string | null;
   email: string | null;
@@ -52,6 +56,8 @@ export interface CandidateProfile {
   skills: string[];
   languages: string[];
   salaryExpectations: CandidateSalaryExpectations;
+  salaryExpectation: string | null;
+  experienceOverrides: CandidateExperienceOverrides;
   workAuthorization: string | null;
   requiresSponsorship: boolean | null;
   willingToRelocate: boolean | null;

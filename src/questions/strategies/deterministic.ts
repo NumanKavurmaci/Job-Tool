@@ -39,13 +39,28 @@ export function resolveDeterministicAnswer(
       };
     case "contact_info":
       {
+        const nameParts = (profile.fullName ?? "").trim().split(/\s+/).filter(Boolean);
+        const firstName = nameParts[0] ?? null;
+        const lastName = nameParts.length > 1 ? nameParts.slice(1).join(" ") : null;
         const wantsPhone = /\b(phone|mobile|cell)\b/.test(question.normalizedText);
         const wantsEmail = /\bemail\b/.test(question.normalizedText);
+        const wantsFirstName = /\bfirst name\b/.test(question.normalizedText);
+        const wantsLastName = /\blast name\b/.test(question.normalizedText);
+        const wantsFullName = /\bfull name\b/.test(question.normalizedText) || /\bname\b/.test(question.normalizedText);
+        const wantsAddress = /\baddress\b/.test(question.normalizedText);
         const answer = wantsPhone
           ? profile.phone
           : wantsEmail
             ? profile.email
-            : profile.email ?? profile.phone;
+            : wantsFirstName
+              ? firstName
+              : wantsLastName
+                ? lastName
+                : wantsAddress
+                  ? profile.location
+                  : wantsFullName
+                    ? profile.fullName
+                    : profile.email ?? profile.phone ?? profile.fullName ?? profile.location;
 
         return {
           questionType: question.type,
@@ -184,6 +199,18 @@ export function resolveDeterministicAnswer(
         const salary = getSalaryExpectation(profile, question.normalizedText);
 
         if (!salary.key) {
+          if (profile.salaryExpectation) {
+            return {
+              questionType: question.type,
+              strategy: "deterministic",
+              answer: profile.salaryExpectation,
+              confidence: 0.8,
+              confidenceLabel: labelConfidence(0.8),
+              source: "candidate-profile",
+              notes: ["Used the generic salary expectation because the question did not specify a currency."],
+            };
+          }
+
           return {
             questionType: question.type,
             strategy: "needs-review",

@@ -29,14 +29,19 @@ describe("buildMasterProfile", () => {
     normalizeResumeMock.mockReset();
     loadCandidateProfileMock.mockReset();
     loadCandidateProfileMock.mockResolvedValue({
+      yearsOfExperience: 3,
       preferredRoles: ["Software Engineer"],
       preferredTechStack: ["TypeScript"],
       languages: ["English"],
+      experienceOverrides: {
+        linux: 0,
+      },
       salaryExpectations: {
         usd: null,
         eur: "3000-3500 EUR net monthly",
         try: "120000-140000 TRY net monthly",
       },
+      salaryExpectation: "Open to market-rate mid-level backend roles",
       gpa: 2.4,
       remotePreference: "remote",
       remoteOnly: true,
@@ -58,11 +63,13 @@ describe("buildMasterProfile", () => {
       preferredRoles: ["Backend Engineer"],
       preferredTechStack: ["Node.js"],
       languages: ["German"],
+      experienceOverrides: {},
       salaryExpectations: {
         usd: null,
         eur: null,
         try: null,
       },
+      salaryExpectation: null,
       gpa: null,
       remotePreference: "hybrid",
       remoteOnly: false,
@@ -89,12 +96,17 @@ describe("buildMasterProfile", () => {
       preferredRoles: ["Software Engineer", "Backend Engineer"],
       preferredTechStack: ["TypeScript", "Node.js"],
       languages: ["English", "German"],
+      experienceOverrides: {
+        linux: 0,
+      },
       salaryExpectations: {
         usd: null,
         eur: "3000-3500 EUR net monthly",
         try: "120000-140000 TRY net monthly",
       },
+      salaryExpectation: "Open to market-rate mid-level backend roles",
       gpa: 2.4,
+      yearsOfExperienceTotal: 3,
       remotePreference: "remote",
       remoteOnly: true,
       disability: {
@@ -112,11 +124,13 @@ describe("buildMasterProfile", () => {
       preferredRoles: [],
       preferredTechStack: [],
       languages: [],
+      experienceOverrides: {},
       salaryExpectations: {
         usd: null,
         eur: null,
         try: null,
       },
+      salaryExpectation: null,
       gpa: null,
       remotePreference: null,
       remoteOnly: false,

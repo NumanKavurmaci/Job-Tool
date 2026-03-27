@@ -46,8 +46,12 @@ export async function buildMasterProfile(input: {
       ...normalized.preferredTechStack,
     ]),
     languages: unique([...manualProfile.languages, ...normalized.languages]),
+    experienceOverrides: manualProfile.experienceOverrides,
     salaryExpectations: manualProfile.salaryExpectations,
+    salaryExpectation: manualProfile.salaryExpectation,
     gpa: manualProfile.gpa,
+    yearsOfExperienceTotal:
+      normalized.yearsOfExperienceTotal ?? manualProfile.yearsOfExperience,
     remotePreference: manualProfile.remotePreference,
     remoteOnly: manualProfile.remoteOnly,
     disability: manualProfile.disability,

@@ -33,6 +33,9 @@ describe("candidate profile loader", () => {
         visaRequirement: "not-required",
         workAuthorizationStatus: "authorized",
         languages: ["English"],
+        experienceOverrides: {
+          linux: 0,
+        },
         salaryExpectations: {
           usd: "50000-60000 USD yearly",
           eur: "3000-3500 EUR net monthly",
@@ -54,8 +57,43 @@ describe("candidate profile loader", () => {
     expect(profile.yearsOfExperience).toBe(5);
     expect(profile.preferredTechStack).toEqual(["TypeScript", "Node.js"]);
     expect(profile.remoteOnly).toBe(true);
+    expect(profile.experienceOverrides.linux).toBe(0);
     expect(profile.salaryExpectations.eur).toContain("EUR");
     expect(profile.disability.hasVisualDisability).toBe(true);
+  });
+
+  it("accepts numeric salary expectations from JSON", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "job-tool-profile-"));
+    const profilePath = path.join(tempDir, "candidate-profile.json");
+
+    await writeFile(
+      profilePath,
+      JSON.stringify({
+        yearsOfExperience: 5,
+        preferredRoles: [],
+        preferredTechStack: [],
+        excludedRoles: [],
+        preferredLocations: [],
+        excludedLocations: [],
+        remotePreference: "remote",
+        remoteOnly: true,
+        visaRequirement: "not-required",
+        workAuthorizationStatus: "authorized",
+        languages: ["English"],
+        experienceOverrides: {},
+        salaryExpectations: {
+          usd: 2000,
+          eur: 1800,
+          try: 80000,
+        },
+      }),
+      "utf8",
+    );
+
+    const profile = await loadCandidateProfile(profilePath);
+    expect(profile.salaryExpectations.usd).toBe("2000");
+    expect(profile.salaryExpectations.eur).toBe("1800");
+    expect(profile.salaryExpectations.try).toBe("80000");
   });
 
   it("throws for invalid profile JSON", async () => {
