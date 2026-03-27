@@ -20,4 +20,10 @@ describe("resolveAdapter", () => {
       GenericAdapter,
     );
   });
+
+  it("uses the generic adapter for linkedin urls until a dedicated adapter exists", () => {
+    expect(resolveAdapter("https://www.linkedin.com/jobs/view/1234567890/")).toBeInstanceOf(
+      GenericAdapter,
+    );
+  });
 });

@@ -52,6 +52,43 @@ describe("GenericAdapter", () => {
     expect(result.title).toBe("Page Title");
     expect(result.applyUrl).toBe("https://company.example.com/jobs/role");
   });
+
+  it("extracts a linkedin-style job page through the generic fallback", async () => {
+    const page = createMockPage({
+      currentUrl: "https://www.linkedin.com/jobs/view/1234567890/",
+      title: "Senior Backend Engineer | LinkedIn",
+      selectors: {
+        h1: { text: "Senior Backend Engineer" },
+        "[class*='company']": { text: "LinkedIn Company" },
+        "[class*='location']": { text: "Istanbul, Turkey" },
+        body: {
+          text: [
+            "Senior Backend Engineer",
+            "LinkedIn Company",
+            "Istanbul, Turkey",
+            "About the job",
+            "Build backend services for hiring workflows.",
+            "Qualifications",
+            "5+ years of backend experience.",
+            "Benefits",
+            "Private health insurance.",
+          ].join("\n"),
+        },
+      },
+    });
+
+    const result = await new GenericAdapter().extract(page as never, page.url());
+
+    expect(result.platform).toBe("generic");
+    expect(result.currentUrl).toBe("https://www.linkedin.com/jobs/view/1234567890/");
+    expect(result.applyUrl).toBe("https://www.linkedin.com/jobs/view/1234567890/");
+    expect(result.title).toBe("Senior Backend Engineer");
+    expect(result.company).toBe("LinkedIn Company");
+    expect(result.location).toBe("Istanbul, Turkey");
+    expect(result.descriptionText).toContain("About the job");
+    expect(result.rawText).toContain("Qualifications");
+    expect(result.rawText).toContain("Benefits");
+  });
 });
 
 describe("GreenhouseAdapter", () => {
