@@ -65,7 +65,20 @@ src/
   utils/
 prisma/
 tests/
+docs/
 ```
+
+## AI Navigation Layer
+
+The repo now includes an AI-first navigation layer for maintainability:
+
+- [docs/README.md](./docs/README.md): entrypoint for navigation docs
+- [docs/ROOT_FILE_MAP.md](./docs/ROOT_FILE_MAP.md): root files and why they exist
+- [docs/SOURCE_FILE_MAP.md](./docs/SOURCE_FILE_MAP.md): all source files grouped by folder and purpose
+- [docs/TEST_FILE_MAP.md](./docs/TEST_FILE_MAP.md): all test files and the behavior they protect
+- [docs/PRISMA_FILE_MAP.md](./docs/PRISMA_FILE_MAP.md): schema and migration map
+
+Use these docs before code search when the goal is to understand ownership, intent, or change impact.
 
 ## Setup
 

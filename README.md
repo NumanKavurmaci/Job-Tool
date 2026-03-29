@@ -119,3 +119,9 @@ The default suite does not require LM Studio or OpenAI access.
 ## Documentation
 
 Detailed architecture, workflows, LinkedIn auth behavior, provider setup, and troubleshooting are in `PROJECT_DETAILS.md`.
+
+AI-first file navigation docs are in:
+- [docs/README.md](./docs/README.md)
+- [docs/SOURCE_FILE_MAP.md](./docs/SOURCE_FILE_MAP.md)
+- [docs/TEST_FILE_MAP.md](./docs/TEST_FILE_MAP.md)
+- [docs/PRISMA_FILE_MAP.md](./docs/PRISMA_FILE_MAP.md)

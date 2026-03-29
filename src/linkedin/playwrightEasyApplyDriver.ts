@@ -210,11 +210,12 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
     const cards = await this.page.locator(".jobs-search-results__list-item, li.scaffold-layout__list-item")
       .evaluateAll((elements) =>
         elements.map((element) => {
-          const anchor = element.querySelector(
+          const htmlElement = element as any;
+          const anchor = htmlElement.querySelector(
             "a[href*='/jobs/view/'], .job-card-container__link, .job-card-list__title",
           );
           const href = anchor?.getAttribute("href") ?? "";
-          const text = (element.textContent ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+          const text = (htmlElement.textContent ?? "").replace(/\s+/g, " ").trim().toLowerCase();
           return {
             href,
             alreadyApplied: text.includes("applied") || text.includes("see application"),

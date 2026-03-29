@@ -124,4 +124,61 @@ describe("parseResume", () => {
     expect(result.projects).toEqual([]);
     expect(result.experience[0]?.technologies).toEqual([]);
   });
+
+  it("tolerates null nested required strings from live models", async () => {
+    completePromptMock.mockResolvedValue({
+      text: JSON.stringify({
+        fullName: "Jane Doe",
+        email: "jane@example.com",
+        phone: null,
+        location: "Berlin",
+        githubUrl: null,
+        portfolioUrl: null,
+        summary: null,
+        currentTitle: "Backend Engineer",
+        skills: ["TypeScript"],
+        languages: ["English"],
+        workAuthorization: null,
+        requiresSponsorship: false,
+        willingToRelocate: false,
+        remotePreference: "remote",
+        education: [
+          {
+            institution: null,
+            degree: "BSc",
+            fieldOfStudy: null,
+            startDate: null,
+            endDate: null,
+          },
+        ],
+        experience: [
+          {
+            company: null,
+            title: null,
+            summary: null,
+            technologies: ["TypeScript"],
+            startDate: null,
+            endDate: null,
+          },
+        ],
+        projects: [
+          {
+            name: null,
+            summary: null,
+            technologies: null,
+          },
+        ],
+        yearsOfExperienceTotal: 4,
+      }),
+    });
+
+    const { parseResume } = await import("../../src/candidate/resume/parseResume.js");
+    const result = await parseResume("Jane Doe resume");
+
+    expect(result.education[0]?.institution).toBe("");
+    expect(result.experience[0]?.company).toBe("");
+    expect(result.experience[0]?.title).toBe("");
+    expect(result.projects[0]?.name).toBe("");
+    expect(result.projects[0]?.technologies).toEqual([]);
+  });
 });

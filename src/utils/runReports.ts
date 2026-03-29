@@ -35,7 +35,9 @@ export function formatBatchTerminalSummary(input: {
   reportPath?: string;
 }): string {
   const lines = [
+    "========================================",
     `${input.label} finished`,
+    "========================================",
     `Status: ${input.status}`,
     `Requested: ${input.requestedCount}`,
     `Attempted: ${input.attemptedCount}`,
@@ -49,5 +51,7 @@ export function formatBatchTerminalSummary(input: {
     lines.push(`Report: ${input.reportPath}`);
   }
 
-  return `${lines.join("\n")}\n`;
+  lines.push("========================================");
+
+  return `\n${lines.join("\n")}\n`;
 }

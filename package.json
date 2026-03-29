@@ -10,7 +10,8 @@
     "dev": "tsx src/index.ts",
     "test": "vitest run --coverage",
     "test:watch": "vitest",
-    "test:local-llm": "vitest run --config vitest.live.config.ts"
+    "test:local-llm": "vitest run --config vitest.live.config.ts",
+    "type-check": "tsc --noEmit"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",

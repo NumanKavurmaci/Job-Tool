@@ -20,6 +20,8 @@ model JobPosting {
   parseVersion   String?
   decisions      ApplicationDecision[]
   preparedAnswerSets PreparedAnswerSet[]
+  reviewHistory  JobReviewHistory[]
+  systemLogs     SystemLog[]
   createdAt      DateTime              @default(now())
   updatedAt      DateTime              @updatedAt
 }
@@ -60,4 +62,58 @@ model PreparedAnswerSet {
   createdAt          DateTime @default(now())
   jobPosting         JobPosting? @relation(fields: [jobPostingId], references: [id], onDelete: SetNull)
   candidateProfile   CandidateProfileSnapshot @relation(fields: [candidateProfileId], references: [id], onDelete: Cascade)
+}
+
+enum SystemLogLevel {
+  INFO
+  WARN
+  ERROR
+}
+
+model SystemLog {
+  id           String         @id @default(cuid())
+  level        SystemLogLevel
+  scope        String
+  message      String
+  detailsJson  String?
+  runType      String?
+  jobPostingId String?
+  jobUrl       String?
+  jobPosting   JobPosting?    @relation(fields: [jobPostingId], references: [id], onDelete: SetNull)
+  createdAt    DateTime       @default(now())
+
+  @@index([createdAt])
+  @@index([level, createdAt])
+  @@index([jobUrl, createdAt])
+}
+
+enum JobReviewStatus {
+  VIEWED
+  EVALUATED
+  SKIPPED
+  READY_TO_SUBMIT
+  SUBMITTED
+  FAILED
+}
+
+model JobReviewHistory {
+  id            String                  @id @default(cuid())
+  jobPostingId  String?
+  jobUrl        String
+  platform      String?
+  source        String
+  status        JobReviewStatus
+  score         Int?
+  threshold     Int?
+  decision      ApplicationDecisionType?
+  policyAllowed Boolean?
+  reasons       String
+  summary       String?
+  detailsJson   String?
+  createdAt     DateTime                @default(now())
+  jobPosting    JobPosting?             @relation(fields: [jobPostingId], references: [id], onDelete: SetNull)
+
+  @@index([jobUrl, createdAt])
+  @@index([status, createdAt])
+  @@index([source, createdAt])
 }

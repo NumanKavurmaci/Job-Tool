@@ -5,6 +5,7 @@ describe("logger", () => {
   it("creates a logger with info level", () => {
     expect(logger.level).toBe("info");
     expect(typeof logger.info).toBe("function");
+    expect(typeof logger.warn).toBe("function");
     expect(typeof logger.error).toBe("function");
   });
 });

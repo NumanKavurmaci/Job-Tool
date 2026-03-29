@@ -5,6 +5,8 @@ import type { ParsedResume } from "../types.js";
 
 const nullableArray = <T extends z.ZodTypeAny>(schema: T) =>
   z.preprocess((value) => (value == null ? [] : value), z.array(schema).default([]));
+const requiredStringFromNullable = () =>
+  z.preprocess((value) => (value == null ? "" : value), z.string());
 
 const ResumeSchema = z.object({
   fullName: z.string().nullable(),
@@ -23,7 +25,7 @@ const ResumeSchema = z.object({
   remotePreference: z.string().nullable(),
   education: nullableArray(
     z.object({
-      institution: z.string(),
+      institution: requiredStringFromNullable(),
       degree: z.string().nullable(),
       fieldOfStudy: z.string().nullable(),
       startDate: z.string().nullable(),
@@ -32,8 +34,8 @@ const ResumeSchema = z.object({
   ),
   experience: nullableArray(
     z.object({
-      company: z.string(),
-      title: z.string(),
+      company: requiredStringFromNullable(),
+      title: requiredStringFromNullable(),
       summary: z.string().nullable(),
       technologies: nullableArray(z.string()),
       startDate: z.string().nullable(),
@@ -42,7 +44,7 @@ const ResumeSchema = z.object({
   ),
   projects: nullableArray(
     z.object({
-      name: z.string(),
+      name: requiredStringFromNullable(),
       summary: z.string().nullable(),
       technologies: nullableArray(z.string()),
     }),

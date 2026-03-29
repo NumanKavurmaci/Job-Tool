@@ -25,10 +25,12 @@ describe("runReports", () => {
       reportPath: "artifacts/batch-runs/example.json",
     });
 
+    expect(summary.startsWith("\n========================================")).toBe(true);
     expect(summary).toContain("LinkedIn Easy Apply dry run finished");
     expect(summary).toContain("Status: partial");
     expect(summary).toContain("Requested: 10");
     expect(summary).toContain("Report: artifacts/batch-runs/example.json");
+    expect(summary.trimEnd().endsWith("========================================")).toBe(true);
   });
 
   it("formats a batch terminal summary without a report path", async () => {
@@ -49,6 +51,7 @@ describe("runReports", () => {
 
     expect(summary).toContain("LinkedIn Easy Apply batch finished");
     expect(summary).not.toContain("Report:");
+    expect(summary).toContain("Pages visited: 2");
   });
 
   it("writes a JSON report into the artifacts batch-runs directory", async () => {
