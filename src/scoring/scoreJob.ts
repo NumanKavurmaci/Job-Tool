@@ -10,24 +10,71 @@ export type JobScore = {
     tech: number;
     bonus: number;
   };
+  baselineScore?: number;
+  aiAdjustment?: number;
+  aiReasoning?: string;
+  aiConfidence?: "low" | "medium" | "high";
+  scoringSource?: "deterministic" | "deterministic+ai";
 };
 
-function hasCaseInsensitiveMatch(values: string[], target: string): boolean {
-  const normalizedTarget = target.toLowerCase();
-  return values.some((value) => value.toLowerCase() === normalizedTarget);
+const TERM_ALIASES: Record<string, string> = {
+  "react.js": "react",
+  reactjs: "react",
+  "node": "node.js",
+  "node js": "node.js",
+  "tailwindcss": "tailwind",
+  "tailwind css": "tailwind",
+  "nextjs": "next.js",
+  "javascript/typescript": "typescript",
+  "js/ts": "typescript",
+  "restful api": "api",
+  "restful apis": "api",
+  "rest api": "api",
+  "rest apis": "api",
+  apis: "api",
+  microservice: "microservices",
+  "microservices architecture": "microservices",
+  "ci cd": "ci/cd",
+  "ci-cd": "ci/cd",
+  "cicd": "ci/cd",
+  "frontend": "front-end",
+  "fullstack": "full stack",
+  "html5": "html",
+  "css3": "css",
+};
+
+function normalizeTerm(value: string): string {
+  const normalized = value
+    .toLowerCase()
+    .replace(/[()"'`]/g, " ")
+    .replace(/[–—-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return TERM_ALIASES[normalized] ?? normalized;
 }
 
-function hasSubstringMatch(values: string[], pattern: RegExp): boolean {
-  return values.some((value) => pattern.test(value));
+function expandTerms(values: string[]): string[][] {
+  return values
+    .map((value) =>
+      value
+        .split(/[;,]|(?:\s+and\s+)|\//i)
+        .map((part) => normalizeTerm(part))
+        .filter(Boolean),
+    )
+    .filter((parts) => parts.length > 0);
 }
 
-function overlapRatio(left: string[], right: string[]): number {
+function overlapRatio(left: string[] = [], right: string[] = []): number {
   if (left.length === 0 || right.length === 0) {
     return 0;
   }
 
-  const rightSet = new Set(right.map((value) => value.toLowerCase()));
-  const matches = left.filter((value) => rightSet.has(value.toLowerCase())).length;
+  const leftTerms = expandTerms(left);
+  const rightSet = new Set(expandTerms(right).flat());
+  const matches = leftTerms.filter((terms) =>
+    terms.some((term) => rightSet.has(term)),
+  ).length;
 
   return matches / left.length;
 }
@@ -43,7 +90,7 @@ function scoreSkill(job: NormalizedJob, profile: CandidateProfile): number {
     profile.aspirationalTechStack,
   );
 
-  return Math.round(mustHaveRatio * 18 + techOverlap * 12 + aspirationalOverlap * 5);
+  return Math.round(mustHaveRatio * 18 + techOverlap * 12 + aspirationalOverlap * 8);
 }
 
 function scoreSeniority(job: NormalizedJob, profile: CandidateProfile): number {
@@ -114,7 +161,7 @@ function scoreTech(job: NormalizedJob, profile: CandidateProfile): number {
   const preferredTechScore =
     overlapRatio(job.technologies, profile.preferredTechStack) * 12;
   const aspirationalTechScore =
-    overlapRatio(job.technologies, profile.aspirationalTechStack) * 3;
+    overlapRatio(job.technologies, profile.aspirationalTechStack) * 5;
 
   return Math.round(preferredTechScore + aspirationalTechScore);
 }
@@ -122,46 +169,19 @@ function scoreTech(job: NormalizedJob, profile: CandidateProfile): number {
 function scoreBonus(job: NormalizedJob, profile: CandidateProfile): number {
   const niceToHave = overlapRatio(job.niceToHaveSkills, profile.preferredTechStack) * 6;
   const aspirationalNiceToHave =
-    overlapRatio(job.niceToHaveSkills, profile.aspirationalTechStack) * 2;
+    overlapRatio(job.niceToHaveSkills, profile.aspirationalTechStack) * 3;
   const roleMatch = profile.preferredRoles.some((role) =>
     (job.title ?? "").toLowerCase().includes(role.toLowerCase()),
   )
     ? 4
     : 0;
-  const roleSignals = uniqueLowercase([job.title, ...job.mustHaveSkills, ...job.technologies]);
-  const isFullStackRole = /\bfull\s*-?\s*stack\b/i.test(job.title ?? "");
-  const hasNode = hasCaseInsensitiveMatch(roleSignals, "node.js");
-  const hasTypeScript = hasCaseInsensitiveMatch(roleSignals, "typescript");
-  const hasReact = hasCaseInsensitiveMatch(roleSignals, "react") || hasCaseInsensitiveMatch(roleSignals, "react.js");
-  const hasApiOrMicroservices =
-    hasSubstringMatch(roleSignals, /\bapi\b/i) ||
-    hasSubstringMatch(roleSignals, /\bmicroservice/i);
-  const fullStackAdjacencyBonus =
-    isFullStackRole && hasNode && hasTypeScript && hasReact && hasApiOrMicroservices ? 8 : 0;
+  const roleSignalOverlap =
+    overlapRatio(
+      [job.title ?? "", ...job.mustHaveSkills, ...job.niceToHaveSkills, ...job.technologies],
+      profile.preferredRoleOverlapSignals ?? [],
+    ) * 6;
 
-  return Math.round(niceToHave + aspirationalNiceToHave + roleMatch + fullStackAdjacencyBonus);
-}
-
-function uniqueLowercase(values: Array<string | null | undefined>): string[] {
-  const seen = new Set<string>();
-  const result: string[] = [];
-
-  for (const value of values) {
-    const normalized = value?.trim();
-    if (!normalized) {
-      continue;
-    }
-
-    const lowered = normalized.toLowerCase();
-    if (seen.has(lowered)) {
-      continue;
-    }
-
-    seen.add(lowered);
-    result.push(normalized);
-  }
-
-  return result;
+  return Math.round(niceToHave + aspirationalNiceToHave + roleMatch + roleSignalOverlap);
 }
 
 export function scoreJob(job: NormalizedJob, profile: CandidateProfile): JobScore {
@@ -175,6 +195,14 @@ export function scoreJob(job: NormalizedJob, profile: CandidateProfile): JobScor
 
   return {
     breakdown,
+    baselineScore:
+      breakdown.skill +
+      breakdown.seniority +
+      breakdown.location +
+      breakdown.tech +
+      breakdown.bonus,
+    aiAdjustment: 0,
+    scoringSource: "deterministic",
     totalScore: Math.max(
       0,
       Math.min(

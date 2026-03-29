@@ -41,6 +41,7 @@ export function createCandidateAnswerResolver(
 export function createBatchJobEvaluator(args: {
   disableAiEvaluation: boolean;
   scoreThreshold: number;
+  useAiScoreAdjustment: boolean;
   scoringProfile: Awaited<ReturnType<AppDeps["loadCandidateProfile"]>>;
   evaluationPage?: Page;
   deps: AppDeps;
@@ -120,7 +121,14 @@ export function createBatchJobEvaluator(args: {
     const llmInput = deps.formatJobForLLM(extracted);
     const parseResult = await deps.parseJob(llmInput);
     const normalized = deps.normalizeParsedJob(parseResult.parsed, extracted);
-    const score = deps.scoreJob(normalized, args.scoringProfile);
+    const score = args.useAiScoreAdjustment
+      ? await deps.scoreJobWithAi({
+          job: normalized,
+          profile: args.scoringProfile,
+          completePrompt: deps.completePrompt,
+          logger: deps.logger,
+        })
+      : deps.scoreJob(normalized, args.scoringProfile);
     const policy = deps.evaluatePolicy(normalized, args.scoringProfile);
     const meetsThreshold = score.totalScore >= args.scoreThreshold;
     const finalDecision: "APPLY" | "SKIP" =
@@ -173,6 +181,10 @@ export function createBatchJobEvaluator(args: {
         details: {
           shouldApply: finalDecision === "APPLY",
           parseVersion: PARSE_VERSION,
+          aiAdjustment: score.aiAdjustment ?? 0,
+          aiReasoning: score.aiReasoning ?? null,
+          aiConfidence: score.aiConfidence ?? null,
+          scoringSource: score.scoringSource ?? "deterministic",
         },
       },
       deps,

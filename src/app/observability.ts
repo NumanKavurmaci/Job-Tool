@@ -43,7 +43,8 @@ export async function persistJobHistory(
 
 export function mapEasyApplyStatusToHistoryStatus(
   status: EasyApplyRunResult["status"],
-): "READY_TO_SUBMIT" | "SUBMITTED" | "FAILED" | "SKIPPED" {
+  finalDecision?: "APPLY" | "MAYBE" | "SKIP",
+): "READY_TO_SUBMIT" | "SUBMITTED" | "FAILED" | "SKIPPED" | "SKIPPED_DUE_TO_EASY_APPLY_RUN" {
   if (status === "submitted") {
     return "SUBMITTED";
   }
@@ -51,7 +52,7 @@ export function mapEasyApplyStatusToHistoryStatus(
     return "READY_TO_SUBMIT";
   }
   if (status === "stopped_external_apply" || status === "stopped_not_easy_apply") {
-    return "SKIPPED";
+    return finalDecision === "APPLY" ? "SKIPPED_DUE_TO_EASY_APPLY_RUN" : "SKIPPED";
   }
   return "FAILED";
 }
@@ -96,7 +97,10 @@ export async function persistBatchJobHistory(
         {
           jobUrl: job.url,
           source: args.source,
-          status: mapEasyApplyStatusToHistoryStatus(job.result.status),
+          status: mapEasyApplyStatusToHistoryStatus(
+            job.result.status,
+            job.evaluation.finalDecision,
+          ),
           score: job.evaluation.score,
           threshold: args.threshold,
           decision: job.evaluation.finalDecision,

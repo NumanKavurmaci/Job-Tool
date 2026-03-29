@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppDeps } from "../../../src/app/deps.js";
 
 function createDeps(): AppDeps {
+  const scoreJob = vi.fn();
+  const scoreJobWithAi = vi.fn().mockImplementation(async (...args) => scoreJob(...args));
+
   return {
     getConfiguredProviderInfo: vi.fn(),
     loadCandidateMasterProfile: vi.fn(),
@@ -10,9 +13,11 @@ function createDeps(): AppDeps {
     extractJobText: vi.fn(),
     formatJobForLLM: vi.fn(),
     parseJob: vi.fn(),
+    completePrompt: vi.fn(),
     normalizeParsedJob: vi.fn(),
     loadCandidateProfile: vi.fn(),
-    scoreJob: vi.fn(),
+    scoreJob,
+    scoreJobWithAi,
     evaluatePolicy: vi.fn(),
     decideJob: vi.fn(),
     runEasyApplyDryRun: vi.fn(),
@@ -117,6 +122,7 @@ describe("easy apply flows", () => {
         count: 1,
         disableAiEvaluation: false,
         scoreThreshold: 60,
+        useAiScoreAdjustment: false,
       },
       deps,
     );
@@ -174,6 +180,7 @@ describe("easy apply flows", () => {
         count: 1,
         disableAiEvaluation: false,
         scoreThreshold: 60,
+        useAiScoreAdjustment: false,
       },
       deps,
     );
@@ -240,6 +247,7 @@ describe("easy apply flows", () => {
         count: 2,
         disableAiEvaluation: false,
         scoreThreshold: 60,
+        useAiScoreAdjustment: false,
       },
       deps,
     );
@@ -253,6 +261,72 @@ describe("easy apply flows", () => {
         scope: "linkedin.easy_apply",
         message: "LinkedIn Easy Apply dry run finished.",
         runType: "easy-apply-dry-run",
+      }),
+    });
+    expect(evaluationPage.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("records a dedicated easy-apply skip state when AI wants to apply but the run stops on external apply", async () => {
+    const deps = createDeps();
+    const { evaluationPage } = mockWithPage(deps);
+    (deps.loadCandidateMasterProfile as any).mockResolvedValue({
+      fullName: "Jane",
+      sourceMetadata: { resumePath: "./resume.pdf" },
+    });
+    (deps.loadCandidateProfile as any).mockResolvedValue({});
+    (deps.resolveAnswer as any).mockResolvedValue({ answer: "ok" });
+    (deps.createEasyApplyDriver as any).mockResolvedValue({ driver: true });
+    (deps.runEasyApplyBatchDryRun as any).mockResolvedValue({
+      status: "completed",
+      collectionUrl: "https://www.linkedin.com/jobs/collections/easy-apply",
+      requestedCount: 1,
+      attemptedCount: 1,
+      evaluatedCount: 1,
+      skippedCount: 0,
+      pagesVisited: 1,
+      stopReason: "Processed 1 job.",
+      jobs: [
+        {
+          url: "https://www.linkedin.com/jobs/view/1",
+          evaluation: {
+            shouldApply: true,
+            finalDecision: "APPLY",
+            score: 72,
+            reason: "Good fit",
+            policyAllowed: true,
+          },
+          result: {
+            status: "stopped_external_apply",
+            steps: [],
+            stopReason: "This LinkedIn job redirects to an external application page.",
+            url: "https://www.linkedin.com/jobs/view/1",
+            externalApplyUrl: "https://company.example/apply",
+          },
+        },
+      ],
+    });
+    (deps.writeRunReport as any).mockResolvedValue("artifacts/batch-runs/run.json");
+
+    const { runEasyApplyDryRunFlow } = await import("../../../src/app/flows/easyApplyFlows.js");
+    await runEasyApplyDryRunFlow(
+      {
+        mode: "easy-apply-dry-run",
+        url: "https://www.linkedin.com/jobs/collections/easy-apply",
+        resumePath: "./resume.pdf",
+        count: 1,
+        disableAiEvaluation: false,
+        scoreThreshold: 40,
+        useAiScoreAdjustment: false,
+      },
+      deps,
+    );
+
+    expect(deps.prisma.jobReviewHistory.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        jobUrl: "https://www.linkedin.com/jobs/view/1",
+        status: "SKIPPED_DUE_TO_EASY_APPLY_RUN",
+        decision: "APPLY",
+        summary: "This LinkedIn job redirects to an external application page.",
       }),
     });
     expect(evaluationPage.close).toHaveBeenCalledTimes(1);
@@ -280,6 +354,7 @@ describe("easy apply flows", () => {
           count: 1,
           disableAiEvaluation: false,
           scoreThreshold: 60,
+          useAiScoreAdjustment: false,
         },
         deps,
       ),
@@ -332,6 +407,7 @@ describe("easy apply flows", () => {
         count: 1,
         disableAiEvaluation: false,
         scoreThreshold: 60,
+        useAiScoreAdjustment: false,
       },
       deps,
     );
@@ -490,6 +566,7 @@ describe("easy apply flows", () => {
         count: 1,
         disableAiEvaluation: false,
         scoreThreshold: 60,
+        useAiScoreAdjustment: false,
       },
       deps,
     );
@@ -625,6 +702,7 @@ describe("easy apply flows", () => {
         count: 1,
         disableAiEvaluation: true,
         scoreThreshold: 60,
+        useAiScoreAdjustment: false,
       },
       deps,
     );
@@ -654,6 +732,7 @@ describe("easy apply flows", () => {
           count: 1,
           disableAiEvaluation: false,
           scoreThreshold: 60,
+          useAiScoreAdjustment: false,
         },
         deps,
       ),

@@ -8,6 +8,9 @@ export async function runJobFlow(
   mode: "score" | "decide",
   url: string,
   deps: AppDeps,
+  options?: {
+    useAiScoreAdjustment?: boolean;
+  },
 ) {
   const guaranteedStartEvent = {
     level: "INFO" as const,
@@ -43,7 +46,14 @@ export async function runJobFlow(
   const parseResult = await deps.parseJob(llmInput);
   const parsed = parseResult.parsed;
   const normalized = deps.normalizeParsedJob(parsed, extracted);
-  const score = deps.scoreJob(normalized, profile);
+  const score = options?.useAiScoreAdjustment
+    ? await deps.scoreJobWithAi({
+        job: normalized,
+        profile,
+        completePrompt: deps.completePrompt,
+        logger: deps.logger,
+      })
+    : deps.scoreJob(normalized, profile);
   const policy = deps.evaluatePolicy(normalized, profile);
   const decision = deps.decideJob(score);
   const finalDecision = policy.allowed ? decision.decision : "SKIP";
@@ -121,6 +131,10 @@ export async function runJobFlow(
       details: {
         breakdown: score.breakdown,
         parseVersion: PARSE_VERSION,
+        aiAdjustment: score.aiAdjustment ?? 0,
+        aiReasoning: score.aiReasoning ?? null,
+        aiConfidence: score.aiConfidence ?? null,
+        scoringSource: score.scoringSource ?? "deterministic",
       },
     },
     deps,

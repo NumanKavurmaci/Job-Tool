@@ -6,7 +6,7 @@ import {
 } from "./constants.js";
 
 export type CliArgs =
-  | { mode: "score" | "decide"; url: string }
+  | { mode: "score" | "decide"; url: string; useAiScoreAdjustment: boolean }
   | { mode: "easy-apply"; url: string; resumePath: string }
   | {
       mode: "easy-apply-batch";
@@ -15,6 +15,7 @@ export type CliArgs =
       count: number;
       disableAiEvaluation: boolean;
       scoreThreshold: number;
+      useAiScoreAdjustment: boolean;
     }
   | {
       mode: "easy-apply-dry-run";
@@ -23,6 +24,7 @@ export type CliArgs =
       count: number;
       disableAiEvaluation: boolean;
       scoreThreshold: number;
+      useAiScoreAdjustment: boolean;
     }
   | {
       mode: "build-profile";
@@ -85,6 +87,7 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
     return parsed;
   };
   const hasFlag = (name: string): boolean => tail.includes(name);
+  const useAiScoreAdjustment = hasFlag("--ai-score-adjustment");
 
   if (!first) {
     throw new Error(
@@ -139,7 +142,15 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
       throw new Error("--resume is required for easy-apply-dry-run when no default CV is available.");
     }
 
-    return { mode: "easy-apply-dry-run", url, resumePath, count, disableAiEvaluation, scoreThreshold };
+    return {
+      mode: "easy-apply-dry-run",
+      url,
+      resumePath,
+      count,
+      disableAiEvaluation,
+      scoreThreshold,
+      useAiScoreAdjustment,
+    };
   }
 
   if (first === "easy-apply") {
@@ -181,12 +192,20 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
       throw new Error("easy-apply-batch requires a LinkedIn collection URL or the default collection.");
     }
 
-    return { mode: "easy-apply-batch", url, resumePath, count, disableAiEvaluation, scoreThreshold };
+    return {
+      mode: "easy-apply-batch",
+      url,
+      resumePath,
+      count,
+      disableAiEvaluation,
+      scoreThreshold,
+      useAiScoreAdjustment,
+    };
   }
 
   if ((first === "score" || first === "decide") && tail[0]) {
-    return { mode: first, url: tail[0] };
+    return { mode: first, url: tail[0], useAiScoreAdjustment };
   }
 
-  return { mode: "decide", url: first };
+  return { mode: "decide", url: first, useAiScoreAdjustment };
 }

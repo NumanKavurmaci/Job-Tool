@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppDeps } from "../../../src/app/deps.js";
 
 function createDeps(): AppDeps {
+  const scoreJob = vi.fn();
+  const scoreJobWithAi = vi.fn().mockImplementation(async (...args) => scoreJob(...args));
+
   return {
     getConfiguredProviderInfo: vi.fn(),
     loadCandidateMasterProfile: vi.fn(),
@@ -10,9 +13,11 @@ function createDeps(): AppDeps {
     extractJobText: vi.fn(),
     formatJobForLLM: vi.fn(),
     parseJob: vi.fn(),
+    completePrompt: vi.fn(),
     normalizeParsedJob: vi.fn(),
     loadCandidateProfile: vi.fn(),
-    scoreJob: vi.fn(),
+    scoreJob,
+    scoreJobWithAi,
     evaluatePolicy: vi.fn(),
     decideJob: vi.fn(),
     runEasyApplyDryRun: vi.fn(),

@@ -21,8 +21,10 @@ async function loadIndexModule(readFileMock?: ReturnType<typeof vi.fn>) {
   const extractJobTextMock = vi.fn();
   const formatJobForLLMMock = vi.fn();
   const parseJobMock = vi.fn();
+  const completePromptMock = vi.fn();
   const normalizeParsedJobMock = vi.fn();
   const scoreJobMock = vi.fn();
+  const scoreJobWithAiMock = vi.fn();
   const evaluatePolicyMock = vi.fn();
   const decideJobMock = vi.fn();
   const runEasyApplyMock = vi.fn();
@@ -47,6 +49,7 @@ async function loadIndexModule(readFileMock?: ReturnType<typeof vi.fn>) {
   const warnMock = vi.fn();
   const errorMock = vi.fn();
   const exitMock = vi.fn();
+  scoreJobWithAiMock.mockImplementation(async (...args) => scoreJobMock(...args));
 
   return {
     module,
@@ -59,8 +62,10 @@ async function loadIndexModule(readFileMock?: ReturnType<typeof vi.fn>) {
       extractJobTextMock,
       formatJobForLLMMock,
       parseJobMock,
+      completePromptMock,
       normalizeParsedJobMock,
       scoreJobMock,
+      scoreJobWithAiMock,
       evaluatePolicyMock,
       decideJobMock,
       runEasyApplyMock,
@@ -95,8 +100,10 @@ async function loadIndexModule(readFileMock?: ReturnType<typeof vi.fn>) {
       extractJobText: extractJobTextMock,
       formatJobForLLM: formatJobForLLMMock,
       parseJob: parseJobMock,
+      completePrompt: completePromptMock,
       normalizeParsedJob: normalizeParsedJobMock,
       scoreJob: scoreJobMock,
+      scoreJobWithAi: scoreJobWithAiMock,
       evaluatePolicy: evaluatePolicyMock,
       decideJob: decideJobMock,
       runEasyApply: runEasyApplyMock,
@@ -411,13 +418,14 @@ describe("phase 5 index flows", () => {
 
     expect(module.parseCliArgs(["easy-apply-dry-run", "https://www.linkedin.com/jobs/view/1"]))
       .toEqual({
-        mode: "easy-apply-dry-run",
-        url: "https://www.linkedin.com/jobs/view/1",
-        resumePath: expect.any(String),
-        count: 1,
-        disableAiEvaluation: false,
-        scoreThreshold: 40,
-      });
+      mode: "easy-apply-dry-run",
+      url: "https://www.linkedin.com/jobs/view/1",
+      resumePath: expect.any(String),
+      count: 1,
+      disableAiEvaluation: false,
+      scoreThreshold: 40,
+      useAiScoreAdjustment: false,
+    });
 
     expect(module.parseCliArgs(["easy-apply-dry-run"])).toEqual({
       mode: "easy-apply-dry-run",
@@ -426,6 +434,7 @@ describe("phase 5 index flows", () => {
       count: 1,
       disableAiEvaluation: false,
       scoreThreshold: 40,
+      useAiScoreAdjustment: false,
     });
 
     expect(module.parseCliArgs(["easy-apply-dry-run", "--count", "3"])).toEqual({
@@ -435,6 +444,7 @@ describe("phase 5 index flows", () => {
       count: 3,
       disableAiEvaluation: false,
       scoreThreshold: 40,
+      useAiScoreAdjustment: false,
     });
 
     expect(module.parseCliArgs(["easy-apply-dry-run", "2"])).toEqual({
@@ -444,6 +454,7 @@ describe("phase 5 index flows", () => {
       count: 2,
       disableAiEvaluation: false,
       scoreThreshold: 40,
+      useAiScoreAdjustment: false,
     });
 
     expect(
@@ -461,6 +472,7 @@ describe("phase 5 index flows", () => {
       count: 2,
       disableAiEvaluation: true,
       scoreThreshold: 60,
+      useAiScoreAdjustment: false,
     });
 
     expect(module.parseCliArgs(["easy-apply", "https://www.linkedin.com/jobs/view/1"])).toEqual({
@@ -476,6 +488,7 @@ describe("phase 5 index flows", () => {
       count: 1,
       disableAiEvaluation: false,
       scoreThreshold: 40,
+      useAiScoreAdjustment: false,
     });
 
     expect(
@@ -493,6 +506,7 @@ describe("phase 5 index flows", () => {
       count: 5,
       disableAiEvaluation: true,
       scoreThreshold: 60,
+      useAiScoreAdjustment: false,
     });
   });
 
@@ -723,10 +737,12 @@ describe("phase 5 index flows", () => {
     expect(module.parseCliArgs(["score", "https://jobs.example.com/1"])).toEqual({
       mode: "score",
       url: "https://jobs.example.com/1",
+      useAiScoreAdjustment: false,
     });
     expect(module.parseCliArgs(["https://jobs.example.com/1"])).toEqual({
       mode: "decide",
       url: "https://jobs.example.com/1",
+      useAiScoreAdjustment: false,
     });
   });
 

@@ -368,7 +368,7 @@ describe("scoreJob", () => {
     expect(internResult.breakdown.seniority).toBe(12);
   });
 
-  it("adds a full-stack adjacency bonus for node typescript react api-microservices roles", () => {
+  it("keeps deterministic role bonuses generic instead of favoring one role family", () => {
     const result = scoreJob(
       {
         title: "Full Stack Engineer",
@@ -402,11 +402,12 @@ describe("scoreJob", () => {
       profile,
     );
 
-    expect(result.breakdown.bonus).toBeGreaterThanOrEqual(8);
-    expect(result.totalScore).toBeGreaterThanOrEqual(70);
+    expect(result.breakdown.bonus).toBe(4);
+    expect(result.scoringSource).toBe("deterministic");
+    expect(result.aiAdjustment).toBe(0);
   });
 
-  it("does not add the full-stack adjacency bonus when the role lacks the api-microservices signal", () => {
+  it("tracks the raw deterministic baseline score on every score result", () => {
     const result = scoreJob(
       {
         title: "Full Stack Engineer",
@@ -427,6 +428,12 @@ describe("scoreJob", () => {
       profile,
     );
 
-    expect(result.breakdown.bonus).toBe(4);
+    expect(result.baselineScore).toBe(
+      result.breakdown.skill +
+        result.breakdown.seniority +
+        result.breakdown.location +
+        result.breakdown.tech +
+        result.breakdown.bonus,
+    );
   });
 });

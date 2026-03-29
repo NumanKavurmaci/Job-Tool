@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { runJobFlow } from "../../../src/app/flows/jobFlow.js";
 
 function createDeps() {
+  const scoreJob = vi.fn();
+  const scoreJobWithAi = vi.fn().mockImplementation(async (...args) => scoreJob(...args));
+
   return {
     logger: {
       info: vi.fn(),
@@ -23,8 +26,10 @@ function createDeps() {
     extractJobText: vi.fn(),
     formatJobForLLM: vi.fn(),
     parseJob: vi.fn(),
+    completePrompt: vi.fn(),
     normalizeParsedJob: vi.fn(),
-    scoreJob: vi.fn(),
+    scoreJob,
+    scoreJobWithAi,
     evaluatePolicy: vi.fn(),
     decideJob: vi.fn(),
     writeRunReport: vi.fn(),

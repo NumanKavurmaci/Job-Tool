@@ -71,7 +71,9 @@ export async function main(cliArgs = process.argv.slice(2), deps: AppDeps = appD
   } else if (args.mode === "easy-apply-dry-run") {
     result = await runEasyApplyDryRunFlow(args, deps);
   } else {
-    result = await runJobFlow(args.mode, args.url, deps);
+    result = await runJobFlow(args.mode, args.url, deps, {
+      useAiScoreAdjustment: args.useAiScoreAdjustment,
+    });
   }
 
   return {

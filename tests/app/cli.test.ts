@@ -7,10 +7,12 @@ describe("app cli", () => {
     expect(parseCliArgs(["score", "https://example.com/job"])).toEqual({
       mode: "score",
       url: "https://example.com/job",
+      useAiScoreAdjustment: false,
     });
     expect(parseCliArgs(["decide", "https://example.com/job"])).toEqual({
       mode: "decide",
       url: "https://example.com/job",
+      useAiScoreAdjustment: false,
     });
   });
 
@@ -18,6 +20,24 @@ describe("app cli", () => {
     expect(parseCliArgs(["https://example.com/job"])).toEqual({
       mode: "decide",
       url: "https://example.com/job",
+      useAiScoreAdjustment: false,
+    });
+  });
+
+  it("parses the optional AI score adjustment flag", () => {
+    expect(parseCliArgs(["decide", "https://example.com/job", "--ai-score-adjustment"])).toEqual({
+      mode: "decide",
+      url: "https://example.com/job",
+      useAiScoreAdjustment: true,
+    });
+    expect(parseCliArgs(["easy-apply-dry-run", "--ai-score-adjustment"])).toEqual({
+      mode: "easy-apply-dry-run",
+      url: "https://www.linkedin.com/jobs/collections/easy-apply",
+      resumePath: expect.any(String),
+      count: 1,
+      disableAiEvaluation: false,
+      scoreThreshold: 40,
+      useAiScoreAdjustment: true,
     });
   });
 
@@ -62,6 +82,7 @@ describe("app cli", () => {
       count: 2,
       disableAiEvaluation: false,
       scoreThreshold: 40,
+      useAiScoreAdjustment: false,
     });
   });
 });

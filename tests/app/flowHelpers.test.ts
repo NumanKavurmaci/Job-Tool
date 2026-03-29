@@ -6,6 +6,9 @@ import {
 } from "../../src/app/flowHelpers.js";
 
 function createDeps() {
+  const scoreJob = vi.fn();
+  const scoreJobWithAi = vi.fn().mockImplementation(async (...args) => scoreJob(...args));
+
   return {
     loadCandidateMasterProfile: vi.fn(),
     resolveAnswer: vi.fn(),
@@ -37,8 +40,10 @@ function createDeps() {
     extractJobText: vi.fn(),
     formatJobForLLM: vi.fn(),
     parseJob: vi.fn(),
+    completePrompt: vi.fn(),
     normalizeParsedJob: vi.fn(),
-    scoreJob: vi.fn(),
+    scoreJob,
+    scoreJobWithAi,
     evaluatePolicy: vi.fn(),
     withPage: vi.fn(),
     writeRunReport: vi.fn(),
@@ -98,6 +103,7 @@ describe("app flow helpers", () => {
     const evaluate = createBatchJobEvaluator({
       disableAiEvaluation: true,
       scoreThreshold: 60,
+      useAiScoreAdjustment: false,
       scoringProfile: {} as any,
       deps,
     });
@@ -125,6 +131,7 @@ describe("app flow helpers", () => {
     const evaluate = createBatchJobEvaluator({
       disableAiEvaluation: false,
       scoreThreshold: 60,
+      useAiScoreAdjustment: false,
       scoringProfile: {} as any,
       evaluationPage: { fake: true } as any,
       deps,
@@ -182,6 +189,7 @@ describe("app flow helpers", () => {
     const evaluate = createBatchJobEvaluator({
       disableAiEvaluation: false,
       scoreThreshold: 60,
+      useAiScoreAdjustment: false,
       scoringProfile: {} as any,
       evaluationPage: { fake: true } as any,
       deps,
@@ -218,6 +226,7 @@ describe("app flow helpers", () => {
     const evaluate = createBatchJobEvaluator({
       disableAiEvaluation: false,
       scoreThreshold: 60,
+      useAiScoreAdjustment: false,
       scoringProfile: {} as any,
       evaluationPage: { fake: true } as any,
       deps,
@@ -232,7 +241,7 @@ describe("app flow helpers", () => {
     });
   });
 
-  it("evaluates a job on the provided evaluation page and persists APPLY history", async () => {
+  it("evaluates a job on the provided evaluation page with optional AI score adjustment", async () => {
     const deps = createDeps();
     deps.prisma.jobReviewHistory.findFirst.mockResolvedValue(null);
     deps.extractJobText.mockResolvedValue({
@@ -247,13 +256,14 @@ describe("app flow helpers", () => {
     deps.formatJobForLLM.mockReturnValue("prompt");
     deps.parseJob.mockResolvedValue({ parsed: { title: "Job" } });
     deps.normalizeParsedJob.mockReturnValue({ platform: "linkedin" });
-    deps.scoreJob.mockReturnValue({ totalScore: 62 });
+    deps.scoreJobWithAi.mockResolvedValue({ totalScore: 62 });
     deps.evaluatePolicy.mockReturnValue({ allowed: true, reasons: [] });
 
     const evaluationPage = { fake: true };
     const evaluate = createBatchJobEvaluator({
       disableAiEvaluation: false,
       scoreThreshold: 60,
+      useAiScoreAdjustment: true,
       scoringProfile: {} as any,
       evaluationPage: evaluationPage as any,
       deps,
@@ -269,6 +279,7 @@ describe("app flow helpers", () => {
       policyAllowed: true,
     });
     expect(deps.extractJobText).toHaveBeenCalledWith(evaluationPage, "https://example.com/job");
+    expect(deps.scoreJobWithAi).toHaveBeenCalledTimes(1);
     expect(deps.prisma.jobReviewHistory.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         jobPostingId: "job_1",
@@ -307,6 +318,7 @@ describe("app flow helpers", () => {
     const evaluate = createBatchJobEvaluator({
       disableAiEvaluation: false,
       scoreThreshold: 60,
+      useAiScoreAdjustment: false,
       scoringProfile: {} as any,
       deps,
     });
@@ -347,6 +359,7 @@ describe("app flow helpers", () => {
     const evaluate = createBatchJobEvaluator({
       disableAiEvaluation: false,
       scoreThreshold: 60,
+      useAiScoreAdjustment: false,
       scoringProfile: {} as any,
       evaluationPage: {} as any,
       deps,
@@ -384,6 +397,7 @@ describe("app flow helpers", () => {
     const evaluate = createBatchJobEvaluator({
       disableAiEvaluation: false,
       scoreThreshold: 60,
+      useAiScoreAdjustment: false,
       scoringProfile: {} as any,
       evaluationPage: {} as any,
       deps,

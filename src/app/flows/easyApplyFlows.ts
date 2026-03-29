@@ -143,6 +143,7 @@ export async function runEasyApplyDryRunFlow(
         const evaluateJob = createBatchJobEvaluator({
           disableAiEvaluation: args.disableAiEvaluation,
           scoreThreshold: args.scoreThreshold,
+          useAiScoreAdjustment: args.useAiScoreAdjustment,
           scoringProfile,
           ...(evaluationPage ? { evaluationPage } : {}),
           deps,
@@ -248,6 +249,7 @@ export async function runEasyApplyDryRunFlow(
           pagesVisited: result.pagesVisited,
           disableAiEvaluation: args.disableAiEvaluation,
           scoreThreshold: args.scoreThreshold,
+          useAiScoreAdjustment: args.useAiScoreAdjustment,
           stopReason: result.stopReason,
         }
       : {
@@ -278,6 +280,7 @@ export async function runEasyApplyDryRunFlow(
         url: args.url,
         disableAiEvaluation: args.disableAiEvaluation,
         scoreThreshold: args.scoreThreshold,
+        useAiScoreAdjustment: args.useAiScoreAdjustment,
         result,
       },
       deps,
@@ -459,6 +462,7 @@ export async function runEasyApplyBatchFlow(
         const evaluateJob = createBatchJobEvaluator({
           disableAiEvaluation: args.disableAiEvaluation,
           scoreThreshold: args.scoreThreshold,
+          useAiScoreAdjustment: args.useAiScoreAdjustment,
           scoringProfile,
           ...(evaluationPage ? { evaluationPage } : {}),
           deps,
@@ -547,6 +551,7 @@ export async function runEasyApplyBatchFlow(
       pagesVisited: result.pagesVisited,
       disableAiEvaluation: args.disableAiEvaluation,
       scoreThreshold: args.scoreThreshold,
+      useAiScoreAdjustment: args.useAiScoreAdjustment,
       stopReason: result.stopReason,
     },
     "LinkedIn Easy Apply batch finished",
@@ -560,6 +565,7 @@ export async function runEasyApplyBatchFlow(
       url: args.url,
       disableAiEvaluation: args.disableAiEvaluation,
       scoreThreshold: args.scoreThreshold,
+      useAiScoreAdjustment: args.useAiScoreAdjustment,
       result,
     },
     deps,

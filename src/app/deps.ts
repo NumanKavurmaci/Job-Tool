@@ -11,6 +11,7 @@ import {
   runEasyApplyDryRun,
 } from "../linkedin/easyApply.js";
 import { parseJob } from "../llm/parseJob.js";
+import { completePrompt } from "../llm/completePrompt.js";
 import { getConfiguredProviderInfo } from "../llm/providers/resolveProvider.js";
 import { extractJobText } from "../parser/extractJobText.js";
 import { formatJobForLLM } from "../parser/formatJobForLLM.js";
@@ -18,6 +19,7 @@ import { evaluatePolicy } from "../policy/policyEngine.js";
 import { loadCandidateProfile } from "../profile/candidate.js";
 import { decideJob } from "../scoring/decision.js";
 import { scoreJob } from "../scoring/scoreJob.js";
+import { scoreJobWithAi } from "../scoring/scoreJobWithAi.js";
 import { logger } from "../utils/logger.js";
 import { writeRunReport } from "../utils/runReports.js";
 
@@ -29,10 +31,12 @@ export const appDeps = {
   extractJobText,
   formatJobForLLM,
   parseJob,
+  completePrompt,
   getConfiguredProviderInfo,
   normalizeParsedJob,
   loadCandidateProfile,
   scoreJob,
+  scoreJobWithAi,
   evaluatePolicy,
   decideJob,
   runEasyApplyDryRun,
