@@ -1,5 +1,20 @@
 # Example Scripts
 
+Premium Page Crawl For Easy Apply
+
+$env:LLM_PROVIDER='local'
+$env:LOCAL_LLM_BASE_URL='http://127.0.0.1:1234/v1'
+$env:LOCAL_LLM_MODEL='openai/gpt-oss-20b'
+@'
+import { main, appDeps } from "./src/index.ts";
+try {
+  const result = await main(["easy-apply-dry-run", "https://www.linkedin.com/jobs/collections/top-applicant", "100"], appDeps);
+  console.log(JSON.stringify(result, null, 2));
+} finally {
+  await appDeps.prisma.$disconnect();
+}
+'@ | npx tsx -
+
 Practical PowerShell examples for every supported CLI mode.
 
 ## Shared Local LM Studio Setup
