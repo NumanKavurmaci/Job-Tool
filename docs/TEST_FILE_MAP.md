@@ -9,7 +9,15 @@ This file maps all test files to the behavior they protect.
 
 ## `tests/app/`
 
+- [tests/app/cli.test.ts](../tests/app/cli.test.ts): CLI parsing and command-shape regression coverage.
+- [tests/app/deps.test.ts](../tests/app/deps.test.ts): Dependency-container wiring and lazy driver creation behavior.
+- [tests/app/flowHelpers.test.ts](../tests/app/flowHelpers.test.ts): Shared flow helper behavior for profile loading, scoring, and answer resolution.
+- [tests/app/observability.test.ts](../tests/app/observability.test.ts): Artifact writing and DB observability persistence helpers.
 - [tests/app/main.test.ts](../tests/app/main.test.ts): Main orchestration test suite for CLI parsing, flows, persistence, and error wrapping.
+- [tests/app/flows/easyApplyFlows.test.ts](../tests/app/flows/easyApplyFlows.test.ts): LinkedIn Easy Apply orchestration, persistence, and dry-run/live flow behavior.
+- [tests/app/flows/externalApplyFlows.test.ts](../tests/app/flows/externalApplyFlows.test.ts): External application precursor-link routing, persistence, and dry-run/live flow behavior.
+- [tests/app/flows/jobFlow.test.ts](../tests/app/flows/jobFlow.test.ts): `score`/`decide` flow orchestration and persistence behavior.
+- [tests/app/flows/profileFlows.test.ts](../tests/app/flows/profileFlows.test.ts): Profile-building and reusable answer-set generation flows.
 
 ## `tests/adapters/`
 
@@ -48,10 +56,16 @@ This file maps all test files to the behavior they protect.
 ## `tests/db/`
 
 - [tests/db/client.test.ts](../tests/db/client.test.ts): Prisma client instantiation.
+- [tests/db/runtimeGuard.test.ts](../tests/db/runtimeGuard.test.ts): Runtime DB guard behavior.
 
 ## `tests/domain/`
 
 - [tests/domain/job.test.ts](../tests/domain/job.test.ts): Job normalization and domain inference rules.
+
+## `tests/external/`
+
+- [tests/external/discovery.test.ts](../tests/external/discovery.test.ts): External discovery, precursor-link, and answer-planning behavior.
+- [tests/external/fill.test.ts](../tests/external/fill.test.ts): External form filling, dropdown interaction, and progression behavior.
 
 ## `tests/fixtures/`
 
@@ -78,6 +92,7 @@ This file maps all test files to the behavior they protect.
 
 ## `tests/materials/`
 
+- [tests/materials/generateCoverLetter.test.ts](../tests/materials/generateCoverLetter.test.ts): Cover letter generation behavior using page/job context.
 - [tests/materials/generateShortAnswer.test.ts](../tests/materials/generateShortAnswer.test.ts): Generated short-answer behavior.
 
 ## `tests/parser/`
@@ -98,18 +113,21 @@ This file maps all test files to the behavior they protect.
 
 - [tests/questions/aiFallback.test.ts](../tests/questions/aiFallback.test.ts): AI fallback answer behavior.
 - [tests/questions/classifyQuestion.test.ts](../tests/questions/classifyQuestion.test.ts): Question classifier behavior.
+- [tests/questions/generated.test.ts](../tests/questions/generated.test.ts): Generated-answer and cover-letter strategy behavior.
 - [tests/questions/strategies.test.ts](../tests/questions/strategies.test.ts): Cross-strategy answer behavior.
 
 ## `tests/scoring/`
 
 - [tests/scoring/decision.test.ts](../tests/scoring/decision.test.ts): Score-to-decision mapping.
 - [tests/scoring/scoreJob.test.ts](../tests/scoring/scoreJob.test.ts): Main scoring behavior and breakdown logic.
+- [tests/scoring/scoreJobWithAi.test.ts](../tests/scoring/scoreJobWithAi.test.ts): AI-assisted score adjustment behavior.
 
 ## `tests/utils/`
 
 - [tests/utils/errors.test.ts](../tests/utils/errors.test.ts): `AppError` and serialization behavior.
 - [tests/utils/fakePage.ts](../tests/utils/fakePage.ts): Shared page test double for LinkedIn/browser tests.
 - [tests/utils/jobHistory.test.ts](../tests/utils/jobHistory.test.ts): Review history persistence helpers.
+- [tests/utils/jobPersistence.test.ts](../tests/utils/jobPersistence.test.ts): Job posting persistence and metadata refresh helpers.
 - [tests/utils/logger.test.ts](../tests/utils/logger.test.ts): Logger surface smoke test.
 - [tests/utils/runReports.test.ts](../tests/utils/runReports.test.ts): Run report writing and terminal summary helpers.
 - [tests/utils/systemLog.test.ts](../tests/utils/systemLog.test.ts): DB-backed system log helper behavior.

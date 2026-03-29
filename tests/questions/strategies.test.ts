@@ -346,4 +346,26 @@ describe("question strategies", () => {
       ),
     ).resolves.toBeNull();
   });
+
+  it("returns a manual-review answer payload when needed", async () => {
+    const { resolveManualReview } = await import(
+      "../../src/questions/strategies/manualReview.js"
+    );
+
+    const result = resolveManualReview({
+      type: "unknown",
+      normalizedText: "some ambiguous question",
+      confidence: 0.1,
+    });
+
+    expect(result).toEqual({
+      questionType: "unknown",
+      strategy: "needs-review",
+      answer: null,
+      confidence: 0,
+      confidenceLabel: "manual_review",
+      source: "manual",
+      notes: ["Human review required before using this answer."],
+    });
+  });
 });

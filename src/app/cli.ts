@@ -10,6 +10,7 @@ export type CliArgs =
   | { mode: "score" | "decide"; url: string; useAiScoreAdjustment: boolean }
   | { mode: "easy-apply"; url: string; resumePath: string }
   | { mode: "external-apply-dry-run"; url: string; resumePath: string }
+  | { mode: "external-apply"; url: string; resumePath: string }
   | {
       mode: "easy-apply-batch";
       url: string;
@@ -103,7 +104,11 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
     if (!resumePath) {
       throw new Error("--resume is required for build-profile.");
     }
-    return { mode: "build-profile", resumePath, ...(linkedinUrl ? { linkedinUrl } : {}) };
+    return {
+      mode: "build-profile",
+      resumePath,
+      ...(linkedinUrl ? { linkedinUrl } : {}),
+    };
   }
 
   if (first === "answer-questions") {
@@ -128,7 +133,8 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
     const resumePath = getFlag("--resume") ?? DEFAULT_RESUME_PATH;
     const positionalArgs = getPositionalTailArgs();
     const countFromFlag = getIntegerFlag("--count");
-    const scoreThreshold = getIntegerFlag("--score-threshold") ?? DEFAULT_SCORE_THRESHOLD;
+    const scoreThreshold =
+      getIntegerFlag("--score-threshold") ?? DEFAULT_SCORE_THRESHOLD;
     const disableAiEvaluation = hasFlag("--disable-ai-evaluation");
     const trailingPositional = positionalArgs.at(-1);
     const positionalCount =
@@ -139,11 +145,12 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
     const url =
       (positionalCount ? positionalArgs.slice(0, -1) : positionalArgs)[0] ??
       DEFAULT_LINKEDIN_EASY_APPLY_URL;
-    const normalizedUrl =
-      count === 1 ? resolveLinkedInSingleJobUrl(url) : url;
+    const normalizedUrl = count === 1 ? resolveLinkedInSingleJobUrl(url) : url;
 
     if (!resumePath) {
-      throw new Error("--resume is required for easy-apply-dry-run when no default CV is available.");
+      throw new Error(
+        "--resume is required for easy-apply-dry-run when no default CV is available.",
+      );
     }
 
     return {
@@ -163,7 +170,9 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
     const url = positionalArgs[0];
 
     if (!resumePath) {
-      throw new Error("--resume is required for external-apply-dry-run when no default CV is available.");
+      throw new Error(
+        "--resume is required for external-apply-dry-run when no default CV is available.",
+      );
     }
     if (!url) {
       throw new Error("--url is required for external-apply-dry-run.");
@@ -182,13 +191,17 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
     const url = positionalArgs[0];
     const normalizedUrl = url ? resolveLinkedInSingleJobUrl(url) : url;
     if (!resumePath) {
-      throw new Error("--resume is required for easy-apply when no default CV is available.");
+      throw new Error(
+        "--resume is required for easy-apply when no default CV is available.",
+      );
     }
     if (!normalizedUrl) {
       throw new Error("--url is required for easy-apply.");
     }
     if (isLinkedInCollectionUrl(normalizedUrl)) {
-      throw new Error("easy-apply requires a single LinkedIn job URL, not a collection URL.");
+      throw new Error(
+        "easy-apply requires a single LinkedIn job URL, not a collection URL.",
+      );
     }
     return { mode: "easy-apply", url: normalizedUrl, resumePath };
   }
@@ -197,7 +210,8 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
     const resumePath = getFlag("--resume") ?? DEFAULT_RESUME_PATH;
     const positionalArgs = getPositionalTailArgs();
     const countFromFlag = getIntegerFlag("--count");
-    const scoreThreshold = getIntegerFlag("--score-threshold") ?? DEFAULT_SCORE_THRESHOLD;
+    const scoreThreshold =
+      getIntegerFlag("--score-threshold") ?? DEFAULT_SCORE_THRESHOLD;
     const disableAiEvaluation = hasFlag("--disable-ai-evaluation");
     const trailingPositional = positionalArgs.at(-1);
     const positionalCount =
@@ -210,10 +224,14 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
       DEFAULT_LINKEDIN_EASY_APPLY_URL;
 
     if (!resumePath) {
-      throw new Error("--resume is required for easy-apply-batch when no default CV is available.");
+      throw new Error(
+        "--resume is required for easy-apply-batch when no default CV is available.",
+      );
     }
     if (!isLinkedInCollectionUrl(url)) {
-      throw new Error("easy-apply-batch requires a LinkedIn collection URL or the default collection.");
+      throw new Error(
+        "easy-apply-batch requires a LinkedIn collection URL or the default collection.",
+      );
     }
 
     return {

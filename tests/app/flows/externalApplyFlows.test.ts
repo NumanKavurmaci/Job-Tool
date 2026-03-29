@@ -11,7 +11,10 @@ vi.mock("../../../src/answers/resolveAnswer.js", () => ({
   })),
 }));
 
-import { runExternalApplyDryRunFlow } from "../../../src/app/flows/externalApplyFlows.js";
+import {
+  runExternalApplyDryRunFlow,
+  runExternalApplyFlow,
+} from "../../../src/app/flows/externalApplyFlows.js";
 
 function buildCandidateProfile() {
   return {
@@ -163,6 +166,7 @@ describe("external apply flows", () => {
       writeRunReport: vi.fn().mockResolvedValue("artifacts/external-apply-runs/report.json"),
       logger: {
         info: vi.fn(),
+        error: vi.fn(),
       },
     } as any;
 
@@ -254,6 +258,7 @@ describe("external apply flows", () => {
       writeRunReport: vi.fn().mockResolvedValue("artifacts/external-apply-runs/report.json"),
       logger: {
         info: vi.fn(),
+        error: vi.fn(),
       },
     } as any;
 
@@ -335,6 +340,7 @@ describe("external apply flows", () => {
       writeRunReport: vi.fn().mockResolvedValue("artifacts/external-apply-runs/report.json"),
       logger: {
         info: vi.fn(),
+        error: vi.fn(),
       },
     } as any;
 
@@ -359,6 +365,90 @@ describe("external apply flows", () => {
     expect(deps.prisma.preparedAnswerSet.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         candidateProfileId: "snapshot_1",
+      }),
+    });
+  });
+
+  it("submits when running external-apply and records the live run type", async () => {
+    const goto = vi.fn();
+    const evaluate = vi.fn();
+    evaluate
+      .mockResolvedValueOnce({
+        url: "https://example.com/form",
+        title: "Application form",
+        fields: [
+          {
+            key: "salary",
+            label: "Expected salary",
+            inputType: "number",
+            required: true,
+            options: [],
+            placeholder: null,
+            helpText: null,
+            accept: null,
+          },
+        ],
+        precursorLinks: [],
+      })
+      .mockResolvedValueOnce("Actual application form")
+      .mockResolvedValueOnce({
+        url: "https://example.com/form/complete",
+        title: "Application complete",
+        fields: [],
+        precursorLinks: [],
+      })
+      .mockResolvedValueOnce({
+        url: "https://example.com/form/complete",
+        title: "Application complete",
+        fields: [],
+        precursorLinks: [],
+      })
+      .mockResolvedValueOnce("Thank you for applying!");
+
+    const deps = {
+      loadCandidateMasterProfile: vi.fn().mockResolvedValue(buildCandidateProfile()),
+      prisma: {
+        candidateProfileSnapshot: {
+          create: vi.fn().mockResolvedValue({ id: "snapshot_1" }),
+        },
+        preparedAnswerSet: {
+          create: vi.fn().mockResolvedValue({ id: "prepared_1" }),
+        },
+        systemLog: {
+          create: vi.fn().mockResolvedValue({}),
+        },
+      },
+      withPage: vi.fn(async (fn: (page: unknown) => Promise<unknown>) =>
+        fn(
+          createFlowPage({
+            goto,
+            evaluate,
+            visibleSelectors: [`[id="salary"]`, `button:has-text("Submit")`],
+          }),
+        )),
+      completePrompt: vi.fn(),
+      writeRunReport: vi.fn().mockResolvedValue("artifacts/external-apply-runs/report.json"),
+      logger: {
+        info: vi.fn(),
+        error: vi.fn(),
+      },
+    } as any;
+
+    const result = await runExternalApplyFlow(
+      {
+        mode: "external-apply",
+        url: "https://example.com/form",
+        resumePath: "./user/resume.pdf",
+      },
+      deps,
+    );
+
+    expect(result.finalStage).toBe("completed");
+    expect(result.stopReason).toContain("Submitted");
+    expect(deps.prisma.preparedAnswerSet.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        candidateProfileId: "snapshot_1",
+        answersJson: expect.stringContaining('"runType":"external-apply"'),
       }),
     });
   });

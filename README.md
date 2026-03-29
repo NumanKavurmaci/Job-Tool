@@ -32,6 +32,7 @@ That lets the system decide whether a role is a fit and prepare safe, structured
 - Easy Apply question classification and answer preparation
 - AI fallback for questions that are not resolved deterministically
 - LinkedIn Easy Apply dry-run support for single jobs and multi-job collection runs
+- external application discovery, answer planning, and form filling
 - fit-gated LinkedIn crawling that only attempts jobs scored as `APPLY`
 - LinkedIn session reuse through persisted Playwright storage state
 - explicit detection of LinkedIn auth challenges and already-applied jobs
@@ -81,6 +82,8 @@ npm run dev -- easy-apply "https://www.linkedin.com/jobs/view/123"
 npm run dev -- easy-apply-batch 5
 npm run dev -- easy-apply-batch --score-threshold 60 5
 npm run dev -- easy-apply-batch --disable-ai-evaluation 5
+npm run dev -- external-apply-dry-run "https://example.com/apply"
+npm run dev -- external-apply "https://example.com/apply"
 ```
 
 `easy-apply-dry-run` defaults to [LinkedIn Easy Apply jobs](https://www.linkedin.com/jobs/collections/easy-apply) when no URL is provided.
@@ -94,6 +97,10 @@ When a number is passed, the tool treats it as the target number of matching Lin
 Batch dry runs and batch live runs also support:
 - `--score-threshold <number>` to control the minimum score required before a job is attempted
 - `--disable-ai-evaluation` to skip pre-application AI evaluation and process matching jobs directly
+
+`external-apply-dry-run` discovers the page, plans answers, fills what it can, and stops before the terminal submission.
+
+`external-apply` runs the same flow but is allowed to trigger the final external form submit action when the page reaches a submit step.
 
 ## Testing
 

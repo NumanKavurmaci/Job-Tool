@@ -256,6 +256,7 @@ export async function fillExternalApplicationPage(args: {
   page: Page;
   discovery: ExternalApplicationDiscovery;
   answerPlan: ExternalApplicationPlannedAnswer[];
+  submit?: boolean;
 }): Promise<ExternalFillResult> {
   const fieldResults: ExternalFieldFillResult[] = [];
 
@@ -272,6 +273,8 @@ export async function fillExternalApplicationPage(args: {
 
   if (blockingRequiredFields.length === 0 && primaryAction === "next") {
     advanced = await advanceExternalApplicationPage(args.page, "next");
+  } else if (args.submit === true && blockingRequiredFields.length === 0 && primaryAction === "submit") {
+    advanced = await advanceExternalApplicationPage(args.page, "submit");
   }
 
   return {

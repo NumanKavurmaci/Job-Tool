@@ -3,13 +3,25 @@ import { getErrorMessage, serializeError } from "../utils/errors.js";
 import { formatBatchTerminalSummary } from "../utils/runReports.js";
 import { parseCliArgs } from "./cli.js";
 import { appDeps, type AppDeps } from "./deps.js";
-import { runExternalApplyDryRunFlow } from "./flows/externalApplyFlows.js";
-import { runEasyApplyBatchFlow, runEasyApplyDryRunFlow, runEasyApplyFlow } from "./flows/easyApplyFlows.js";
+import {
+  runExternalApplyDryRunFlow,
+  runExternalApplyFlow,
+} from "./flows/externalApplyFlows.js";
+import {
+  runEasyApplyBatchFlow,
+  runEasyApplyDryRunFlow,
+  runEasyApplyFlow,
+} from "./flows/easyApplyFlows.js";
 import { runJobFlow } from "./flows/jobFlow.js";
-import { runAnswerQuestionsFlow, runBuildProfileFlow } from "./flows/profileFlows.js";
+import {
+  runAnswerQuestionsFlow,
+  runBuildProfileFlow,
+} from "./flows/profileFlows.js";
 import { persistSystemEvent } from "./observability.js";
 
-function renderCliSummary(result: Awaited<ReturnType<typeof main>>): string | null {
+function renderCliSummary(
+  result: Awaited<ReturnType<typeof main>>,
+): string | null {
   if (!("easyApply" in result)) {
     return null;
   }
@@ -36,20 +48,27 @@ function renderCliSummary(result: Awaited<ReturnType<typeof main>>): string | nu
     });
   }
 
-  return [
-    "LinkedIn Easy Apply finished",
-    `Status: ${result.easyApply.status}`,
-    `Steps: ${result.easyApply.steps.length}`,
-    `Reason: ${result.easyApply.stopReason}`,
-    ...("reportPath" in result && typeof result.reportPath === "string"
-      ? [`Report: ${result.reportPath}`]
-      : []),
-  ].join("\n") + "\n";
+  return (
+    [
+      "LinkedIn Easy Apply finished",
+      `Status: ${result.easyApply.status}`,
+      `Steps: ${result.easyApply.steps.length}`,
+      `Reason: ${result.easyApply.stopReason}`,
+      ...("reportPath" in result && typeof result.reportPath === "string"
+        ? [`Report: ${result.reportPath}`]
+        : []),
+    ].join("\n") + "\n"
+  );
 }
 
-export async function main(cliArgs = process.argv.slice(2), deps: AppDeps = appDeps) {
+export async function main(
+  cliArgs = process.argv.slice(2),
+  deps: AppDeps = appDeps,
+) {
   const startedAt = performance.now();
-  const args = Array.isArray(cliArgs) ? parseCliArgs(cliArgs) : parseCliArgs([cliArgs]);
+  const args = Array.isArray(cliArgs)
+    ? parseCliArgs(cliArgs)
+    : parseCliArgs([cliArgs]);
   const llmProviderInfo = deps.getConfiguredProviderInfo();
 
   deps.logger.info(
@@ -73,6 +92,8 @@ export async function main(cliArgs = process.argv.slice(2), deps: AppDeps = appD
     result = await runEasyApplyDryRunFlow(args, deps);
   } else if (args.mode === "external-apply-dry-run") {
     result = await runExternalApplyDryRunFlow(args, deps);
+  } else if (args.mode === "external-apply") {
+    result = await runExternalApplyFlow(args, deps);
   } else {
     result = await runJobFlow(args.mode, args.url, deps, {
       useAiScoreAdjustment: args.useAiScoreAdjustment,

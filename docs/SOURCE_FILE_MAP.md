@@ -20,6 +20,7 @@ This file maps all `src/` files to their purpose.
 - [src/app/flows/jobFlow.ts](../src/app/flows/jobFlow.ts): `score` and `decide` job-analysis flow.
 - [src/app/flows/profileFlows.ts](../src/app/flows/profileFlows.ts): `build-profile` and `answer-questions` orchestration.
 - [src/app/flows/easyApplyFlows.ts](../src/app/flows/easyApplyFlows.ts): Single-job and batch LinkedIn Easy Apply orchestration.
+- [src/app/flows/externalApplyFlows.ts](../src/app/flows/externalApplyFlows.ts): External application dry-run/live orchestration, precursor-link routing, persistence, and artifact writing.
 
 ## `src/adapters/`
 
@@ -67,6 +68,7 @@ This file maps all `src/` files to their purpose.
 ## `src/db/`
 
 - [src/db/client.ts](../src/db/client.ts): Shared Prisma client instance.
+- [src/db/runtimeGuard.ts](../src/db/runtimeGuard.ts): Guards runtime DB setup assumptions before Prisma-backed flows proceed.
 
 ## `src/domain/`
 
@@ -94,7 +96,14 @@ This file maps all `src/` files to their purpose.
 
 ## `src/materials/`
 
+- [src/materials/generateCoverLetter.ts](../src/materials/generateCoverLetter.ts): Generates page-aware cover letters using visible job/application context.
 - [src/materials/generateShortAnswer.ts](../src/materials/generateShortAnswer.ts): Generates concise free-text answers for short application prompts.
+
+## `src/external/`
+
+- [src/external/discovery.ts](../src/external/discovery.ts): External application page discovery, field extraction, precursor-link following, and answer planning.
+- [src/external/fill.ts](../src/external/fill.ts): External form field filling, primary-action detection, and step advancement.
+- [src/external/types.ts](../src/external/types.ts): Shared external application discovery/planning types.
 
 ## `src/parser/`
 
@@ -127,6 +136,7 @@ This file maps all `src/` files to their purpose.
 ## `src/scoring/`
 
 - [src/scoring/scoreJob.ts](../src/scoring/scoreJob.ts): Fit scoring logic and score breakdown.
+- [src/scoring/scoreJobWithAi.ts](../src/scoring/scoreJobWithAi.ts): Optional AI-assisted score adjustment layered on top of the deterministic baseline.
 - [src/scoring/decision.ts](../src/scoring/decision.ts): Maps score into `APPLY`, `MAYBE`, or `SKIP`.
 
 ## `src/utils/`
@@ -134,6 +144,7 @@ This file maps all `src/` files to their purpose.
 - [src/utils/artifacts.ts](../src/utils/artifacts.ts): Screenshot and HTML snapshot artifact utilities.
 - [src/utils/errors.ts](../src/utils/errors.ts): Shared `AppError`, serialization, and user-facing error formatting.
 - [src/utils/jobHistory.ts](../src/utils/jobHistory.ts): Low-level DB persistence and lookup helpers for review history.
+- [src/utils/jobPersistence.ts](../src/utils/jobPersistence.ts): Job posting upsert/refresh helpers and detected-applied persistence logic.
 - [src/utils/logger.ts](../src/utils/logger.ts): Pino logger to stdout and `logs/app.log`.
 - [src/utils/runReports.ts](../src/utils/runReports.ts): Writes JSON run reports and formats terminal batch summaries.
 - [src/utils/systemLog.ts](../src/utils/systemLog.ts): Low-level DB persistence for structured system logs.
