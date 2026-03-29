@@ -50,4 +50,44 @@ describe("normalizeResume", () => {
     expect(result.remoteOnly).toBe(false);
     expect(result.disability.disclosurePreference).toBe("manual-review");
   });
+
+  it("repairs contact details from raw resume text when parsing leaves broken values", () => {
+    const result = normalizeResume(
+      {
+        fullName: "Numan Kavurmacı",
+        email: "numan.kavurmaci.samsun@gmai l.com",
+        phone: null,
+        location: "Samsun,\n Türkiye",
+        githubUrl: null,
+        portfolioUrl: null,
+        summary: null,
+        currentTitle: "Software Engineer",
+        skills: [],
+        languages: [],
+        workAuthorization: null,
+        requiresSponsorship: null,
+        willingToRelocate: null,
+        remotePreference: null,
+        education: [],
+        experience: [],
+        projects: [],
+        yearsOfExperienceTotal: 3,
+      },
+      [
+        "Contact",
+        "+905416467889 (Mobile)",
+        "numan.kavurmaci.samsun@gmai",
+        "l.com",
+        "www.linkedin.com/in/numan-kavurmacı-227a35247 (LinkedIn)",
+      ].join("\n"),
+      {
+        resumePath: "./resume.pdf",
+      },
+    );
+
+    expect(result.email).toBe("numan.kavurmaci.samsun@gmail.com");
+    expect(result.phone).toBe("+905416467889");
+    expect(result.location).toBe("Samsun, Türkiye");
+    expect(result.linkedinUrl).toBe("https://www.linkedin.com/in/numan-kavurmacı-227a35247");
+  });
 });

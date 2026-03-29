@@ -13,6 +13,7 @@ export type QuestionType =
   | "skill_experience"
   | "education"
   | "availability"
+  | "cover_letter"
   | "motivation_short_text"
   | "general_short_text"
   | "unknown";

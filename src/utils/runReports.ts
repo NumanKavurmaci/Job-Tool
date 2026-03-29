@@ -9,6 +9,7 @@ export async function writeRunReport(input: {
   category:
     | "answer-runs"
     | "batch-runs"
+    | "external-apply-runs"
     | "easy-apply-runs"
     | "job-runs"
     | "profile-runs";

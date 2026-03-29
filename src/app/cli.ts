@@ -8,6 +8,7 @@ import {
 export type CliArgs =
   | { mode: "score" | "decide"; url: string; useAiScoreAdjustment: boolean }
   | { mode: "easy-apply"; url: string; resumePath: string }
+  | { mode: "external-apply-dry-run"; url: string; resumePath: string }
   | {
       mode: "easy-apply-batch";
       url: string;
@@ -91,7 +92,7 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
 
   if (!first) {
     throw new Error(
-      'Usage: npm run dev -- <job-url> | npm run dev -- score "<job-url>" | npm run dev -- decide "<job-url>" | npm run dev -- build-profile --resume "./cv.pdf" --linkedin "https://linkedin.com/in/..." | npm run dev -- answer-questions --resume "./cv.pdf" --linkedin "https://linkedin.com/in/..." --questions "./questions.json" | npm run dev -- easy-apply-dry-run "<linkedin-job-or-collection-url>" --count 3',
+      'Usage: npm run dev -- <job-url> | npm run dev -- score "<job-url>" | npm run dev -- decide "<job-url>" | npm run dev -- build-profile --resume "./cv.pdf" --linkedin "https://linkedin.com/in/..." | npm run dev -- answer-questions --resume "./cv.pdf" --linkedin "https://linkedin.com/in/..." --questions "./questions.json" | npm run dev -- easy-apply-dry-run "<linkedin-job-or-collection-url>" --count 3 | npm run dev -- external-apply-dry-run "<external-application-url>"',
     );
   }
 
@@ -150,6 +151,25 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
       disableAiEvaluation,
       scoreThreshold,
       useAiScoreAdjustment,
+    };
+  }
+
+  if (first === "external-apply-dry-run") {
+    const resumePath = getFlag("--resume") ?? DEFAULT_RESUME_PATH;
+    const positionalArgs = getPositionalTailArgs();
+    const url = positionalArgs[0];
+
+    if (!resumePath) {
+      throw new Error("--resume is required for external-apply-dry-run when no default CV is available.");
+    }
+    if (!url) {
+      throw new Error("--url is required for external-apply-dry-run.");
+    }
+
+    return {
+      mode: "external-apply-dry-run",
+      url,
+      resumePath,
     };
   }
 

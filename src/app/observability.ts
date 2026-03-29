@@ -7,7 +7,13 @@ import { writeSystemLog, type SystemLogInput } from "../utils/systemLog.js";
 import type { AppDeps } from "./deps.js";
 
 export async function persistRunArtifact(args: {
-  category: "answer-runs" | "batch-runs" | "easy-apply-runs" | "job-runs" | "profile-runs";
+  category:
+    | "answer-runs"
+    | "batch-runs"
+    | "easy-apply-runs"
+    | "external-apply-runs"
+    | "job-runs"
+    | "profile-runs";
   prefix: string;
   payload: unknown;
   deps: AppDeps;

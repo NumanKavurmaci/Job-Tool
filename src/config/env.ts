@@ -14,7 +14,16 @@ export function required(name: string): string {
 
 function optional(name: string): string | undefined {
   const value = process.env[name];
-  return value?.trim() ? value : undefined;
+  const normalized = value?.trim();
+  if (!normalized) {
+    return undefined;
+  }
+
+  if (name === "OPENAI_API_KEY" && /^your[_-]?key[_-]?here$/i.test(normalized)) {
+    return undefined;
+  }
+
+  return normalized;
 }
 
 function optionalPositiveInteger(name: string, fallback: number): number {
@@ -32,7 +41,7 @@ function optionalPositiveInteger(name: string, fallback: number): number {
 }
 
 export function createEnv() {
-  const LLM_PROVIDER = (optional("LLM_PROVIDER") ?? "openai") as LlmProviderName;
+  const configuredProvider = optional("LLM_PROVIDER");
   const DATABASE_URL = required("DATABASE_URL");
   const OPENAI_MODEL = optional("OPENAI_MODEL") ?? "gpt-4.1-mini";
   const OPENAI_API_KEY = optional("OPENAI_API_KEY");
@@ -49,6 +58,9 @@ export function createEnv() {
     optional("LINKEDIN_SESSION_STATE_PATH") ?? ".auth/linkedin-session.json";
   const LINKEDIN_BROWSER_PROFILE_PATH =
     optional("LINKEDIN_BROWSER_PROFILE_PATH") ?? ".auth/linkedin-profile";
+  const hasLocalConfiguration = Boolean(LOCAL_LLM_BASE_URL && LOCAL_LLM_MODEL);
+  const LLM_PROVIDER = (configuredProvider ??
+    (hasLocalConfiguration ? "local" : "openai")) as LlmProviderName;
 
   if (LLM_PROVIDER !== "openai" && LLM_PROVIDER !== "local") {
     throw new Error(`Unsupported LLM_PROVIDER: ${LLM_PROVIDER}`);

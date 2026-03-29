@@ -20,17 +20,56 @@ function unique(values: Array<string | null | undefined>): string[] {
   return result;
 }
 
+function compactWhitespace(value: string | null | undefined): string | null {
+  const normalized = value?.replace(/\s+/g, " ").trim();
+  return normalized ? normalized : null;
+}
+
+function normalizeEmail(value: string | null | undefined): string | null {
+  const normalized = value?.replace(/\s+/g, "").trim();
+  return normalized ? normalized : null;
+}
+
+function extractEmailFromResumeText(resumeText: string): string | null {
+  const match = resumeText.match(/[A-Z0-9._%+-]+(?:\s+)?@[A-Z0-9.-]+\.(?:\s+)?[A-Z]{2,}/i);
+  return match ? normalizeEmail(match[0]) : null;
+}
+
+function extractLinkedinUrlFromResumeText(resumeText: string): string | null {
+  const normalizedText = resumeText.replace(/\s+/g, "");
+  const match = normalizedText.match(
+    /(?:https?:\/\/)?(?:www\.)?linkedin\.com\/in\/[A-Za-z0-9\-_%\u00C0-\u024F]+/i,
+  );
+  if (!match) {
+    return null;
+  }
+
+  const url = match[0].replace(/^www\./i, "https://www.");
+  return /^https?:\/\//i.test(url) ? url : `https://${url}`;
+}
+
+function extractPhoneFromResumeText(resumeText: string): string | null {
+  const match = resumeText.match(/(?:\+\d[\d\s().-]{8,}\d)/);
+  return match ? compactWhitespace(match[0]) : null;
+}
+
 export function normalizeResume(
   parsed: ParsedResume,
   resumeText: string,
   sourceMetadata: CandidateProfile["sourceMetadata"],
 ): CandidateProfile {
+  const email = normalizeEmail(parsed.email) ?? extractEmailFromResumeText(resumeText);
+  const phone = compactWhitespace(parsed.phone) ?? extractPhoneFromResumeText(resumeText);
+  const linkedinUrl =
+    compactWhitespace(sourceMetadata.linkedinUrl)
+    ?? extractLinkedinUrlFromResumeText(resumeText);
+
   return {
     fullName: parsed.fullName,
-    email: parsed.email,
-    phone: parsed.phone,
-    location: parsed.location,
-    linkedinUrl: sourceMetadata.linkedinUrl ?? null,
+    email,
+    phone,
+    location: compactWhitespace(parsed.location),
+    linkedinUrl,
     githubUrl: parsed.githubUrl,
     portfolioUrl: parsed.portfolioUrl,
     summary: parsed.summary,

@@ -16,6 +16,11 @@ vi.mock("../../src/questions/strategies/aiFallback.js", () => ({
 vi.mock("../../src/answers/cache.js", () => ({
   persistResolvedAnswer: persistResolvedAnswerMock,
   readCachedResolvedAnswer: readCachedResolvedAnswerMock,
+  isDynamicAnswerQuestionType: (questionType: string) =>
+    questionType === "cover_letter"
+    || questionType === "motivation_short_text"
+    || questionType === "general_short_text"
+    || questionType === "unknown",
 }));
 
 const profile = {
@@ -105,6 +110,102 @@ describe("resolveAnswer", () => {
     expect(resolveGeneratedAnswerMock).not.toHaveBeenCalled();
     expect(resolveAiFallbackAnswerMock).not.toHaveBeenCalled();
     expect(persistResolvedAnswerMock).not.toHaveBeenCalled();
+  });
+
+  it("ignores cached null answers for contact fields and recomputes deterministically", async () => {
+    readCachedResolvedAnswerMock.mockResolvedValue({
+      normalizedQuestion: "first name first name",
+      label: "First Name",
+      questionType: "contact_info",
+      strategy: "generated",
+      answer: null,
+      confidenceLabel: "low",
+      source: "llm",
+      updatedAt: new Date().toISOString(),
+    });
+
+    const { resolveAnswer } = await import("../../src/answers/resolveAnswer.js");
+    const result = await resolveAnswer({
+      question: { label: "First Name", placeholder: "First Name", inputType: "short_text" },
+      candidateProfile: profile,
+    });
+
+    expect(result.strategy).toBe("deterministic");
+    expect(result.answer).toBe("Jane");
+    expect(resolveAiFallbackAnswerMock).not.toHaveBeenCalled();
+    expect(persistResolvedAnswerMock).toHaveBeenCalled();
+  });
+
+  it("ignores cached null answers for email and phone fields", async () => {
+    readCachedResolvedAnswerMock
+      .mockResolvedValueOnce({
+        normalizedQuestion: "email email",
+        label: "Email",
+        questionType: "contact_info",
+        strategy: "generated",
+        answer: null,
+        confidenceLabel: "low",
+        source: "llm",
+        updatedAt: new Date().toISOString(),
+      })
+      .mockResolvedValueOnce({
+        normalizedQuestion: "phone phone",
+        label: "Phone",
+        questionType: "contact_info",
+        strategy: "generated",
+        answer: null,
+        confidenceLabel: "low",
+        source: "llm",
+        updatedAt: new Date().toISOString(),
+      });
+
+    const { resolveAnswer } = await import("../../src/answers/resolveAnswer.js");
+    const email = await resolveAnswer({
+      question: { label: "Email", placeholder: "Email", inputType: "email" },
+      candidateProfile: profile,
+    });
+    const phone = await resolveAnswer({
+      question: { label: "Phone", placeholder: "Phone", inputType: "phone" },
+      candidateProfile: profile,
+    });
+
+    expect(email.answer).toBe("jane@example.com");
+    expect(phone.answer).toBe("123");
+  });
+
+  it("does not reuse cached cover letter answers because they are page-specific", async () => {
+    readCachedResolvedAnswerMock.mockResolvedValue({
+      normalizedQuestion: "cover letter",
+      label: "Cover Letter",
+      questionType: "cover_letter",
+      strategy: "generated",
+      answer: "Old cached letter",
+      confidenceLabel: "high",
+      source: "llm",
+      updatedAt: new Date().toISOString(),
+    });
+    resolveGeneratedAnswerMock.mockResolvedValue({
+      questionType: "cover_letter",
+      strategy: "generated",
+      answer: "Fresh page-aware cover letter",
+      confidence: 0.68,
+      confidenceLabel: "medium",
+      source: "llm",
+    });
+
+    const { resolveAnswer } = await import("../../src/answers/resolveAnswer.js");
+    const result = await resolveAnswer({
+      question: { label: "Cover Letter", inputType: "textarea" },
+      candidateProfile: profile,
+      pageContext: {
+        title: "Backend Engineer Job application",
+        text: "Node.js, TypeScript, AWS, MongoDB, RESTful API",
+        sourceUrl: "https://tally.so/r/31yWVM",
+      },
+    });
+
+    expect(result.answer).toBe("Fresh page-aware cover letter");
+    expect(resolveGeneratedAnswerMock).toHaveBeenCalled();
   });
 
   it("returns deterministic linkedin answers", async () => {
@@ -305,6 +406,44 @@ describe("resolveAnswer", () => {
     });
 
     expect(result.strategy).toBe("generated");
+  });
+
+  it("routes cover letter questions to the generated path with page context", async () => {
+    resolveGeneratedAnswerMock.mockResolvedValue({
+      questionType: "cover_letter",
+      strategy: "generated",
+      answer: "I am excited to apply for this backend role.",
+      confidence: 0.68,
+      confidenceLabel: "medium",
+      source: "llm",
+    });
+
+    const { resolveAnswer } = await import("../../src/answers/resolveAnswer.js");
+    const result = await resolveAnswer({
+      question: {
+        label: "Cover Letter",
+        inputType: "textarea",
+      },
+      candidateProfile: profile,
+      pageContext: {
+        title: "Backend Engineer Job application",
+        text: "Required tech stack: Node.js, TypeScript, RESTful API, AWS, MongoDB.",
+        sourceUrl: "https://tally.so/r/31yWVM",
+      },
+    });
+
+    expect(result.strategy).toBe("generated");
+    expect(resolveGeneratedAnswerMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "cover_letter",
+      }),
+      profile,
+      undefined,
+      expect.objectContaining({
+        title: "Backend Engineer Job application",
+        sourceUrl: "https://tally.so/r/31yWVM",
+      }),
+    );
   });
 
   it("returns deterministic answers for salary questions when the currency is configured", async () => {

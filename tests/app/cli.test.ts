@@ -85,4 +85,12 @@ describe("app cli", () => {
       useAiScoreAdjustment: false,
     });
   });
+
+  it("parses external application dry-run commands", () => {
+    expect(parseCliArgs(["external-apply-dry-run", "https://tally.so/r/31yWVM"])).toEqual({
+      mode: "external-apply-dry-run",
+      url: "https://tally.so/r/31yWVM",
+      resumePath: expect.any(String),
+    });
+  });
 });

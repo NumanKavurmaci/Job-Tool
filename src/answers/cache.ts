@@ -27,6 +27,15 @@ export interface AnswerCacheFile {
   answers: Record<string, CachedResolvedAnswer>;
 }
 
+export function isDynamicAnswerQuestionType(questionType: string): boolean {
+  return (
+    questionType === "cover_letter"
+    || questionType === "motivation_short_text"
+    || questionType === "general_short_text"
+    || questionType === "unknown"
+  );
+}
+
 function deserializeCachedAnswer(entry: {
   normalizedQuestion: string;
   label: string;
@@ -109,6 +118,15 @@ export async function persistResolvedAnswer(input: {
   resolved: ResolvedAnswer;
   store?: AnswerCacheStore;
 }): Promise<void> {
+  if (
+    isDynamicAnswerQuestionType(input.classified.type)
+    || input.resolved.answer == null
+    || input.resolved.confidenceLabel === "low"
+    || input.resolved.confidenceLabel === "manual_review"
+  ) {
+    return;
+  }
+
   try {
     const store = input.store ?? prisma;
 

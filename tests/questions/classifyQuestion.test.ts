@@ -24,6 +24,7 @@ describe("classifyQuestion", () => {
     [{ label: "What is your GPA?", inputType: "text" }, "gpa"],
     [{ label: "How many years of experience do you have with React?", inputType: "text" }, "years_of_experience"],
     [{ label: "Briefly describe your experience with TypeScript.", inputType: "textarea" }, "skill_experience"],
+    [{ label: "Cover Letter", inputType: "textarea" }, "cover_letter"],
     [{ label: "Tell us about a project you are proud of.", inputType: "textarea" }, "general_short_text"],
     [{ label: "When can you start? What is your notice period?", inputType: "text" }, "availability"],
     [{ label: "Why are you interested in this role?", inputType: "textarea" }, "motivation_short_text"],

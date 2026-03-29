@@ -38,4 +38,21 @@ describe("resolveProvider", () => {
       model: "openai/gpt-oss-20b",
     });
   });
+
+  it("resolves the local provider by default when local config exists", async () => {
+    delete process.env.LLM_PROVIDER;
+    process.env.LOCAL_LLM_BASE_URL = "http://127.0.0.1:1234/v1";
+    process.env.LOCAL_LLM_MODEL = "openai/gpt-oss-20b";
+    process.env.OPENAI_API_KEY = "your_key_here";
+    process.env.DATABASE_URL = "file:./dev.db";
+
+    const module = await import("../../src/llm/providers/resolveProvider.js");
+    const provider = module.resolveProvider();
+
+    expect(provider.name).toBe("local");
+    expect(module.getConfiguredProviderInfo()).toEqual({
+      provider: "local",
+      model: "openai/gpt-oss-20b",
+    });
+  });
 });

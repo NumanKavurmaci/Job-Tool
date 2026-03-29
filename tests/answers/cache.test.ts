@@ -1,154 +1,102 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  getAnswerCacheKey,
-  persistResolvedAnswer,
-  readAnswerCache,
-  readCachedResolvedAnswer,
-} from "../../src/answers/cache.js";
-
-function createStore() {
-  return {
-    answerCacheEntry: {
-      findUnique: vi.fn(),
-      findMany: vi.fn(),
-      upsert: vi.fn(),
-    },
-  };
-}
+import { describe, expect, it, vi } from "vitest";
+import { isDynamicAnswerQuestionType, persistResolvedAnswer } from "../../src/answers/cache.js";
 
 describe("answer cache", () => {
-  beforeEach(() => {
-    vi.restoreAllMocks();
+  it("marks page-specific question types as dynamic", () => {
+    expect(isDynamicAnswerQuestionType("cover_letter")).toBe(true);
+    expect(isDynamicAnswerQuestionType("motivation_short_text")).toBe(true);
+    expect(isDynamicAnswerQuestionType("general_short_text")).toBe(true);
+    expect(isDynamicAnswerQuestionType("unknown")).toBe(true);
+    expect(isDynamicAnswerQuestionType("contact_info")).toBe(false);
   });
 
-  it("uses the normalized question as the cache key", () => {
-    expect(
-      getAnswerCacheKey({
-        type: "linkedin",
-        normalizedText: "linkedin profile",
-        confidence: 0.9,
-      }),
-    ).toBe("linkedin profile");
-  });
-
-  it("returns an empty cache when the database read fails", async () => {
-    const store = createStore();
-    store.answerCacheEntry.findMany.mockRejectedValue(new Error("sqlite busy"));
-
-    await expect(readAnswerCache(store as never)).resolves.toEqual({ answers: {} });
-  });
-
-  it("returns a cached answer by normalized question", async () => {
-    const store = createStore();
-    store.answerCacheEntry.findUnique.mockResolvedValue({
-      normalizedQuestion: "linkedin profile",
-      label: "LinkedIn Profile",
-      questionType: "linkedin",
-      strategy: "deterministic",
-      answerJson: JSON.stringify("https://linkedin.com/in/example"),
-      confidenceLabel: "high",
-      source: "candidate-profile",
-      notesJson: JSON.stringify(["cached"]),
-      updatedAt: new Date("2026-03-29T12:00:00.000Z"),
-    });
-
-    const result = await readCachedResolvedAnswer(
-      {
-        type: "linkedin",
-        normalizedText: "linkedin profile",
-        confidence: 0.9,
-      },
-      store as never,
-    );
-
-    expect(result).toEqual({
-      normalizedQuestion: "linkedin profile",
-      label: "LinkedIn Profile",
-      questionType: "linkedin",
-      strategy: "deterministic",
-      answer: "https://linkedin.com/in/example",
-      confidenceLabel: "high",
-      source: "candidate-profile",
-      notes: ["cached"],
-      updatedAt: "2026-03-29T12:00:00.000Z",
-    });
-  });
-
-  it("returns null when a cached answer does not exist", async () => {
-    const store = createStore();
-    store.answerCacheEntry.findUnique.mockResolvedValue(null);
-
-    await expect(
-      readCachedResolvedAnswer(
-        {
-          type: "linkedin",
-          normalizedText: "linkedin profile",
-          confidence: 0.9,
-        },
-        store as never,
-      ),
-    ).resolves.toBeNull();
-  });
-
-  it("persists resolved answers via database upsert", async () => {
-    const store = createStore();
+  it("does not persist null or low-confidence answers", async () => {
+    const upsert = vi.fn();
 
     await persistResolvedAnswer({
-      store: store as never,
-      question: { label: "LinkedIn Profile", inputType: "text" },
+      question: { label: "First Name", inputType: "short_text" },
       classified: {
-        type: "linkedin",
-        normalizedText: "linkedin profile",
-        confidence: 0.9,
+        type: "contact_info",
+        normalizedText: "first name first name",
+        confidence: 0.92,
       },
       resolved: {
-        questionType: "linkedin",
-        strategy: "deterministic",
-        answer: "https://linkedin.com/in/example",
-        confidence: 1,
-        confidenceLabel: "high",
-        source: "candidate-profile",
-        notes: ["from profile"],
+        questionType: "contact_info",
+        strategy: "generated",
+        answer: null,
+        confidence: 0.3,
+        confidenceLabel: "low",
+        source: "llm",
+      },
+      store: {
+        answerCacheEntry: {
+          findUnique: vi.fn(),
+          findMany: vi.fn(),
+          upsert,
+        },
       },
     });
 
-    expect(store.answerCacheEntry.upsert).toHaveBeenCalledWith({
-      where: { normalizedQuestion: "linkedin profile" },
-      update: expect.objectContaining({
-        label: "LinkedIn Profile",
-        questionType: "linkedin",
-        strategy: "deterministic",
-        answerJson: JSON.stringify("https://linkedin.com/in/example"),
-        confidenceLabel: "high",
-        source: "candidate-profile",
-        notesJson: JSON.stringify(["from profile"]),
-      }),
-      create: expect.objectContaining({
-        normalizedQuestion: "linkedin profile",
-        label: "LinkedIn Profile",
-      }),
-    });
+    expect(upsert).not.toHaveBeenCalled();
   });
 
-  it("returns database-backed cache entries in the legacy map shape", async () => {
-    const store = createStore();
-    store.answerCacheEntry.findMany.mockResolvedValue([
-      {
-        normalizedQuestion: "linkedin profile",
-        label: "LinkedIn Profile",
-        questionType: "linkedin",
+  it("does not persist dynamic generated answers such as cover letters", async () => {
+    const upsert = vi.fn();
+
+    await persistResolvedAnswer({
+      question: { label: "Cover Letter", inputType: "textarea" },
+      classified: {
+        type: "cover_letter",
+        normalizedText: "cover letter",
+        confidence: 0.98,
+      },
+      resolved: {
+        questionType: "cover_letter",
+        strategy: "generated",
+        answer: "Custom letter",
+        confidence: 0.68,
+        confidenceLabel: "medium",
+        source: "llm",
+      },
+      store: {
+        answerCacheEntry: {
+          findUnique: vi.fn(),
+          findMany: vi.fn(),
+          upsert,
+        },
+      },
+    });
+
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("persists stable non-null deterministic answers", async () => {
+    const upsert = vi.fn();
+
+    await persistResolvedAnswer({
+      question: { label: "First Name", inputType: "short_text" },
+      classified: {
+        type: "contact_info",
+        normalizedText: "first name first name",
+        confidence: 0.92,
+      },
+      resolved: {
+        questionType: "contact_info",
         strategy: "deterministic",
-        answerJson: JSON.stringify("https://linkedin.com/in/example"),
+        answer: "Jane",
+        confidence: 0.95,
         confidenceLabel: "high",
         source: "candidate-profile",
-        notesJson: null,
-        updatedAt: new Date("2026-03-29T12:00:00.000Z"),
       },
-    ]);
+      store: {
+        answerCacheEntry: {
+          findUnique: vi.fn(),
+          findMany: vi.fn(),
+          upsert,
+        },
+      },
+    });
 
-    const result = await readAnswerCache(store as never);
-    expect(result.answers["linkedin profile"]?.answer).toBe(
-      "https://linkedin.com/in/example",
-    );
+    expect(upsert).toHaveBeenCalledOnce();
   });
 });

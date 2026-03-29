@@ -27,7 +27,29 @@ function findDefaultResumePath(): string | undefined {
   const candidates = existsSync(userDir)
     ? readdirSync(userDir)
         .filter((entry) => /\.(pdf|docx|md|txt)$/i.test(entry))
-        .sort()
+        .sort((left, right) => {
+          const score = (entry: string) => {
+            const lower = entry.toLowerCase();
+            let value = 0;
+            if (/\.(pdf)$/i.test(entry)) {
+              value += 100;
+            } else if (/\.(docx)$/i.test(entry)) {
+              value += 80;
+            } else if (/\.(txt)$/i.test(entry)) {
+              value += 20;
+            } else if (/\.(md)$/i.test(entry)) {
+              value += 10;
+            }
+
+            if (/resume|cv/.test(lower)) {
+              value += 50;
+            }
+
+            return value;
+          };
+
+          return score(right) - score(left) || left.localeCompare(right);
+        })
         .map((entry) => path.join("user", entry))
     : [];
 

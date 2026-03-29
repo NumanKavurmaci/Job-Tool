@@ -3,6 +3,7 @@ import { getErrorMessage, serializeError } from "../utils/errors.js";
 import { formatBatchTerminalSummary } from "../utils/runReports.js";
 import { parseCliArgs } from "./cli.js";
 import { appDeps, type AppDeps } from "./deps.js";
+import { runExternalApplyDryRunFlow } from "./flows/externalApplyFlows.js";
 import { runEasyApplyBatchFlow, runEasyApplyDryRunFlow, runEasyApplyFlow } from "./flows/easyApplyFlows.js";
 import { runJobFlow } from "./flows/jobFlow.js";
 import { runAnswerQuestionsFlow, runBuildProfileFlow } from "./flows/profileFlows.js";
@@ -70,6 +71,8 @@ export async function main(cliArgs = process.argv.slice(2), deps: AppDeps = appD
     result = await runEasyApplyBatchFlow(args, deps);
   } else if (args.mode === "easy-apply-dry-run") {
     result = await runEasyApplyDryRunFlow(args, deps);
+  } else if (args.mode === "external-apply-dry-run") {
+    result = await runExternalApplyDryRunFlow(args, deps);
   } else {
     result = await runJobFlow(args.mode, args.url, deps, {
       useAiScoreAdjustment: args.useAiScoreAdjustment,
