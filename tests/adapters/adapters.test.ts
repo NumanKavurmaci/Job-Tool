@@ -345,6 +345,37 @@ describe("LinkedInAdapter", () => {
     expect(result.companyLinkedinUrl).toBeNull();
   });
 
+  it("treats linkedin feed redirects as authenticated when there is no sign-in wall", async () => {
+    vi.doMock("../../src/config/env.js", () => ({
+      env: {
+        LINKEDIN_USERNAME: "user@example.com",
+        LINKEDIN_PASSWORD: "secret",
+        LINKEDIN_MANUAL_AUTH_WINDOW_MS: 10_000,
+      },
+    }));
+
+    const { LinkedInAdapter } = await import("../../src/adapters/LinkedInAdapter.js");
+    const jobUrl = "https://www.linkedin.com/jobs/view/1234567890/";
+    const page = createMockPage({
+      currentUrl: jobUrl,
+      routes: {
+        [jobUrl]: {
+          currentUrl: "https://www.linkedin.com/feed/",
+          title: "Feed | LinkedIn",
+          selectors: {
+            body: { text: "Welcome back to LinkedIn Feed" },
+          },
+        },
+      },
+    });
+
+    await expect(new LinkedInAdapter().extract(page as never, jobUrl)).resolves.toMatchObject({
+      platform: "linkedin",
+      currentUrl: "https://www.linkedin.com/feed/",
+      applicationType: "unknown",
+    });
+  });
+
   it("fails with a specific challenge error when linkedin redirects to security verification", async () => {
     vi.doMock("../../src/config/env.js", () => ({
       env: {

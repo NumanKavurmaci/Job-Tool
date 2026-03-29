@@ -525,6 +525,36 @@ async function hasAnyLocator(page: Page, selectors: string[]): Promise<boolean> 
 
 type LinkedInAuthState = "authenticated" | "login" | "challenge";
 
+function isLikelyAuthenticatedLinkedInRoute(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (!/linkedin\.com$/i.test(parsed.hostname) && !/\.linkedin\.com$/i.test(parsed.hostname)) {
+      return false;
+    }
+
+    const path = parsed.pathname.toLowerCase();
+    if (
+      path.startsWith("/login") ||
+      path.startsWith("/signup") ||
+      path.startsWith("/checkpoint") ||
+      path.startsWith("/uas/login")
+    ) {
+      return false;
+    }
+
+    return (
+      path.startsWith("/feed") ||
+      path.startsWith("/jobs") ||
+      path.startsWith("/mynetwork") ||
+      path.startsWith("/messaging") ||
+      path.startsWith("/notifications") ||
+      path.startsWith("/in/")
+    );
+  } catch {
+    return false;
+  }
+}
+
 async function getLinkedInAuthState(page: Page): Promise<LinkedInAuthState> {
   if (await hasAnyLocator(page, LINKEDIN_SIGNED_IN_SELECTORS)) {
     return "authenticated";
@@ -543,6 +573,10 @@ async function getLinkedInAuthState(page: Page): Promise<LinkedInAuthState> {
 
   if (await isLinkedInSignInWall(page)) {
     return "login";
+  }
+
+  if (isLikelyAuthenticatedLinkedInRoute(currentUrl)) {
+    return "authenticated";
   }
 
   return "authenticated";
