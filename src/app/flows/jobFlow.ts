@@ -1,4 +1,5 @@
 import { AppError, serializeError } from "../../utils/errors.js";
+import { persistJobAnalysisRecord } from "../../utils/jobPersistence.js";
 import { LINKEDIN_BROWSER_SESSION_OPTIONS, PARSE_VERSION } from "../constants.js";
 import type { AppDeps } from "../deps.js";
 import { persistJobHistory, persistRunArtifact, persistSystemEvent } from "../observability.js";
@@ -69,40 +70,21 @@ export async function runJobFlow(
   let saved;
   let savedDecision;
   try {
-    saved = await deps.prisma.jobPosting.upsert({
-      where: { url },
-      update: {
-        rawText: extracted.rawText,
-        title: parsed.title ?? extracted.title,
-        company: parsed.company ?? extracted.company,
-        location: parsed.location ?? extracted.location,
-        platform: parsed.platform ?? extracted.platform,
-        parsedJson: JSON.stringify(parsed),
-        normalizedJson: JSON.stringify(normalized),
-        parseVersion: PARSE_VERSION,
-      },
-      create: {
-        url,
-        rawText: extracted.rawText,
-        title: parsed.title ?? extracted.title,
-        company: parsed.company ?? extracted.company,
-        location: parsed.location ?? extracted.location,
-        platform: parsed.platform ?? extracted.platform,
-        parsedJson: JSON.stringify(parsed),
-        normalizedJson: JSON.stringify(normalized),
-        parseVersion: PARSE_VERSION,
-      },
+    const persisted = await persistJobAnalysisRecord({
+      prisma: deps.prisma as never,
+      logger: deps.logger,
+      url,
+      extracted,
+      parsed,
+      normalized,
+      score: score.totalScore,
+      finalDecision,
+      policyAllowed: policy.allowed,
+      reasons: finalReasons,
+      parseVersion: PARSE_VERSION,
     });
-
-    savedDecision = await deps.prisma.applicationDecision.create({
-      data: {
-        jobPostingId: saved.id,
-        score: score.totalScore,
-        decision: finalDecision,
-        policyAllowed: policy.allowed,
-        reasons: JSON.stringify(finalReasons),
-      },
-    });
+    saved = persisted.jobPosting;
+    savedDecision = persisted.applicationDecision;
   } catch (error) {
     await persistSystemEvent(
       {

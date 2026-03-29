@@ -69,6 +69,7 @@ export class LeverAdapter implements JobAdapter {
       rawText: await extractBodyText(page),
       title,
       company,
+      companyLogoUrl: null,
       location,
       platform: this.name,
       applicationType: "external",

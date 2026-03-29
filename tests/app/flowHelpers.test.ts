@@ -10,6 +10,18 @@ function createDeps() {
     loadCandidateMasterProfile: vi.fn(),
     resolveAnswer: vi.fn(),
     prisma: {
+      firm: {
+        upsert: vi.fn().mockResolvedValue({ id: "firm_1", name: "Acme" }),
+        update: vi.fn().mockResolvedValue({ id: "firm_1", name: "Acme" }),
+      },
+      jobPosting: {
+        upsert: vi.fn().mockResolvedValue({ id: "job_1", company: "Acme" }),
+        count: vi.fn().mockResolvedValue(0),
+      },
+      applicationDecision: {
+        create: vi.fn().mockResolvedValue({ id: "decision_1" }),
+        findMany: vi.fn().mockResolvedValue([]),
+      },
       jobReviewHistory: {
         findFirst: vi.fn(),
         create: vi.fn().mockResolvedValue({}),
@@ -164,7 +176,14 @@ describe("app flow helpers", () => {
   it("evaluates a job on the provided evaluation page and persists APPLY history", async () => {
     const deps = createDeps();
     deps.prisma.jobReviewHistory.findFirst.mockResolvedValue(null);
-    deps.extractJobText.mockResolvedValue({ rawText: "raw" });
+    deps.extractJobText.mockResolvedValue({
+      rawText: "raw",
+      title: "Job",
+      company: "Acme",
+      companyLogoUrl: "https://cdn.example.com/acme.png",
+      location: "Remote",
+      platform: "linkedin",
+    });
     deps.formatJobForLLM.mockReturnValue("prompt");
     deps.parseJob.mockResolvedValue({ parsed: { title: "Job" } });
     deps.normalizeParsedJob.mockReturnValue({ platform: "linkedin" });
@@ -192,6 +211,7 @@ describe("app flow helpers", () => {
     expect(deps.extractJobText).toHaveBeenCalledWith(evaluationPage, "https://example.com/job");
     expect(deps.prisma.jobReviewHistory.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
+        jobPostingId: "job_1",
         jobUrl: "https://example.com/job",
         source: "easy-apply-batch",
         status: "EVALUATED",
@@ -207,7 +227,14 @@ describe("app flow helpers", () => {
   it("uses withPage when no evaluation page is provided and returns a threshold skip", async () => {
     const deps = createDeps();
     deps.prisma.jobReviewHistory.findFirst.mockResolvedValue(null);
-    deps.extractJobText.mockResolvedValue({ rawText: "raw" });
+    deps.extractJobText.mockResolvedValue({
+      rawText: "raw",
+      title: "Job",
+      company: "Acme",
+      companyLogoUrl: null,
+      location: "Remote",
+      platform: "linkedin",
+    });
     deps.formatJobForLLM.mockReturnValue("prompt");
     deps.parseJob.mockResolvedValue({ parsed: { title: "Job" } });
     deps.normalizeParsedJob.mockReturnValue({ platform: "linkedin" });
@@ -238,7 +265,14 @@ describe("app flow helpers", () => {
   it("returns a policy skip with joined reasons", async () => {
     const deps = createDeps();
     deps.prisma.jobReviewHistory.findFirst.mockResolvedValue(null);
-    deps.extractJobText.mockResolvedValue({ rawText: "raw" });
+    deps.extractJobText.mockResolvedValue({
+      rawText: "raw",
+      title: "Job",
+      company: "Acme",
+      companyLogoUrl: null,
+      location: "Remote",
+      platform: "linkedin",
+    });
     deps.formatJobForLLM.mockReturnValue("prompt");
     deps.parseJob.mockResolvedValue({ parsed: { title: "Job" } });
     deps.normalizeParsedJob.mockReturnValue({ platform: "linkedin" });
@@ -270,7 +304,14 @@ describe("app flow helpers", () => {
   it("persists history without a platform when normalization did not infer one", async () => {
     const deps = createDeps();
     deps.prisma.jobReviewHistory.findFirst.mockResolvedValue(null);
-    deps.extractJobText.mockResolvedValue({ rawText: "raw" });
+    deps.extractJobText.mockResolvedValue({
+      rawText: "raw",
+      title: "Job",
+      company: "Acme",
+      companyLogoUrl: null,
+      location: "Remote",
+      platform: "linkedin",
+    });
     deps.formatJobForLLM.mockReturnValue("prompt");
     deps.parseJob.mockResolvedValue({ parsed: { title: "Job" } });
     deps.normalizeParsedJob.mockReturnValue({});

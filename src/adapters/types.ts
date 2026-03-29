@@ -4,6 +4,7 @@ export interface ExtractedJobContent {
   rawText: string;
   title: string | null;
   company: string | null;
+  companyLogoUrl: string | null;
   location: string | null;
   platform: string;
   applicationType: "easy_apply" | "external" | "unknown";

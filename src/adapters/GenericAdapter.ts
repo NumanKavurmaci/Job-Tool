@@ -75,6 +75,7 @@ export class GenericAdapter implements JobAdapter {
       rawText: await extractBodyText(page),
       title,
       company,
+      companyLogoUrl: null,
       location,
       platform: this.name,
       applicationType: "unknown",

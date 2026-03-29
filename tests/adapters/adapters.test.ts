@@ -3,6 +3,7 @@ import { GenericAdapter } from "../../src/adapters/GenericAdapter.js";
 import { GreenhouseAdapter } from "../../src/adapters/GreenhouseAdapter.js";
 import { LeverAdapter } from "../../src/adapters/LeverAdapter.js";
 import {
+  linkedInCompanyFallbackFixture,
   linkedInCrossingHurdlesFixture,
   linkedInExternalApplyFixture,
 } from "../fixtures/linkedin.js";
@@ -37,6 +38,7 @@ describe("GenericAdapter", () => {
       rawText: "Full raw body",
       title: "Software Engineer",
       company: "Acme",
+      companyLogoUrl: null,
       location: "Remote",
       platform: "generic",
       applicationType: "unknown",
@@ -96,6 +98,7 @@ describe("GenericAdapter", () => {
     expect(result.applyUrl).toBe("https://www.linkedin.com/jobs/view/1234567890/");
     expect(result.title).toBe("Senior Backend Engineer");
     expect(result.company).toBe("LinkedIn Company");
+    expect(result.companyLogoUrl).toBeNull();
     expect(result.location).toBe("Istanbul, Turkey");
     expect(result.descriptionText).toContain("About the job");
     expect(result.rawText).toContain("Qualifications");
@@ -129,6 +132,7 @@ describe("LinkedInAdapter", () => {
     expect(result.platform).toBe("linkedin");
     expect(result.title).toBe("Senior Backend Engineer");
     expect(result.company).toBe("Acme");
+    expect(result.companyLogoUrl).toBeNull();
     expect(result.location).toBe("Remote");
     expect(result.applicationType).toBe("easy_apply");
     expect(result.descriptionText).toBe("Build product features.");
@@ -201,6 +205,7 @@ describe("LinkedInAdapter", () => {
     const result = await new LinkedInAdapter().extract(page as never, jobUrl);
     expect(result.platform).toBe("linkedin");
     expect(result.title).toBe("Backend Engineer");
+    expect(result.companyLogoUrl).toBeNull();
     expect(result.applicationType).toBe("easy_apply");
   });
 
@@ -268,6 +273,7 @@ describe("LinkedInAdapter", () => {
     const result = await new LinkedInAdapter().extract(page as never, jobUrl);
     expect(result.platform).toBe("linkedin");
     expect(result.title).toBe("Backend Engineer");
+    expect(result.companyLogoUrl).toBeNull();
   });
 
   it("fails clearly when linkedin still requires authentication and no credentials exist", async () => {
@@ -328,6 +334,7 @@ describe("LinkedInAdapter", () => {
 
     expect(result.platform).toBe("linkedin");
     expect(result.title).toBe("Backend Engineer");
+    expect(result.companyLogoUrl).toBeNull();
   });
 
   it("fails with a specific challenge error when linkedin redirects to security verification", async () => {
@@ -567,9 +574,12 @@ describe("LinkedInAdapter", () => {
         "p[data-test-id='job-title']": { text: linkedInCrossingHurdlesFixture.titleText },
         "[data-testid='expandable-text-box']": { text: linkedInCrossingHurdlesFixture.aboutCollapsed },
         "a[href*='linkedin.com/jobs/view'] span": { text: linkedInCrossingHurdlesFixture.badges },
+        "a[href*='linkedin.com/company/'] img[alt*='Company logo']": {
+          attributes: { src: linkedInCrossingHurdlesFixture.companyLogoUrl },
+        },
         body: { text: linkedInCrossingHurdlesFixture.noisyBody },
         "[data-testid='about-company-module']": {
-          text: "Crossing Hurdles\nStaffing and Recruiting\n11-50 employees",
+          text: linkedInCrossingHurdlesFixture.aboutCompanyText,
         },
       },
       onClick(selector) {
@@ -584,6 +594,7 @@ describe("LinkedInAdapter", () => {
     expect(expanded).toBe(true);
     expect(result.title).toBe("Software Engineer (Fullstack)");
     expect(result.company).toBe("Crossing Hurdles");
+    expect(result.companyLogoUrl).toBe(linkedInCrossingHurdlesFixture.companyLogoUrl);
     expect(result.location).toBe("Remote");
     expect(result.applicationType).toBe("unknown");
     expect(result.descriptionText).toContain("Fullstack Developer (Python/React)");
@@ -593,6 +604,42 @@ describe("LinkedInAdapter", () => {
     expect(result.rawText).toContain("Contract");
     expect(result.rawText).toContain("About Company:");
     expect(result.rawText).toContain("Staffing and Recruiting");
+    expect(result.rawText).toContain("Company Logo URL:");
+  });
+
+  it("falls back to about-company and company logo selectors when top-card company is missing", async () => {
+    const { LinkedInAdapter } = await import("../../src/adapters/LinkedInAdapter.js");
+    const page = createMockPage({
+      currentUrl: "https://www.linkedin.com/jobs/view/4378935392/",
+      title: linkedInCompanyFallbackFixture.pageTitle,
+      selectors: {
+        "p[data-test-id='job-title']": { text: linkedInCompanyFallbackFixture.titleText },
+        ".job-details-jobs-unified-top-card__bullet": { text: "Remote" },
+        "a[href*='linkedin.com/company/'][componentkey] p": {
+          text: linkedInCompanyFallbackFixture.companyName,
+        },
+        "a[href*='linkedin.com/company/'] img[alt*='Company logo']": {
+          attributes: { src: linkedInCompanyFallbackFixture.companyLogoUrl },
+        },
+        "[data-testid='about-company-module']": {
+          text: linkedInCompanyFallbackFixture.aboutCompanyText,
+        },
+        "[data-testid='expandable-text-box']": { text: "Build React commerce experiences." },
+        body: {
+          text: [
+            linkedInCompanyFallbackFixture.titleText,
+            "Remote",
+            linkedInCompanyFallbackFixture.companyName,
+          ].join("\n"),
+        },
+      },
+    });
+
+    const result = await new LinkedInAdapter().extract(page as never, page.url());
+
+    expect(result.company).toBe("Ticimax");
+    expect(result.companyLogoUrl).toBe(linkedInCompanyFallbackFixture.companyLogoUrl);
+    expect(result.rawText).toContain("Company: Ticimax");
   });
 
   it("marks linkedin company-site apply buttons as external while keeping structured sections", async () => {
@@ -617,6 +664,7 @@ describe("LinkedInAdapter", () => {
 
     expect(result.title).toBe("Senior Fullstack Developer");
     expect(result.company).toBe("Proxify");
+    expect(result.companyLogoUrl).toBeNull();
     expect(result.applicationType).toBe("external");
     expect(result.descriptionText).toContain("Build remote-first fullstack applications.");
     expect(result.requirementsText).toContain("Strong TypeScript experience.");
@@ -650,6 +698,7 @@ describe("GreenhouseAdapter", () => {
     expect(result.platform).toBe("greenhouse");
     expect(result.title).toBe("Staff Engineer");
     expect(result.company).toBe("Green Corp");
+    expect(result.companyLogoUrl).toBeNull();
     expect(result.location).toBe("Berlin");
     expect(result.applicationType).toBe("external");
     expect(result.descriptionText).toBe("Greenhouse description");
@@ -684,6 +733,7 @@ describe("LeverAdapter", () => {
     expect(result.platform).toBe("lever");
     expect(result.title).toBe("Senior Product Designer");
     expect(result.company).toBe("Lever Labs");
+    expect(result.companyLogoUrl).toBeNull();
     expect(result.location).toBe("London");
     expect(result.applicationType).toBe("external");
     expect(result.applyUrl).toContain("/apply");

@@ -61,6 +61,18 @@ const LINKEDIN_COMPANY_SELECTORS = [
   ".jobs-unified-top-card__company-name",
   ".topcard__org-name-link",
   "[data-test-id='job-company-name']",
+  "a[href*='linkedin.com/company/'][componentkey] p",
+  "a[href*='linkedin.com/company/'] p",
+];
+const LINKEDIN_COMPANY_ARIA_SELECTORS = [
+  "a[href*='linkedin.com/company/'][aria-label*='Company']",
+  "a[href*='linkedin.com/company/'] [aria-label*='Company']",
+  "[aria-label^='Company,']",
+];
+const LINKEDIN_COMPANY_LOGO_SELECTORS = [
+  "a[href*='linkedin.com/company/'] img[alt*='Company logo']",
+  "img[alt*='Company logo for']",
+  "a[href*='linkedin.com/company/'] img",
 ];
 const LINKEDIN_LOCATION_SELECTORS = [
   ".job-details-jobs-unified-top-card__bullet",
@@ -149,6 +161,50 @@ function cleanLinkedInTitle(
   });
 
   return filtered[0] ?? normalized;
+}
+
+function parseLinkedInCompanyAriaLabel(value: string | null | undefined): string | null {
+  const normalized = optionalText(value);
+  if (!normalized) {
+    return null;
+  }
+
+  const match = normalized.match(/^Company,\s*(.+?)[\.\s]*$/i);
+  return optionalText(match?.[1] ?? normalized);
+}
+
+function parseLinkedInAboutCompanyName(text: string | null | undefined): string | null {
+  const normalized = optionalText(text);
+  if (!normalized) {
+    return null;
+  }
+
+  const lines = normalized
+    .split("\n")
+    .map((line) => optionalText(line))
+    .filter((line): line is string => Boolean(line));
+
+  for (const line of lines) {
+    if (/^about the company$/i.test(line)) {
+      continue;
+    }
+
+    if (
+      /\bfollowers\b/i.test(line) ||
+      /\bemployees\b/i.test(line) ||
+      /\bon linkedin\b/i.test(line) ||
+      /^following$/i.test(line) ||
+      /^i['’]m interested$/i.test(line)
+    ) {
+      continue;
+    }
+
+    if (/^[A-Z][\w&.,'()\-\/ ]{1,100}$/.test(line)) {
+      return line;
+    }
+  }
+
+  return null;
 }
 
 function uniqueText(values: Array<string | null | undefined>): string[] {
@@ -473,10 +529,24 @@ export class LinkedInAdapter implements JobAdapter {
     const pageBodyText = await page.locator("body").innerText().catch(() => "");
     const titleParts = parseLinkedInPageTitle(await page.title().catch(() => null));
     await expandLinkedInAboutSection(page);
+    const aboutCompanyText = await extractSectionText(page, LINKEDIN_ABOUT_COMPANY_SELECTORS);
 
     const rawTitle = (await getTextBySelectors(page, LINKEDIN_TITLE_SELECTORS)) ?? titleParts.title;
+    const companyAriaLabel = await getAttributeBySelectors(
+      page,
+      LINKEDIN_COMPANY_ARIA_SELECTORS,
+      "aria-label",
+    );
     const company =
-      (await getTextBySelectors(page, LINKEDIN_COMPANY_SELECTORS)) ?? titleParts.company;
+      (await getTextBySelectors(page, LINKEDIN_COMPANY_SELECTORS)) ??
+      parseLinkedInCompanyAriaLabel(companyAriaLabel) ??
+      parseLinkedInAboutCompanyName(aboutCompanyText) ??
+      titleParts.company;
+    const companyLogoUrl = await getAttributeBySelectors(
+      page,
+      LINKEDIN_COMPANY_LOGO_SELECTORS,
+      "src",
+    );
 
     const badgeTexts = flattenTextLines(await getTextsBySelectors(page, LINKEDIN_BADGE_SELECTORS));
     const inferredBadgeLocation =
@@ -486,7 +556,6 @@ export class LinkedInAdapter implements JobAdapter {
     const location =
       (await getTextBySelectors(page, LINKEDIN_LOCATION_SELECTORS)) ?? inferredBadgeLocation ?? null;
     const title = cleanLinkedInTitle(rawTitle, location) ?? titleParts.title;
-    const aboutCompanyText = await extractSectionText(page, LINKEDIN_ABOUT_COMPANY_SELECTORS);
 
     const applyUrl =
       (await getAttributeBySelectors(
@@ -547,6 +616,7 @@ export class LinkedInAdapter implements JobAdapter {
       [
         title ? `Title: ${title}` : null,
         company ? `Company: ${company}` : null,
+        companyLogoUrl ? `Company Logo URL: ${companyLogoUrl}` : null,
         location ? `Location: ${location}` : null,
         `Application Type: ${applicationType}`,
         badgeTexts.length > 0 ? `Badges:\n${badgeTexts.join("\n")}` : null,
@@ -563,6 +633,7 @@ export class LinkedInAdapter implements JobAdapter {
       rawText: focusedRawText,
       title,
       company,
+      companyLogoUrl,
       location,
       platform: this.name,
       applicationType,

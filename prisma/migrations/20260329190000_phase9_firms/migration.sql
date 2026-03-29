@@ -1,0 +1,15 @@
+CREATE TABLE "Firm" (
+  "id" TEXT NOT NULL PRIMARY KEY,
+  "name" TEXT NOT NULL,
+  "logoUrl" TEXT,
+  "totalReviewedJobs" INTEGER NOT NULL DEFAULT 0,
+  "appliedJobs" INTEGER NOT NULL DEFAULT 0,
+  "skippedJobs" INTEGER NOT NULL DEFAULT 0,
+  "decisionIdsJson" TEXT NOT NULL DEFAULT '[]',
+  "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" DATETIME NOT NULL
+);
+
+CREATE UNIQUE INDEX "Firm_name_key" ON "Firm"("name");
+
+ALTER TABLE "JobPosting" ADD COLUMN "firmId" TEXT REFERENCES "Firm"("id") ON DELETE SET NULL ON UPDATE CASCADE;

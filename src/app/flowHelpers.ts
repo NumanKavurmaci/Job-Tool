@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import type { CandidateProfile } from "../candidate/types.js";
 import type { InputQuestion } from "../questions/types.js";
 import { buildDuplicateReviewReason, getLatestJobReview } from "../utils/jobHistory.js";
+import { persistJobAnalysisRecord } from "../utils/jobPersistence.js";
 import { LINKEDIN_EVALUATION_SESSION_OPTIONS, PARSE_VERSION } from "./constants.js";
 import type { AppDeps } from "./deps.js";
 import { persistJobHistory, persistSystemEvent } from "./observability.js";
@@ -113,8 +114,23 @@ export function createBatchJobEvaluator(args: {
       "LinkedIn Easy Apply job evaluated",
     );
 
+    const persisted = await persistJobAnalysisRecord({
+      prisma: deps.prisma as never,
+      logger: deps.logger,
+      url,
+      extracted,
+      parsed: parseResult.parsed,
+      normalized,
+      score: score.totalScore,
+      finalDecision,
+      policyAllowed: policy.allowed,
+      reasons: !policy.allowed ? policy.reasons : [reason],
+      parseVersion: PARSE_VERSION,
+    });
+
     await persistJobHistory(
       {
+        jobPostingId: persisted.jobPosting.id,
         jobUrl: url,
         source: "easy-apply-batch",
         status: finalDecision === "APPLY" ? "EVALUATED" : "SKIPPED",

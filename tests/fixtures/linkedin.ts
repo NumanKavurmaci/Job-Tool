@@ -1,6 +1,8 @@
 export const linkedInCrossingHurdlesFixture = {
   pageTitle: "Software Engineer (Fullstack) | Remote | Crossing Hurdles | LinkedIn",
   titleText: "Software Engineer (Fullstack) | Remote",
+  companyName: "Crossing Hurdles",
+  companyLogoUrl: "https://media.licdn.com/dms/image/v2/D4D0BAQH9p_tARBMP8Q/company-logo_100_100/company-logo_100_100/0/1698926021513/ticimax_logo",
   aboutCollapsed: [
     "Position: Fullstack Developer (Python/React)",
     "Type: Full-time",
@@ -39,6 +41,28 @@ export const linkedInCrossingHurdlesFixture = {
     "About the company",
     "Crossing Hurdles",
     "Staffing and Recruiting",
+  ].join("\n"),
+  aboutCompanyText: [
+    "About the company",
+    "Crossing Hurdles",
+    "Staffing and Recruiting",
+    "11-50 employees",
+  ].join("\n"),
+};
+
+export const linkedInCompanyFallbackFixture = {
+  pageTitle: "Frontend Developer | Remote | Ticimax | LinkedIn",
+  titleText: "Frontend Developer | Remote",
+  companyName: "Ticimax",
+  companyLogoUrl:
+    "https://media.licdn.com/dms/image/v2/D4D0BAQH9p_tARBMP8Q/company-logo_100_100/company-logo_100_100/0/1698926021513/ticimax_logo?e=1776297600&v=beta&t=tSX9eLD5A-mpLG5yY4QjfB-AlmrqN2KegfdlCC_E5x8",
+  aboutCompanyText: [
+    "About the company",
+    "Ticimax",
+    "35,373 followers",
+    "Software Development",
+    "51-200 employees",
+    "266 on LinkedIn",
   ].join("\n"),
 };
 

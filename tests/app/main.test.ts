@@ -35,9 +35,13 @@ async function loadIndexModule(readFileMock?: ReturnType<typeof vi.fn>) {
   const createSystemLogMock = vi.fn();
   const createJobReviewHistoryMock = vi.fn();
   const findFirstJobReviewHistoryMock = vi.fn();
+  const firmUpsertMock = vi.fn().mockResolvedValue({ id: "firm_1", name: "Adapter Company" });
+  const firmUpdateMock = vi.fn().mockResolvedValue({ id: "firm_1", name: "Adapter Company" });
+  const jobPostingCountMock = vi.fn().mockResolvedValue(0);
+  const findDecisionMock = vi.fn().mockResolvedValue([]);
   const writeRunReportMock = vi.fn().mockResolvedValue("artifacts/batch-runs/report.json");
-  const upsertMock = vi.fn();
-  const createDecisionMock = vi.fn();
+  const upsertMock = vi.fn().mockResolvedValue({ id: "job_1", company: "Adapter Company" });
+  const createDecisionMock = vi.fn().mockResolvedValue({ id: "decision_1" });
   const disconnectMock = vi.fn();
   const infoMock = vi.fn();
   const warnMock = vi.fn();
@@ -69,6 +73,10 @@ async function loadIndexModule(readFileMock?: ReturnType<typeof vi.fn>) {
       createSystemLogMock,
       createJobReviewHistoryMock,
       findFirstJobReviewHistoryMock,
+      firmUpsertMock,
+      firmUpdateMock,
+      jobPostingCountMock,
+      findDecisionMock,
       writeRunReportMock,
       upsertMock,
       createDecisionMock,
@@ -98,8 +106,12 @@ async function loadIndexModule(readFileMock?: ReturnType<typeof vi.fn>) {
       createEasyApplyDriver: createEasyApplyDriverMock,
       writeRunReport: writeRunReportMock,
       prisma: {
-        jobPosting: { upsert: upsertMock },
-        applicationDecision: { create: createDecisionMock },
+        firm: {
+          upsert: firmUpsertMock,
+          update: firmUpdateMock,
+        },
+        jobPosting: { upsert: upsertMock, count: jobPostingCountMock },
+        applicationDecision: { create: createDecisionMock, findMany: findDecisionMock },
         candidateProfileSnapshot: { create: createSnapshotMock },
         preparedAnswerSet: { create: createPreparedAnswerSetMock },
         systemLog: { create: createSystemLogMock },
@@ -1413,6 +1425,7 @@ describe("phase 5 index flows", () => {
       rawText: "Raw body",
       title: "Adapter Title",
       company: "Adapter Company",
+      companyLogoUrl: null,
       location: "Adapter Location",
       platform: "greenhouse",
       applyUrl: "https://apply.example.com",
@@ -1468,7 +1481,7 @@ describe("phase 5 index flows", () => {
     });
     mocks.evaluatePolicyMock.mockReturnValue({ allowed: true, reasons: [] });
     mocks.decideJobMock.mockReturnValue({ decision: "APPLY", reason: "Strong fit." });
-    mocks.upsertMock.mockResolvedValue({ id: "job_1" });
+    mocks.upsertMock.mockResolvedValue({ id: "job_1", company: "Adapter Company" });
     mocks.createDecisionMock.mockResolvedValue({ id: "decision_1" });
 
     const result = await module.main(["https://jobs.example.com/1"], deps);
@@ -1478,30 +1491,36 @@ describe("phase 5 index flows", () => {
     expect(result.finalDecision).toBe("APPLY");
     expect(result.reportPath).toBe("artifacts/batch-runs/report.json");
     expect(result.jobPosting.id).toBe("job_1");
-    expect(mocks.upsertMock).toHaveBeenCalledWith({
-      where: { url: "https://jobs.example.com/1" },
-      update: {
-        rawText: "Raw body",
-        title: "Adapter Title",
-        company: "Adapter Company",
-        location: "Adapter Location",
-        platform: "greenhouse",
-        parsedJson: JSON.stringify(parsed),
-        normalizedJson: JSON.stringify(normalized),
-        parseVersion: "phase-5",
-      },
-      create: {
-        url: "https://jobs.example.com/1",
-        rawText: "Raw body",
-        title: "Adapter Title",
-        company: "Adapter Company",
-        location: "Adapter Location",
-        platform: "greenhouse",
-        parsedJson: JSON.stringify(parsed),
-        normalizedJson: JSON.stringify(normalized),
-        parseVersion: "phase-5",
-      },
-    });
+    expect(mocks.upsertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { url: "https://jobs.example.com/1" },
+        update: expect.objectContaining({
+          rawText: "Raw body",
+          title: "Adapter Title",
+          company: "Adapter Company",
+          companyLogoUrl: null,
+          firmId: "firm_1",
+          location: "Adapter Location",
+          platform: "greenhouse",
+          parsedJson: JSON.stringify(parsed),
+          normalizedJson: JSON.stringify(normalized),
+          parseVersion: "phase-5",
+        }),
+        create: expect.objectContaining({
+          url: "https://jobs.example.com/1",
+          rawText: "Raw body",
+          title: "Adapter Title",
+          company: "Adapter Company",
+          companyLogoUrl: null,
+          firmId: "firm_1",
+          location: "Adapter Location",
+          platform: "greenhouse",
+          parsedJson: JSON.stringify(parsed),
+          normalizedJson: JSON.stringify(normalized),
+          parseVersion: "phase-5",
+        }),
+      }),
+    );
     expect(mocks.createDecisionMock).toHaveBeenCalledWith({
       data: {
         jobPostingId: "job_1",

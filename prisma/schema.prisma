@@ -12,18 +12,34 @@ model JobPosting {
   url            String                @unique
   title          String?
   company        String?
+  companyLogoUrl String?
+  firmId         String?
   location       String?
   platform       String?
   rawText        String
   parsedJson     String?
   normalizedJson String?
   parseVersion   String?
+  firm           Firm?                 @relation(fields: [firmId], references: [id], onDelete: SetNull)
   decisions      ApplicationDecision[]
   preparedAnswerSets PreparedAnswerSet[]
   reviewHistory  JobReviewHistory[]
   systemLogs     SystemLog[]
   createdAt      DateTime              @default(now())
   updatedAt      DateTime              @updatedAt
+}
+
+model Firm {
+  id                String       @id @default(cuid())
+  name              String       @unique
+  logoUrl           String?
+  totalReviewedJobs Int          @default(0)
+  appliedJobs       Int          @default(0)
+  skippedJobs       Int          @default(0)
+  decisionIdsJson   String       @default("[]")
+  jobPostings       JobPosting[]
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
 }
 
 enum ApplicationDecisionType {

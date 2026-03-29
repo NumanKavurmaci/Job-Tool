@@ -9,8 +9,12 @@ function createDeps() {
       error: vi.fn(),
     },
     prisma: {
-      jobPosting: { upsert: vi.fn() },
-      applicationDecision: { create: vi.fn() },
+      firm: {
+        upsert: vi.fn().mockResolvedValue({ id: "firm_1", name: "Company" }),
+        update: vi.fn().mockResolvedValue({ id: "firm_1", name: "Company" }),
+      },
+      jobPosting: { upsert: vi.fn(), count: vi.fn().mockResolvedValue(0) },
+      applicationDecision: { create: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
       systemLog: { create: vi.fn().mockResolvedValue({}) },
       jobReviewHistory: { create: vi.fn().mockResolvedValue({}) },
     },
@@ -40,6 +44,7 @@ describe("job flow", () => {
       rawText: "raw body",
       title: "Title",
       company: "Company",
+      companyLogoUrl: "https://cdn.example.com/company.png",
       location: "Istanbul",
       platform: "greenhouse",
     });
@@ -83,6 +88,16 @@ describe("job flow", () => {
         reasons: JSON.stringify(["On-site roles are blocked."]),
       }),
     });
+    expect(deps.prisma.jobPosting.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({
+          companyLogoUrl: "https://cdn.example.com/company.png",
+        }),
+        create: expect.objectContaining({
+          companyLogoUrl: "https://cdn.example.com/company.png",
+        }),
+      }),
+    );
     expect(deps.prisma.systemLog.create).toHaveBeenNthCalledWith(1, {
       data: {
         level: "INFO",
@@ -115,6 +130,7 @@ describe("job flow", () => {
       rawText: "raw body",
       title: "Title",
       company: "Company",
+      companyLogoUrl: null,
       location: "Remote",
       platform: "linkedin",
     });
