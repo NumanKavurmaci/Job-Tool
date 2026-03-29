@@ -1,7 +1,7 @@
 import type { JobPosting } from "@prisma/client";
 import type { CandidateProfile } from "../candidate/types.js";
 import { buildAnswerBank } from "./answerBank.js";
-import { persistResolvedAnswer } from "./cache.js";
+import { persistResolvedAnswer, readCachedResolvedAnswer } from "./cache.js";
 import { classifyQuestion } from "../questions/classifyQuestion.js";
 import { resolveAiFallbackAnswer } from "../questions/strategies/aiFallback.js";
 import { resolveDeterministicAnswer } from "../questions/strategies/deterministic.js";
@@ -35,6 +35,19 @@ export async function resolveAnswer(input: {
   job?: Pick<JobPosting, "title" | "company" | "location"> | null;
 }): Promise<ResolvedAnswer> {
   const classified = classifyQuestion(input.question);
+  const cached = await readCachedResolvedAnswer(classified);
+  if (cached) {
+    return {
+      questionType: cached.questionType as ResolvedAnswer["questionType"],
+      strategy: cached.strategy,
+      answer: cached.answer,
+      confidence: 1,
+      confidenceLabel: cached.confidenceLabel,
+      source: cached.source,
+      ...(cached.notes ? { notes: cached.notes } : {}),
+    };
+  }
+
   const answerBank = buildAnswerBank(input.candidateProfile);
 
   const bankHit = answerBank[classified.type];

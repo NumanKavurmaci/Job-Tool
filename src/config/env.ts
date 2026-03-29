@@ -39,6 +39,10 @@ export function createEnv() {
   const LOCAL_LLM_BASE_URL = optional("LOCAL_LLM_BASE_URL");
   const LOCAL_LLM_MODEL = optional("LOCAL_LLM_MODEL");
   const LOCAL_LLM_TIMEOUT_MS = optionalPositiveInteger("LOCAL_LLM_TIMEOUT_MS", 120_000);
+  const LINKEDIN_MANUAL_AUTH_WINDOW_MS = optionalPositiveInteger(
+    "LINKEDIN_MANUAL_AUTH_WINDOW_MS",
+    14_400_000,
+  );
   const LINKEDIN_USERNAME = optional("LINKEDIN_USERNAME");
   const LINKEDIN_PASSWORD = optional("LINKEDIN_PASSWORD");
   const LINKEDIN_SESSION_STATE_PATH =
@@ -77,6 +81,7 @@ export function createEnv() {
     LOCAL_LLM_BASE_URL,
     LOCAL_LLM_MODEL,
     LOCAL_LLM_TIMEOUT_MS,
+    LINKEDIN_MANUAL_AUTH_WINDOW_MS,
     DATABASE_URL,
       LINKEDIN_USERNAME,
       LINKEDIN_PASSWORD,

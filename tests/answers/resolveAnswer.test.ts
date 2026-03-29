@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const resolveGeneratedAnswerMock = vi.fn();
 const resolveAiFallbackAnswerMock = vi.fn();
 const persistResolvedAnswerMock = vi.fn();
+const readCachedResolvedAnswerMock = vi.fn();
 
 vi.mock("../../src/questions/strategies/generated.js", () => ({
   resolveGeneratedAnswer: resolveGeneratedAnswerMock,
@@ -14,6 +15,7 @@ vi.mock("../../src/questions/strategies/aiFallback.js", () => ({
 
 vi.mock("../../src/answers/cache.js", () => ({
   persistResolvedAnswer: persistResolvedAnswerMock,
+  readCachedResolvedAnswer: readCachedResolvedAnswerMock,
 }));
 
 const profile = {
@@ -77,6 +79,32 @@ describe("resolveAnswer", () => {
     resolveGeneratedAnswerMock.mockReset();
     resolveAiFallbackAnswerMock.mockReset();
     persistResolvedAnswerMock.mockReset();
+    readCachedResolvedAnswerMock.mockReset();
+    readCachedResolvedAnswerMock.mockResolvedValue(null);
+  });
+
+  it("returns a cached database answer before running other strategies", async () => {
+    readCachedResolvedAnswerMock.mockResolvedValue({
+      normalizedQuestion: "linkedin profile",
+      label: "LinkedIn Profile",
+      questionType: "linkedin",
+      strategy: "deterministic",
+      answer: "https://linkedin.com/in/cached",
+      confidenceLabel: "high",
+      source: "candidate-profile",
+      updatedAt: new Date().toISOString(),
+    });
+
+    const { resolveAnswer } = await import("../../src/answers/resolveAnswer.js");
+    const result = await resolveAnswer({
+      question: { label: "LinkedIn Profile", inputType: "text" },
+      candidateProfile: profile,
+    });
+
+    expect(result.answer).toBe("https://linkedin.com/in/cached");
+    expect(resolveGeneratedAnswerMock).not.toHaveBeenCalled();
+    expect(resolveAiFallbackAnswerMock).not.toHaveBeenCalled();
+    expect(persistResolvedAnswerMock).not.toHaveBeenCalled();
   });
 
   it("returns deterministic linkedin answers", async () => {
@@ -311,7 +339,7 @@ describe("resolveAnswer", () => {
     expect(tryResult.answer).toBe("120000-140000 TRY net monthly");
   });
 
-  it("points back to candidate-profile.json when a required salary field is missing", async () => {
+  it("falls back to AI guidance when a required salary field is missing from the user profile", async () => {
     resolveAiFallbackAnswerMock.mockResolvedValue({
       questionType: "salary",
       strategy: "generated",

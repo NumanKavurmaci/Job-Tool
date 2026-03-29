@@ -15,7 +15,6 @@ import {
 } from "./helpers.js";
 
 const LINKEDIN_LOGIN_URL = "https://www.linkedin.com/login";
-const LINKEDIN_MANUAL_AUTH_WINDOW_MS = 120_000;
 const LINKEDIN_USERNAME_SELECTORS = [
   "input[name='session_key']",
   "input[name='username']",
@@ -414,7 +413,7 @@ async function waitForLinkedInAuthResolution(
 async function waitForManualLinkedInIntervention(
   page: Page,
   url: string,
-  timeoutMs = LINKEDIN_MANUAL_AUTH_WINDOW_MS,
+  timeoutMs = env.LINKEDIN_MANUAL_AUTH_WINDOW_MS,
 ): Promise<boolean> {
   logger.info(
     {

@@ -16,6 +16,7 @@ Defined in [prisma/schema.prisma](../prisma/schema.prisma):
 - `ApplicationDecision`: Saved scoring/policy decision for a job.
 - `CandidateProfileSnapshot`: Persisted candidate master profile snapshot.
 - `PreparedAnswerSet`: Persisted prepared question/answer bundle.
+- `AnswerCacheEntry`: Reusable normalized-question answer memory for drivers and answer resolution.
 - `SystemLog`: DB-backed structured system logs.
 - `JobReviewHistory`: Append-only history for viewed/reviewed/evaluated job URLs.
 
@@ -25,3 +26,4 @@ Defined in [prisma/schema.prisma](../prisma/schema.prisma):
 - [prisma/migrations/20260327131500_phase3_scoring_policy/migration.sql](../prisma/migrations/20260327131500_phase3_scoring_policy/migration.sql): Scoring/policy-era schema additions.
 - [prisma/migrations/20260327143000_phase5_candidate_profiles_and_answers/migration.sql](../prisma/migrations/20260327143000_phase5_candidate_profiles_and_answers/migration.sql): Candidate profile and prepared answer persistence additions.
 - [prisma/migrations/20260329110000_phase6_observability_history/migration.sql](../prisma/migrations/20260329110000_phase6_observability_history/migration.sql): DB-backed observability and job review history additions.
+- [prisma/migrations/20260329152000_phase7_answer_cache_db/migration.sql](../prisma/migrations/20260329152000_phase7_answer_cache_db/migration.sql): Database-backed answer cache memory for normalized question reuse.

@@ -2,6 +2,8 @@
 
 Job Tool is a TypeScript project for evaluating jobs, preparing applications, and automating LinkedIn Easy Apply workflows with strong safety checks.
 
+This repository is proprietary and not licensed for public or commercial use; see [PROPRIETARY.md](./PROPRIETARY.md).
+
 It can:
 
 - extract job data from supported platforms
@@ -25,7 +27,7 @@ That lets the system decide whether a role is a fit and prepare safe, structured
 
 - adapter-based job extraction
 - OpenAI and local LM Studio support
-- candidate-profile-based scoring and policy rules
+- user-profile-based scoring and policy rules
 - resume ingestion and candidate master profile building
 - Easy Apply question classification and answer preparation
 - AI fallback for questions that are not resolved deterministically
@@ -113,12 +115,18 @@ The default suite does not require LM Studio or OpenAI access.
 
 - The LinkedIn flow uses saved browser session state by default at `.auth/linkedin-session.json`.
 - If LinkedIn shows a checkpoint or security verification page, the run stops with a specific auth error instead of a vague failure.
+- The manual LinkedIn recovery window is configurable with `LINKEDIN_MANUAL_AUTH_WINDOW_MS` and now defaults to 4 hours.
 - Dry run still stops before the final submit action.
 - `easy-apply-batch` is the real batch-submit CLI path for LinkedIn collection runs.
 
 ## Documentation
 
 Detailed architecture, workflows, LinkedIn auth behavior, provider setup, and troubleshooting are in `PROJECT_DETAILS.md`.
+
+User-local profile data lives under [user/](./user):
+- [user/profile.example.json](./user/profile.example.json) is the tracked generic starter file
+- `user/profile.json` is the local personal override loaded first when present
+- `user/resume.pdf` or another supported resume file can act as the default resume
 
 AI-first file navigation docs are in:
 - [docs/README.md](./docs/README.md)

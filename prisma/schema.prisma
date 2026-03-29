@@ -64,6 +64,22 @@ model PreparedAnswerSet {
   candidateProfile   CandidateProfileSnapshot @relation(fields: [candidateProfileId], references: [id], onDelete: Cascade)
 }
 
+model AnswerCacheEntry {
+  id                 String   @id @default(cuid())
+  normalizedQuestion String   @unique
+  label              String
+  questionType       String
+  strategy           String
+  answerJson         String
+  confidenceLabel    String
+  source             String
+  notesJson          String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([questionType, updatedAt])
+}
+
 enum SystemLogLevel {
   INFO
   WARN

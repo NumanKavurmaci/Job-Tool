@@ -33,6 +33,67 @@ function includesAllowedHybridLocation(
   return null;
 }
 
+function includesRoleKeyword(haystack: string, keywords: string[]): string | null {
+  const normalizedHaystack = haystack.toLowerCase();
+
+  for (const keyword of keywords) {
+    const normalizedKeyword = keyword.trim().toLowerCase();
+    if (!normalizedKeyword) {
+      continue;
+    }
+
+    const pattern = new RegExp(`\\b${normalizedKeyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+    if (pattern.test(normalizedHaystack)) {
+      return keyword;
+    }
+  }
+
+  return null;
+}
+
+function hasPreferredStackOverlap(job: NormalizedJob, profile: CandidateProfile): boolean {
+  const haystack = [
+    job.title,
+    ...job.technologies,
+    ...job.mustHaveSkills,
+    ...job.niceToHaveSkills,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  if (!haystack) {
+    return false;
+  }
+
+  const preferredSignals = [
+    ...profile.preferredTechStack,
+    ...profile.aspirationalTechStack,
+    ...profile.preferredRoleOverlapSignals,
+  ];
+
+  return preferredSignals.some((signal) => haystack.includes(signal.toLowerCase()));
+}
+
+function isPureJavaRole(job: NormalizedJob, profile: CandidateProfile): boolean {
+  const title = (job.title ?? "").toLowerCase();
+  if (!title) {
+    return false;
+  }
+
+  const isJavaRole =
+    /\bjava\b/.test(title) &&
+    /\b(developer|engineer|software engineer|software developer|backend engineer|backend developer)\b/.test(
+      title,
+    );
+
+  if (!isJavaRole) {
+    return false;
+  }
+
+  return !hasPreferredStackOverlap(job, profile);
+}
+
 export function evaluatePolicy(
   job: NormalizedJob,
   profile: CandidateProfile,
@@ -48,6 +109,18 @@ export function evaluatePolicy(
   const excludedRole = includesAny(combinedRole, profile.excludedRoles);
   if (excludedRole) {
     reasons.push(`Role excluded by profile: ${excludedRole}.`);
+  }
+
+  const disallowedRoleKeyword = includesRoleKeyword(
+    combinedRole,
+    profile.disallowedRoleKeywords,
+  );
+  if (disallowedRoleKeyword) {
+    reasons.push(`Role family excluded by profile: ${disallowedRoleKeyword}.`);
+  }
+
+  if (isPureJavaRole(job, profile)) {
+    reasons.push("Role family excluded by profile: pure Java role without target stack overlap.");
   }
 
   const excludedLocation = includesAny(combinedLocation, profile.excludedLocations);

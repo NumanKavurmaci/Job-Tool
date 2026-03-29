@@ -14,7 +14,7 @@ The project currently supports:
 - Generic fallback extraction for unsupported sites
 - OpenAI-based parsing
 - LM Studio local parsing
-- Candidate-profile-based scoring and decisioning
+- User-profile-based scoring and decisioning
 - Policy-based rejection rules
 - Resume ingestion from `.pdf`, `.docx`, `.md`, and `.txt`
 - Candidate master profile generation
@@ -132,10 +132,12 @@ DATABASE_URL="file:./dev.db"
 ```env
 LINKEDIN_USERNAME=your_email@example.com
 LINKEDIN_PASSWORD=your_password
+LINKEDIN_MANUAL_AUTH_WINDOW_MS=14400000
 LINKEDIN_SESSION_STATE_PATH=.auth/linkedin-session.json
 ```
 
 `LINKEDIN_SESSION_STATE_PATH` is optional. When omitted, the default path above is used.
+`LINKEDIN_MANUAL_AUTH_WINDOW_MS` controls how long the bot waits for manual LinkedIn intervention on checkpoint or verification pages. The default is 4 hours.
 
 ## LM Studio Setup
 
@@ -309,7 +311,17 @@ The candidate master profile combines:
 - resume data
 - LinkedIn URL
 - normalized experience, education, projects, and skills
-- manual candidate preferences and overrides
+- manual user profile preferences and overrides
+
+Manual user profile data is loaded from:
+
+- [user/profile.json](./user/profile.json) when present
+- otherwise [user/profile.example.json](./user/profile.example.json)
+- otherwise the built-in generic default profile in [candidate.ts](./src/profile/candidate.ts)
+
+Other local user-state files also live under `user/`:
+
+- `user/<resume-file>` for the default resume picked up by CLI flows
 
 It includes structured fields such as:
 
@@ -473,7 +485,8 @@ The current suite also covers:
 
 - This means LinkedIn challenged the session
 - The app now reports this explicitly as a LinkedIn auth challenge
-- Complete the verification manually in the browser, then rerun so the saved session state can be reused
+- The bot will keep waiting for manual intervention for up to `LINKEDIN_MANUAL_AUTH_WINDOW_MS`
+- Complete the verification manually in the browser, then rerun or let the run continue once the session is unlocked
 
 ### LinkedIn keeps asking for login
 

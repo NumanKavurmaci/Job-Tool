@@ -5,15 +5,33 @@ const profile = {
   yearsOfExperience: 3,
   preferredRoles: ["Backend Engineer"],
   preferredTechStack: ["TypeScript", "Node.js"],
+  aspirationalTechStack: ["React", "Next.js"],
+  preferredRoleOverlapSignals: ["frontend", "front-end", "full stack", "fullstack"],
+  disallowedRoleKeywords: ["ios", "android", "mechanical", "researcher"],
   excludedRoles: ["Senior", "Lead", "Staff"],
   preferredLocations: ["Remote"],
   excludedLocations: ["Istanbul onsite"],
-  allowedHybridLocations: ["Ankara", "Izmir", "Eskişehir", "Eskisehir", "Samsun"],
+  allowedHybridLocations: ["Ankara", "Izmir", "EskiSehir", "Eskisehir", "Samsun"],
   remotePreference: "remote",
+  remoteOnly: true,
   visaRequirement: "required",
   workAuthorizationStatus: "authorized",
   languages: ["English"],
+  experienceOverrides: {},
+  salaryExpectations: {
+    usd: null,
+    eur: null,
+    try: null,
+  },
+  gpa: null,
   salaryExpectation: "market",
+  disability: {
+    hasVisualDisability: false,
+    disabilityPercentage: null,
+    requiresAccommodation: null,
+    accommodationNotes: null,
+    disclosurePreference: "manual-review",
+  },
 } as const;
 
 describe("evaluatePolicy", () => {
@@ -237,5 +255,86 @@ describe("evaluatePolicy", () => {
 
     expect(result.allowed).toBe(false);
     expect(result.reasons).toContain("Only LinkedIn Easy Apply jobs are allowed in this phase.");
+  });
+
+  it("rejects disallowed role families from profile negatives", () => {
+    const result = evaluatePolicy(
+      {
+        title: "iOS Developer (English required)",
+        company: "Acme",
+        location: "Remote",
+        remoteType: "remote",
+        seniority: "mid",
+        mustHaveSkills: [],
+        niceToHaveSkills: [],
+        technologies: ["Swift"],
+        yearsRequired: 3,
+        platform: "linkedin",
+        applicationType: "easy_apply",
+        visaSponsorship: "yes",
+        workAuthorization: "authorized",
+        openQuestionsCount: 0,
+      },
+      profile,
+    );
+
+    expect(result.allowed).toBe(false);
+    expect(result.reasons).toContain("Role family excluded by profile: ios.");
+  });
+
+  it("rejects pure java roles without target stack overlap", () => {
+    const result = evaluatePolicy(
+      {
+        title: "Java Developer",
+        company: "Acme",
+        location: "Remote",
+        remoteType: "remote",
+        seniority: "mid",
+        mustHaveSkills: ["Java"],
+        niceToHaveSkills: [],
+        technologies: ["Java", "Spring"],
+        yearsRequired: 3,
+        platform: "linkedin",
+        applicationType: "easy_apply",
+        visaSponsorship: "yes",
+        workAuthorization: "authorized",
+        openQuestionsCount: 0,
+      },
+      profile,
+    );
+
+    expect(result.allowed).toBe(false);
+    expect(result.reasons).toContain(
+      "Role family excluded by profile: pure Java role without target stack overlap.",
+    );
+  });
+
+  it("allows java roles when they overlap with target frontend/full-stack signals", () => {
+    const result = evaluatePolicy(
+      {
+        title: "Java Developer (React/Java stack)",
+        company: "Acme",
+        location: "Remote",
+        remoteType: "remote",
+        seniority: "mid",
+        mustHaveSkills: ["Java", "React"],
+        niceToHaveSkills: [],
+        technologies: ["Java", "React", "TypeScript"],
+        yearsRequired: 3,
+        platform: "linkedin",
+        applicationType: "easy_apply",
+        visaSponsorship: "yes",
+        workAuthorization: "authorized",
+        openQuestionsCount: 0,
+      },
+      profile,
+    );
+
+    expect(result.allowed).toBe(true);
+    expect(
+      result.reasons.some((reason) =>
+        reason.includes("pure Java role without target stack overlap"),
+      ),
+    ).toBe(false);
   });
 });

@@ -24,6 +24,7 @@ describe("env config", () => {
       LOCAL_LLM_BASE_URL: "http://127.0.0.1:1234/v1",
       LOCAL_LLM_MODEL: "openai/gpt-oss-20b",
       LOCAL_LLM_TIMEOUT_MS: 120000,
+      LINKEDIN_MANUAL_AUTH_WINDOW_MS: 14400000,
       DATABASE_URL: "file:./dev.db",
       LINKEDIN_USERNAME: "user@example.com",
       LINKEDIN_PASSWORD: "secret",
@@ -50,6 +51,7 @@ describe("env config", () => {
       LOCAL_LLM_BASE_URL: "http://127.0.0.1:1234/v1",
       LOCAL_LLM_MODEL: "openai/gpt-oss-20b",
       LOCAL_LLM_TIMEOUT_MS: 120000,
+      LINKEDIN_MANUAL_AUTH_WINDOW_MS: 14400000,
       DATABASE_URL: "file:./dev.db",
       LINKEDIN_USERNAME: undefined,
       LINKEDIN_PASSWORD: undefined,
@@ -99,15 +101,17 @@ describe("env config", () => {
     );
   });
 
-  it("accepts a custom local timeout and rejects invalid values", async () => {
+  it("accepts custom timeout settings and rejects invalid values", async () => {
     process.env.LLM_PROVIDER = "local";
     process.env.DATABASE_URL = "file:./dev.db";
     process.env.LOCAL_LLM_BASE_URL = "http://127.0.0.1:1234/v1";
     process.env.LOCAL_LLM_MODEL = "openai/gpt-oss-20b";
     process.env.LOCAL_LLM_TIMEOUT_MS = "180000";
+    process.env.LINKEDIN_MANUAL_AUTH_WINDOW_MS = "7200000";
 
     let module = await import("../../src/config/env.js");
     expect(module.createEnv().LOCAL_LLM_TIMEOUT_MS).toBe(180000);
+    expect(module.createEnv().LINKEDIN_MANUAL_AUTH_WINDOW_MS).toBe(7200000);
 
     vi.resetModules();
     process.env = {
@@ -121,6 +125,20 @@ describe("env config", () => {
 
     await expect(import("../../src/config/env.js")).rejects.toThrow(
       "LOCAL_LLM_TIMEOUT_MS must be a positive integer",
+    );
+
+    vi.resetModules();
+    process.env = {
+      ...originalEnv,
+      LLM_PROVIDER: "local",
+      DATABASE_URL: "file:./dev.db",
+      LOCAL_LLM_BASE_URL: "http://127.0.0.1:1234/v1",
+      LOCAL_LLM_MODEL: "openai/gpt-oss-20b",
+      LINKEDIN_MANUAL_AUTH_WINDOW_MS: "0",
+    };
+
+    await expect(import("../../src/config/env.js")).rejects.toThrow(
+      "LINKEDIN_MANUAL_AUTH_WINDOW_MS must be a positive integer",
     );
   });
 });

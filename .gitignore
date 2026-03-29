@@ -41,3 +41,7 @@ generated/prisma/
 
 .auth
 .next
+user/*
+!user/README.md
+!user/profile.example.json
+!user/.gitkeep

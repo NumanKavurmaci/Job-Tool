@@ -35,7 +35,7 @@ This file maps all `src/` files to their purpose.
 
 - [src/answers/types.ts](../src/answers/types.ts): Shared answer result types.
 - [src/answers/answerBank.ts](../src/answers/answerBank.ts): Deterministic canned answer content.
-- [src/answers/cache.ts](../src/answers/cache.ts): Local persisted answer cache utilities.
+- [src/answers/cache.ts](../src/answers/cache.ts): Database-backed answer cache utilities for reusing previously answered questions.
 - [src/answers/confidence.ts](../src/answers/confidence.ts): Confidence label helpers.
 - [src/answers/resolveAnswer.ts](../src/answers/resolveAnswer.ts): Main answer resolution pipeline across all strategies.
 

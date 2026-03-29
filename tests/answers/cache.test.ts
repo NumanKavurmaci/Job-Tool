@@ -1,131 +1,100 @@
-import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  getAnswerCachePath,
   getAnswerCacheKey,
   persistResolvedAnswer,
   readAnswerCache,
+  readCachedResolvedAnswer,
 } from "../../src/answers/cache.js";
 
-const originalPath = process.env.ANSWER_CACHE_PATH;
-const originalCwd = process.cwd();
+function createStore() {
+  return {
+    answerCacheEntry: {
+      findUnique: vi.fn(),
+      findMany: vi.fn(),
+      upsert: vi.fn(),
+    },
+  };
+}
 
 describe("answer cache", () => {
-  afterEach(() => {
-    if (originalPath == null) {
-      delete process.env.ANSWER_CACHE_PATH;
-    } else {
-      process.env.ANSWER_CACHE_PATH = originalPath;
-    }
-
-    process.chdir(originalCwd);
+  beforeEach(() => {
+    vi.restoreAllMocks();
   });
 
-  it("uses the env override for the cache path", () => {
-    process.env.ANSWER_CACHE_PATH = "./custom/answer-cache.json";
-
-    expect(getAnswerCachePath()).toBe(
-      path.resolve(originalCwd, "./custom/answer-cache.json"),
-    );
-  });
-
-  it("returns an empty cache for a missing file", async () => {
-    const tempDir = await mkdtemp(path.join(os.tmpdir(), "job-tool-answer-cache-"));
-    const cache = await readAnswerCache(path.join(tempDir, "missing-cache.json"));
-
-    expect(cache).toEqual({ answers: {} });
-  });
-
-  it("writes resolved answers to a JSON file in a visible format", async () => {
-    const tempDir = await mkdtemp(path.join(os.tmpdir(), "job-tool-answer-cache-"));
-    const cachePath = path.join(tempDir, "answer-cache.json");
-    process.env.ANSWER_CACHE_PATH = cachePath;
-
-    await persistResolvedAnswer({
-      question: { label: "How many years of experience do you have with Linux?", inputType: "text" },
-      classified: {
-        type: "years_of_experience",
-        normalizedText: "how many years of experience do you have with linux",
-        confidence: 0.93,
-      },
-      resolved: {
-        questionType: "years_of_experience",
-        strategy: "resume-derived",
-        answer: "0",
-        confidence: 0.75,
-        confidenceLabel: "medium",
-        source: "resume",
-      },
-    });
-
-    const content = await readFile(cachePath, "utf8");
-    expect(content).toContain("\"answers\"");
-    expect(content).toContain("\"how many years of experience do you have with linux\"");
-
-    const cache = await readAnswerCache(cachePath);
+  it("uses the normalized question as the cache key", () => {
     expect(
-      cache.answers[getAnswerCacheKey({
-        type: "years_of_experience",
-        normalizedText: "how many years of experience do you have with linux",
-        confidence: 0.93,
-      })]?.answer,
-    ).toBe("0");
+      getAnswerCacheKey({
+        type: "linkedin",
+        normalizedText: "linkedin profile",
+        confidence: 0.9,
+      }),
+    ).toBe("linkedin profile");
   });
 
-  it("updates existing entries by normalized question", async () => {
-    const tempDir = await mkdtemp(path.join(os.tmpdir(), "job-tool-answer-cache-"));
-    const cachePath = path.join(tempDir, "answer-cache.json");
+  it("returns an empty cache when the database read fails", async () => {
+    const store = createStore();
+    store.answerCacheEntry.findMany.mockRejectedValue(new Error("sqlite busy"));
 
-    await persistResolvedAnswer({
-      cachePath,
-      question: { label: "What is your net salary expectation for this position?", inputType: "text" },
-      classified: {
-        type: "salary",
-        normalizedText: "what is your net salary expectation for this position",
-        confidence: 0.95,
-      },
-      resolved: {
-        questionType: "salary",
-        strategy: "needs-review",
-        answer: null,
-        confidence: 0.2,
-        confidenceLabel: "manual_review",
-        source: "manual",
-      },
-    });
-
-    await persistResolvedAnswer({
-      cachePath,
-      question: { label: "What is your net salary expectation for this position?", inputType: "text" },
-      classified: {
-        type: "salary",
-        normalizedText: "what is your net salary expectation for this position",
-        confidence: 0.95,
-      },
-      resolved: {
-        questionType: "salary",
-        strategy: "deterministic",
-        answer: "Open to market-rate mid-level backend roles",
-        confidence: 0.8,
-        confidenceLabel: "medium",
-        source: "candidate-profile",
-      },
-    });
-
-    const cache = await readAnswerCache(cachePath);
-    expect(Object.keys(cache.answers)).toHaveLength(1);
-    expect(cache.answers["what is your net salary expectation for this position"]?.strategy)
-      .toBe("deterministic");
+    await expect(readAnswerCache(store as never)).resolves.toEqual({ answers: {} });
   });
 
-  it("skips writing to the default cache path during vitest runs", async () => {
-    const tempDir = await mkdtemp(path.join(os.tmpdir(), "job-tool-answer-cache-"));
-    process.chdir(tempDir);
-    delete process.env.ANSWER_CACHE_PATH;
+  it("returns a cached answer by normalized question", async () => {
+    const store = createStore();
+    store.answerCacheEntry.findUnique.mockResolvedValue({
+      normalizedQuestion: "linkedin profile",
+      label: "LinkedIn Profile",
+      questionType: "linkedin",
+      strategy: "deterministic",
+      answerJson: JSON.stringify("https://linkedin.com/in/example"),
+      confidenceLabel: "high",
+      source: "candidate-profile",
+      notesJson: JSON.stringify(["cached"]),
+      updatedAt: new Date("2026-03-29T12:00:00.000Z"),
+    });
+
+    const result = await readCachedResolvedAnswer(
+      {
+        type: "linkedin",
+        normalizedText: "linkedin profile",
+        confidence: 0.9,
+      },
+      store as never,
+    );
+
+    expect(result).toEqual({
+      normalizedQuestion: "linkedin profile",
+      label: "LinkedIn Profile",
+      questionType: "linkedin",
+      strategy: "deterministic",
+      answer: "https://linkedin.com/in/example",
+      confidenceLabel: "high",
+      source: "candidate-profile",
+      notes: ["cached"],
+      updatedAt: "2026-03-29T12:00:00.000Z",
+    });
+  });
+
+  it("returns null when a cached answer does not exist", async () => {
+    const store = createStore();
+    store.answerCacheEntry.findUnique.mockResolvedValue(null);
+
+    await expect(
+      readCachedResolvedAnswer(
+        {
+          type: "linkedin",
+          normalizedText: "linkedin profile",
+          confidence: 0.9,
+        },
+        store as never,
+      ),
+    ).resolves.toBeNull();
+  });
+
+  it("persists resolved answers via database upsert", async () => {
+    const store = createStore();
 
     await persistResolvedAnswer({
+      store: store as never,
       question: { label: "LinkedIn Profile", inputType: "text" },
       classified: {
         type: "linkedin",
@@ -139,19 +108,47 @@ describe("answer cache", () => {
         confidence: 1,
         confidenceLabel: "high",
         source: "candidate-profile",
+        notes: ["from profile"],
       },
     });
 
-    await expect(access(path.join(tempDir, "answer-cache.json"))).rejects.toMatchObject({
-      code: "ENOENT",
+    expect(store.answerCacheEntry.upsert).toHaveBeenCalledWith({
+      where: { normalizedQuestion: "linkedin profile" },
+      update: expect.objectContaining({
+        label: "LinkedIn Profile",
+        questionType: "linkedin",
+        strategy: "deterministic",
+        answerJson: JSON.stringify("https://linkedin.com/in/example"),
+        confidenceLabel: "high",
+        source: "candidate-profile",
+        notesJson: JSON.stringify(["from profile"]),
+      }),
+      create: expect.objectContaining({
+        normalizedQuestion: "linkedin profile",
+        label: "LinkedIn Profile",
+      }),
     });
   });
 
-  it("throws invalid cache file content errors through to the caller", async () => {
-    const tempDir = await mkdtemp(path.join(os.tmpdir(), "job-tool-answer-cache-"));
-    const cachePath = path.join(tempDir, "answer-cache.json");
-    await writeFile(cachePath, "{invalid json", "utf8");
+  it("returns database-backed cache entries in the legacy map shape", async () => {
+    const store = createStore();
+    store.answerCacheEntry.findMany.mockResolvedValue([
+      {
+        normalizedQuestion: "linkedin profile",
+        label: "LinkedIn Profile",
+        questionType: "linkedin",
+        strategy: "deterministic",
+        answerJson: JSON.stringify("https://linkedin.com/in/example"),
+        confidenceLabel: "high",
+        source: "candidate-profile",
+        notesJson: null,
+        updatedAt: new Date("2026-03-29T12:00:00.000Z"),
+      },
+    ]);
 
-    await expect(readAnswerCache(cachePath)).rejects.toBeInstanceOf(SyntaxError);
+    const result = await readAnswerCache(store as never);
+    expect(result.answers["linkedin profile"]?.answer).toBe(
+      "https://linkedin.com/in/example",
+    );
   });
 });

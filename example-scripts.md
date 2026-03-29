@@ -22,6 +22,7 @@ Optional Playwright visibility / session reuse:
 
 ```powershell
 $env:PLAYWRIGHT_SLOW_MO_MS='250'
+$env:LINKEDIN_MANUAL_AUTH_WINDOW_MS='14400000'
 $env:LINKEDIN_SESSION_STATE_PATH='.auth/linkedin-session.json'
 $env:LINKEDIN_BROWSER_PROFILE_PATH='.auth/linkedin-profile'
 ```
@@ -54,10 +55,10 @@ Build the candidate master profile from a resume and LinkedIn URL:
 $env:LLM_PROVIDER='local'
 $env:LOCAL_LLM_BASE_URL='http://127.0.0.1:1234/v1'
 $env:LOCAL_LLM_MODEL='openai/gpt-oss-20b'
-npm run dev -- build-profile --resume "./Numan Kavurmacı March 2026 CV Resume.pdf" --linkedin "https://linkedin.com/in/your-handle"
+npm run dev -- build-profile --resume "./user/resume.pdf" --linkedin "https://linkedin.com/in/your-handle"
 ```
 
-If the default CV is already in the project root, omit `--resume`:
+If a default resume file is already under `./user`, omit `--resume`:
 
 ```powershell
 $env:LLM_PROVIDER='local'
@@ -74,7 +75,7 @@ Prepare answers from a questions JSON file:
 $env:LLM_PROVIDER='local'
 $env:LOCAL_LLM_BASE_URL='http://127.0.0.1:1234/v1'
 $env:LOCAL_LLM_MODEL='openai/gpt-oss-20b'
-npm run dev -- answer-questions --resume "./Numan Kavurmacı March 2026 CV Resume.pdf" --questions "./questions.json"
+npm run dev -- answer-questions --resume "./user/resume.pdf" --questions "./questions.json"
 ```
 
 With LinkedIn URL included:
@@ -83,7 +84,7 @@ With LinkedIn URL included:
 $env:LLM_PROVIDER='local'
 $env:LOCAL_LLM_BASE_URL='http://127.0.0.1:1234/v1'
 $env:LOCAL_LLM_MODEL='openai/gpt-oss-20b'
-npm run dev -- answer-questions --resume "./Numan Kavurmacı March 2026 CV Resume.pdf" --linkedin "https://linkedin.com/in/your-handle" --questions "./questions.json"
+npm run dev -- answer-questions --resume "./user/resume.pdf" --linkedin "https://linkedin.com/in/your-handle" --questions "./questions.json"
 ```
 
 Example `questions.json`:
@@ -323,6 +324,7 @@ npm run test:local-llm
 - `--score-threshold` and `--disable-ai-evaluation` apply to batch commands.
 - Dry run stops before the final submission click.
 - Run reports are written under `artifacts/batch-runs`.
+- Local personal profile and default resume files should live under `user/`.
 - If LinkedIn challenges authentication, inspect:
   - `logs/app.log`
   - `artifacts/screenshots`

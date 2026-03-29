@@ -18,12 +18,10 @@ This file explains the important project-root files.
 - [.gitignore](../.gitignore): Git exclusions for generated files, logs, artifacts, and local state.
 - [.gitattributes](../.gitattributes): Git file handling attributes.
 - [LICENSE](../LICENSE): Project license.
-- [candidate-profile.json](../candidate-profile.json): Manual candidate preferences used by scoring and policy.
-- [answer-cache.json](../answer-cache.json): Local cache for prepared/reused answers.
-- [dev.db](../dev.db): Legacy root-level SQLite file if present. The active Prisma DB is under `prisma/dev.db`.
-- [linkedin-auth-debug.png](../linkedin-auth-debug.png): Local debug image artifact, not part of core logic.
-- [Numan Kavurmacı March 2026 CV Resume.pdf](../Numan%20Kavurmac%C4%B1%20March%202026%20CV%20Resume.pdf): Local resume file used by CLI defaults.
-- [tsconfig.tsbuildinfo](../tsconfig.tsbuildinfo): TypeScript incremental build cache.
+- [user/README.md](../user/README.md): Explains the local user-data area and which files are tracked vs. ignored.
+- [user/profile.example.json](../user/profile.example.json): Generic starter candidate profile for new users and AI navigation.
+- `user/profile.json`: Local personal candidate profile. Intentionally ignored by Git and loaded first when present.
+- `user/<resume-file>`: Optional local resume file. The CLI prefers resume files under `user/` when `--resume` is omitted.
 
 ## Main Code Entry
 

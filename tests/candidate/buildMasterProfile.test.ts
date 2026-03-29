@@ -151,7 +151,7 @@ describe("buildMasterProfile", () => {
     expect(normalizeResumeMock).toHaveBeenCalled();
   });
 
-  it("stores an absolute resume path as a portable workspace-relative path in metadata", async () => {
+  it("stores an absolute user resume path as a portable workspace-relative path in metadata", async () => {
     extractResumeTextMock.mockResolvedValue("resume text");
     parseResumeMock.mockResolvedValue({ fullName: "Jane Doe" });
     normalizeResumeMock.mockReturnValue({
@@ -180,14 +180,16 @@ describe("buildMasterProfile", () => {
 
     const { buildMasterProfile } = await import("../../src/candidate/buildMasterProfile.js");
     await buildMasterProfile({
-      resumePath: `${process.cwd()}\\Numan Kavurmacı March 2026 CV Resume.pdf`,
+      resumePath: `${process.cwd()}\\user\\resume.pdf`,
     });
 
     expect(normalizeResumeMock).toHaveBeenCalledWith(
-      expect.anything(),
+      expect.objectContaining({
+        fullName: "Jane Doe",
+      }),
       "resume text",
       expect.objectContaining({
-        resumePath: "Numan Kavurmacı March 2026 CV Resume.pdf",
+        resumePath: expect.stringMatching(/^user[\\/]{1}resume\.pdf$/),
       }),
     );
   });

@@ -1,0 +1,63 @@
+{
+  "experience": {
+    "years": 2,
+    "overrides": {}
+  },
+  "targeting": {
+    "preferredRoles": [
+      "Software Engineer",
+      "Backend Engineer"
+    ],
+    "preferredTechStack": [
+      "TypeScript",
+      "Node.js"
+    ],
+    "aspirationalTechStack": [
+      "Python"
+    ],
+    "preferredRoleOverlapSignals": [
+      "frontend",
+      "full stack",
+      "fullstack"
+    ],
+    "excludedRoles": [
+      "Senior",
+      "Lead"
+    ],
+    "disallowedRoleKeywords": []
+  },
+  "locations": {
+    "preferred": [
+      "Remote"
+    ],
+    "excluded": [],
+    "allowedHybrid": [],
+    "remotePreference": "remote",
+    "remoteOnly": false
+  },
+  "authorization": {
+    "visaRequirement": "unknown",
+    "workAuthorizationStatus": "unknown"
+  },
+  "personal": {
+    "languages": [
+      "English"
+    ],
+    "gpa": null,
+    "disability": {
+      "hasVisualDisability": false,
+      "disabilityPercentage": null,
+      "requiresAccommodation": null,
+      "accommodationNotes": null,
+      "disclosurePreference": "manual-review"
+    }
+  },
+  "compensation": {
+    "expectations": {
+      "usd": null,
+      "eur": null,
+      "try": null
+    },
+    "summary": null
+  }
+}

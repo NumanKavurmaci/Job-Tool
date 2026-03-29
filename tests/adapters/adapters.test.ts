@@ -6,7 +6,7 @@ import {
   linkedInCrossingHurdlesFixture,
   linkedInExternalApplyFixture,
 } from "../fixtures/linkedin.js";
-import { createMockPage } from "../utils/fakePage.js";
+import { createMockPage, type MockPageContext, type MockPageState } from "../utils/fakePage.js";
 
 afterEach(() => {
   vi.resetModules();
@@ -142,6 +142,7 @@ describe("LinkedInAdapter", () => {
       env: {
         LINKEDIN_USERNAME: "user@example.com",
         LINKEDIN_PASSWORD: "secret",
+        LINKEDIN_MANUAL_AUTH_WINDOW_MS: 10_000,
       },
     }));
 
@@ -151,7 +152,7 @@ describe("LinkedInAdapter", () => {
     const page = createMockPage({
       currentUrl: jobUrl,
       routes: {
-        [jobUrl]: () =>
+        [jobUrl]: (): MockPageState =>
           isAuthenticated
             ? {
                 currentUrl: jobUrl,
@@ -208,6 +209,7 @@ describe("LinkedInAdapter", () => {
       env: {
         LINKEDIN_USERNAME: "user@example.com",
         LINKEDIN_PASSWORD: "secret",
+        LINKEDIN_MANUAL_AUTH_WINDOW_MS: 10_000,
       },
     }));
 
@@ -217,7 +219,7 @@ describe("LinkedInAdapter", () => {
     const page = createMockPage({
       currentUrl: jobUrl,
       routes: {
-        [jobUrl]: () =>
+        [jobUrl]: (): MockPageState =>
           isAuthenticated
             ? {
                 currentUrl: jobUrl,
@@ -273,6 +275,7 @@ describe("LinkedInAdapter", () => {
       env: {
         LINKEDIN_USERNAME: undefined,
         LINKEDIN_PASSWORD: undefined,
+        LINKEDIN_MANUAL_AUTH_WINDOW_MS: 10_000,
       },
     }));
 
@@ -301,6 +304,7 @@ describe("LinkedInAdapter", () => {
       env: {
         LINKEDIN_USERNAME: undefined,
         LINKEDIN_PASSWORD: undefined,
+        LINKEDIN_MANUAL_AUTH_WINDOW_MS: 10_000,
       },
     }));
 
@@ -331,6 +335,7 @@ describe("LinkedInAdapter", () => {
       env: {
         LINKEDIN_USERNAME: "user@example.com",
         LINKEDIN_PASSWORD: "secret",
+        LINKEDIN_MANUAL_AUTH_WINDOW_MS: 10_000,
       },
     }));
 
@@ -380,11 +385,12 @@ describe("LinkedInAdapter", () => {
     });
   });
 
-  it("allows a 10-second manual recovery window on auth challenge and resumes when the user logs in", async () => {
+  it("allows the configured manual recovery window on auth challenge and resumes when the user logs in", async () => {
     vi.doMock("../../src/config/env.js", () => ({
       env: {
         LINKEDIN_USERNAME: "user@example.com",
         LINKEDIN_PASSWORD: "secret",
+        LINKEDIN_MANUAL_AUTH_WINDOW_MS: 10_000,
       },
     }));
 
@@ -395,7 +401,7 @@ describe("LinkedInAdapter", () => {
     const page = createMockPage({
       currentUrl: jobUrl,
       routes: {
-        [jobUrl]: (context) => {
+        [jobUrl]: (_context: MockPageContext): MockPageState => {
           if (manuallyAuthenticated) {
             return {
               currentUrl: jobUrl,
@@ -473,11 +479,12 @@ describe("LinkedInAdapter", () => {
     expect(waitCount).toBeGreaterThanOrEqual(1);
   });
 
-  it("fails after the 10-second manual recovery window when the user does not intervene", async () => {
+  it("fails after the configured manual recovery window when the user does not intervene", async () => {
     vi.doMock("../../src/config/env.js", () => ({
       env: {
         LINKEDIN_USERNAME: "user@example.com",
         LINKEDIN_PASSWORD: "secret",
+        LINKEDIN_MANUAL_AUTH_WINDOW_MS: 10_000,
       },
     }));
 

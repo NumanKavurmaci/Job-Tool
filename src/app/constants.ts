@@ -1,4 +1,5 @@
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
+import path from "node:path";
 import { env } from "../config/env.js";
 
 export const PARSE_VERSION = "phase-5";
@@ -21,10 +22,22 @@ export function isLinkedInCollectionUrl(url: string): boolean {
 }
 
 function findDefaultResumePath(): string | undefined {
-  const match = readdirSync(process.cwd()).find((entry) =>
-    /CV Resume\.pdf$/i.test(entry),
+  const userDir = path.join(process.cwd(), "user");
+  const candidates = existsSync(userDir)
+    ? readdirSync(userDir)
+        .filter((entry) => /\.(pdf|docx|md|txt)$/i.test(entry))
+        .sort()
+        .map((entry) => path.join("user", entry))
+    : [];
+
+  if (candidates.length > 0) {
+    return candidates[0];
+  }
+
+  const rootMatch = readdirSync(process.cwd()).find((entry) =>
+    /\.(pdf|docx|md|txt)$/i.test(entry),
   );
-  return match;
+  return rootMatch;
 }
 
 export const DEFAULT_RESUME_PATH = findDefaultResumePath();

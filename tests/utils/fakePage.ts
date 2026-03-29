@@ -1,4 +1,4 @@
-type SelectorValue = {
+export type SelectorValue = {
   count?: number;
   text?: string | null;
   attributes?: Record<string, string | null | undefined>;
@@ -6,19 +6,19 @@ type SelectorValue = {
   throwsOnGetAttribute?: boolean;
 };
 
-type MockPageState = {
+export type MockPageState = {
   selectors?: Record<string, SelectorValue>;
   currentUrl?: string;
   title?: string;
 };
 
-type MockPageContext = {
+export type MockPageContext = {
   filledValues: Record<string, string>;
   setState: (nextState: MockPageState) => void;
   getState: () => MockPageState;
 };
 
-type RouteValue = MockPageState | ((context: MockPageContext) => MockPageState);
+export type RouteValue = MockPageState | ((context: MockPageContext) => MockPageState);
 
 class MockLocator {
   constructor(

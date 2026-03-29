@@ -875,6 +875,86 @@ describe("runEasyApplyBatchDryRun", () => {
     expect(driver.goToNextResultsPage).toHaveBeenCalledTimes(1);
   });
 
+  it("goes to the next results page when the current page only contains previously reviewed jobs", async () => {
+    const driver = {
+      open: vi.fn(),
+      openCollection: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn().mockResolvedValue([]),
+      collectVisibleJobUrls: vi
+        .fn()
+        .mockResolvedValueOnce([
+          "https://www.linkedin.com/jobs/view/1",
+          "https://www.linkedin.com/jobs/view/2",
+        ])
+        .mockResolvedValueOnce([
+          "https://www.linkedin.com/jobs/view/3",
+        ]),
+      goToNextResultsPage: vi
+        .fn()
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn().mockResolvedValue("submit"),
+      advance: vi.fn(),
+    };
+
+    const evaluateJob = vi
+      .fn()
+      .mockResolvedValueOnce({
+        shouldApply: false,
+        finalDecision: "SKIP",
+        score: 47,
+        reason: "Already reviewed recently.",
+        policyAllowed: true,
+      })
+      .mockResolvedValueOnce({
+        shouldApply: false,
+        finalDecision: "SKIP",
+        score: 49,
+        reason: "Already reviewed recently.",
+        policyAllowed: true,
+      })
+      .mockResolvedValueOnce({
+        shouldApply: true,
+        finalDecision: "APPLY",
+        score: 81,
+        reason: "Strong fit.",
+        policyAllowed: true,
+      });
+
+    const result = await runEasyApplyBatchDryRun({
+      driver,
+      url: "https://www.linkedin.com/jobs/collections/easy-apply",
+      targetCount: 1,
+      candidateProfile: profile,
+      evaluateJob,
+      resolveAnswer: async () => ({
+        questionType: "contact_info",
+        strategy: "deterministic",
+        answer: "123",
+        confidence: 0.95,
+        confidenceLabel: "high",
+        source: "candidate-profile",
+      }),
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.attemptedCount).toBe(1);
+    expect(result.evaluatedCount).toBe(3);
+    expect(result.skippedCount).toBe(2);
+    expect(result.pagesVisited).toBe(2);
+    expect(driver.goToNextResultsPage).toHaveBeenCalledTimes(1);
+    expect(evaluateJob).toHaveBeenNthCalledWith(1, "https://www.linkedin.com/jobs/view/1");
+    expect(evaluateJob).toHaveBeenNthCalledWith(2, "https://www.linkedin.com/jobs/view/2");
+    expect(evaluateJob).toHaveBeenNthCalledWith(3, "https://www.linkedin.com/jobs/view/3");
+    expect(result.jobs[0]?.result).toBeUndefined();
+    expect(result.jobs[1]?.result).toBeUndefined();
+    expect(result.jobs[2]?.result?.status).toBe("ready_to_submit");
+  });
+
   it("skips already-applied collection jobs before evaluation", async () => {
     const driver = {
       open: vi.fn(),
