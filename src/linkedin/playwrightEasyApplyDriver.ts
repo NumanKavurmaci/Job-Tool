@@ -603,11 +603,33 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
       ].join(", "),
     ).filter({ hasText: "Not now" }).first();
 
-    if ((await notNow.count()) === 0) {
+    if ((await notNow.count()) > 0) {
+      await notNow.click();
+      await this.page.waitForTimeout(1_000);
+      return true;
+    }
+
+    const successHeader = this.page.locator(
+      ".jpac-modal-header, h3.jpac-modal-header",
+    ).filter({ hasText: /Your application was sent to/i }).first();
+
+    if ((await successHeader.count()) === 0) {
       return false;
     }
 
-    await notNow.click();
+    const dismissButton = this.page.locator(
+      [
+        "button[data-test-modal-close-btn]",
+        "button.artdeco-modal__dismiss[aria-label='Dismiss']",
+        "button[aria-label='Dismiss']",
+      ].join(", "),
+    ).first();
+
+    if ((await dismissButton.count()) === 0) {
+      return false;
+    }
+
+    await dismissButton.click();
     await this.page.waitForTimeout(1_000);
     return true;
   }

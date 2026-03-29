@@ -70,6 +70,7 @@ export class LeverAdapter implements JobAdapter {
       title,
       company,
       companyLogoUrl: null,
+      companyLinkedinUrl: null,
       location,
       platform: this.name,
       applicationType: "external",

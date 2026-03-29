@@ -12,6 +12,15 @@ export type JobScore = {
   };
 };
 
+function hasCaseInsensitiveMatch(values: string[], target: string): boolean {
+  const normalizedTarget = target.toLowerCase();
+  return values.some((value) => value.toLowerCase() === normalizedTarget);
+}
+
+function hasSubstringMatch(values: string[], pattern: RegExp): boolean {
+  return values.some((value) => pattern.test(value));
+}
+
 function overlapRatio(left: string[], right: string[]): number {
   if (left.length === 0 || right.length === 0) {
     return 0;
@@ -119,8 +128,40 @@ function scoreBonus(job: NormalizedJob, profile: CandidateProfile): number {
   )
     ? 4
     : 0;
+  const roleSignals = uniqueLowercase([job.title, ...job.mustHaveSkills, ...job.technologies]);
+  const isFullStackRole = /\bfull\s*-?\s*stack\b/i.test(job.title ?? "");
+  const hasNode = hasCaseInsensitiveMatch(roleSignals, "node.js");
+  const hasTypeScript = hasCaseInsensitiveMatch(roleSignals, "typescript");
+  const hasReact = hasCaseInsensitiveMatch(roleSignals, "react") || hasCaseInsensitiveMatch(roleSignals, "react.js");
+  const hasApiOrMicroservices =
+    hasSubstringMatch(roleSignals, /\bapi\b/i) ||
+    hasSubstringMatch(roleSignals, /\bmicroservice/i);
+  const fullStackAdjacencyBonus =
+    isFullStackRole && hasNode && hasTypeScript && hasReact && hasApiOrMicroservices ? 8 : 0;
 
-  return Math.round(niceToHave + aspirationalNiceToHave + roleMatch);
+  return Math.round(niceToHave + aspirationalNiceToHave + roleMatch + fullStackAdjacencyBonus);
+}
+
+function uniqueLowercase(values: Array<string | null | undefined>): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const value of values) {
+    const normalized = value?.trim();
+    if (!normalized) {
+      continue;
+    }
+
+    const lowered = normalized.toLowerCase();
+    if (seen.has(lowered)) {
+      continue;
+    }
+
+    seen.add(lowered);
+    result.push(normalized);
+  }
+
+  return result;
 }
 
 export function scoreJob(job: NormalizedJob, profile: CandidateProfile): JobScore {

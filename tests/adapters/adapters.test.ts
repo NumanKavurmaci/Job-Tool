@@ -3,9 +3,12 @@ import { GenericAdapter } from "../../src/adapters/GenericAdapter.js";
 import { GreenhouseAdapter } from "../../src/adapters/GreenhouseAdapter.js";
 import { LeverAdapter } from "../../src/adapters/LeverAdapter.js";
 import {
+  linkedInAboutOnlyTitleAndLocationFixture,
+  linkedInAlreadyAppliedFixture,
   linkedInCompanyFallbackFixture,
   linkedInCrossingHurdlesFixture,
   linkedInExternalApplyFixture,
+  linkedInRemoteBadgeFixture,
 } from "../fixtures/linkedin.js";
 import { createMockPage, type MockPageContext, type MockPageState } from "../utils/fakePage.js";
 
@@ -39,6 +42,7 @@ describe("GenericAdapter", () => {
       title: "Software Engineer",
       company: "Acme",
       companyLogoUrl: null,
+      companyLinkedinUrl: null,
       location: "Remote",
       platform: "generic",
       applicationType: "unknown",
@@ -99,6 +103,7 @@ describe("GenericAdapter", () => {
     expect(result.title).toBe("Senior Backend Engineer");
     expect(result.company).toBe("LinkedIn Company");
     expect(result.companyLogoUrl).toBeNull();
+    expect(result.companyLinkedinUrl).toBeNull();
     expect(result.location).toBe("Istanbul, Turkey");
     expect(result.descriptionText).toContain("About the job");
     expect(result.rawText).toContain("Qualifications");
@@ -206,6 +211,7 @@ describe("LinkedInAdapter", () => {
     expect(result.platform).toBe("linkedin");
     expect(result.title).toBe("Backend Engineer");
     expect(result.companyLogoUrl).toBeNull();
+    expect(result.companyLinkedinUrl).toBeNull();
     expect(result.applicationType).toBe("easy_apply");
   });
 
@@ -274,6 +280,7 @@ describe("LinkedInAdapter", () => {
     expect(result.platform).toBe("linkedin");
     expect(result.title).toBe("Backend Engineer");
     expect(result.companyLogoUrl).toBeNull();
+    expect(result.companyLinkedinUrl).toBeNull();
   });
 
   it("fails clearly when linkedin still requires authentication and no credentials exist", async () => {
@@ -335,6 +342,7 @@ describe("LinkedInAdapter", () => {
     expect(result.platform).toBe("linkedin");
     expect(result.title).toBe("Backend Engineer");
     expect(result.companyLogoUrl).toBeNull();
+    expect(result.companyLinkedinUrl).toBeNull();
   });
 
   it("fails with a specific challenge error when linkedin redirects to security verification", async () => {
@@ -577,6 +585,9 @@ describe("LinkedInAdapter", () => {
         "a[href*='linkedin.com/company/'] img[alt*='Company logo']": {
           attributes: { src: linkedInCrossingHurdlesFixture.companyLogoUrl },
         },
+        "a[href*='linkedin.com/company/'][componentkey]": {
+          attributes: { href: linkedInCrossingHurdlesFixture.companyLinkedinUrl },
+        },
         body: { text: linkedInCrossingHurdlesFixture.noisyBody },
         "[data-testid='about-company-module']": {
           text: linkedInCrossingHurdlesFixture.aboutCompanyText,
@@ -595,6 +606,7 @@ describe("LinkedInAdapter", () => {
     expect(result.title).toBe("Software Engineer (Fullstack)");
     expect(result.company).toBe("Crossing Hurdles");
     expect(result.companyLogoUrl).toBe(linkedInCrossingHurdlesFixture.companyLogoUrl);
+    expect(result.companyLinkedinUrl).toBe("https://www.linkedin.com/company/crossing-hurdles/life/");
     expect(result.location).toBe("Remote");
     expect(result.applicationType).toBe("unknown");
     expect(result.descriptionText).toContain("Fullstack Developer (Python/React)");
@@ -618,6 +630,9 @@ describe("LinkedInAdapter", () => {
         "a[href*='linkedin.com/company/'][componentkey] p": {
           text: linkedInCompanyFallbackFixture.companyName,
         },
+        "a[href*='linkedin.com/company/'][componentkey]": {
+          attributes: { href: linkedInCompanyFallbackFixture.companyLinkedinUrl },
+        },
         "a[href*='linkedin.com/company/'] img[alt*='Company logo']": {
           attributes: { src: linkedInCompanyFallbackFixture.companyLogoUrl },
         },
@@ -639,7 +654,158 @@ describe("LinkedInAdapter", () => {
 
     expect(result.company).toBe("Ticimax");
     expect(result.companyLogoUrl).toBe(linkedInCompanyFallbackFixture.companyLogoUrl);
+    expect(result.companyLinkedinUrl).toBe("https://www.linkedin.com/company/ticimax/life/");
     expect(result.rawText).toContain("Company: Ticimax");
+  });
+
+  it("falls back to about-the-job position and location labels when top-card title is missing", async () => {
+    const { LinkedInAdapter } = await import("../../src/adapters/LinkedInAdapter.js");
+    const page = createMockPage({
+      currentUrl: "https://www.linkedin.com/jobs/view/4378935392/",
+      title: linkedInAboutOnlyTitleAndLocationFixture.pageTitle,
+      selectors: {
+        ".job-details-jobs-unified-top-card__company-name": {
+          text: linkedInAboutOnlyTitleAndLocationFixture.companyName,
+        },
+        "a[href*='linkedin.com/company/']": {
+          attributes: { href: linkedInAboutOnlyTitleAndLocationFixture.companyLinkedinUrl },
+        },
+        "a[href*='linkedin.com/company/'] img[alt*='Company logo']": {
+          attributes: { src: linkedInAboutOnlyTitleAndLocationFixture.companyLogoUrl },
+        },
+        "[data-testid='expandable-text-box']": {
+          text: linkedInAboutOnlyTitleAndLocationFixture.aboutText,
+        },
+        "[data-testid='about-company-module']": {
+          text: linkedInAboutOnlyTitleAndLocationFixture.aboutCompanyText,
+        },
+        body: {
+          text: [
+            linkedInAboutOnlyTitleAndLocationFixture.companyName,
+            linkedInAboutOnlyTitleAndLocationFixture.topMetaLine,
+            linkedInAboutOnlyTitleAndLocationFixture.aboutText,
+          ].join("\n"),
+        },
+      },
+    });
+
+    const result = await new LinkedInAdapter().extract(page as never, page.url());
+
+    expect(result.title).toBe("System Engineer");
+    expect(result.location).toBe("Kozyatağı Allianz Tower (Hybrid)");
+    expect(result.company).toBe("Ticimax");
+    expect(result.companyLogoUrl).toBe(linkedInAboutOnlyTitleAndLocationFixture.companyLogoUrl);
+    expect(result.companyLinkedinUrl).toBe("https://www.linkedin.com/company/ticimax/life/");
+    expect(result.rawText).toContain("Title: System Engineer");
+    expect(result.rawText).toContain("Location: Kozyatağı Allianz Tower (Hybrid)");
+  });
+
+  it("extracts workplace type from linkedin preference badges and sanitizes noisy location meta", async () => {
+    const { LinkedInAdapter } = await import("../../src/adapters/LinkedInAdapter.js");
+    const page = createMockPage({
+      currentUrl: "https://www.linkedin.com/jobs/view/4389593314/",
+      title: linkedInRemoteBadgeFixture.pageTitle,
+      selectors: {
+        ".job-details-jobs-unified-top-card__job-title": {
+          text: linkedInRemoteBadgeFixture.titleText,
+        },
+        ".job-details-jobs-unified-top-card__company-name": {
+          text: linkedInRemoteBadgeFixture.companyName,
+        },
+        ".job-details-jobs-unified-top-card__bullet": {
+          text: linkedInRemoteBadgeFixture.locationMetaLine,
+        },
+        ".job-details-fit-level-preferences button": {
+          text: linkedInRemoteBadgeFixture.badgeTexts,
+        },
+        "a[href*='linkedin.com/company/']": {
+          attributes: { href: linkedInRemoteBadgeFixture.companyLinkedinUrl },
+        },
+        "a[href*='linkedin.com/company/'] img[alt*='Company logo']": {
+          attributes: { src: linkedInRemoteBadgeFixture.companyLogoUrl },
+        },
+        "[data-testid='expandable-text-box']": {
+          text: linkedInRemoteBadgeFixture.aboutText,
+        },
+        body: {
+          text: [
+            linkedInRemoteBadgeFixture.titleText,
+            linkedInRemoteBadgeFixture.companyName,
+            linkedInRemoteBadgeFixture.locationMetaLine,
+            linkedInRemoteBadgeFixture.badgeTexts,
+            linkedInRemoteBadgeFixture.aboutText,
+          ].join("\n"),
+        },
+      },
+    });
+
+    const result = await new LinkedInAdapter().extract(page as never, page.url());
+
+    expect(result.title).toBe("Full Stack Engineer");
+    expect(result.company).toBe("Wide and Wise");
+    expect(result.location).toBe("Türkiye");
+    expect(result.rawText).toContain("Workplace Type: remote");
+    expect(result.rawText).toContain("Badges:");
+    expect(result.rawText).toContain("Remote");
+  });
+
+  it("extracts title, company, linkedin company url, logo, and remote workplace data from an already-applied linkedin job", async () => {
+    const { LinkedInAdapter } = await import("../../src/adapters/LinkedInAdapter.js");
+    const page = createMockPage({
+      currentUrl: "https://www.linkedin.com/jobs/view/4389593314/",
+      title: linkedInAlreadyAppliedFixture.pageTitle,
+      selectors: {
+        ".job-details-jobs-unified-top-card__job-title": {
+          text: linkedInAlreadyAppliedFixture.titleText,
+        },
+        ".job-details-jobs-unified-top-card__company-name": {
+          text: linkedInAlreadyAppliedFixture.companyName,
+          attributes: { href: linkedInAlreadyAppliedFixture.companyLinkedinUrl },
+        },
+        ".job-details-jobs-unified-top-card__bullet": {
+          text: linkedInAlreadyAppliedFixture.locationMetaLine,
+        },
+        ".job-details-fit-level-preferences button": {
+          text: linkedInAlreadyAppliedFixture.badgeTexts,
+        },
+        "a[href*='linkedin.com/company/']": {
+          attributes: { href: linkedInAlreadyAppliedFixture.companyLinkedinUrl },
+        },
+        "a[href*='linkedin.com/company/'] img": {
+          attributes: { src: linkedInAlreadyAppliedFixture.companyLogoUrl },
+        },
+        ".jobs-s-apply__application-link": {
+          text: linkedInAlreadyAppliedFixture.appliedText,
+        },
+        ".artdeco-inline-feedback__message": {
+          text: "Applied 4 minutes ago",
+        },
+        ".jobs-description-content__text": {
+          text: linkedInAlreadyAppliedFixture.aboutText,
+        },
+        body: {
+          text: [
+            linkedInAlreadyAppliedFixture.titleText,
+            linkedInAlreadyAppliedFixture.companyName,
+            linkedInAlreadyAppliedFixture.locationMetaLine,
+            linkedInAlreadyAppliedFixture.badgeTexts,
+            linkedInAlreadyAppliedFixture.appliedText,
+            linkedInAlreadyAppliedFixture.aboutText,
+            linkedInAlreadyAppliedFixture.stickyMetaLine,
+          ].join("\n"),
+        },
+      },
+    });
+
+    const result = await new LinkedInAdapter().extract(page as never, page.url());
+
+    expect(result.title).toBe("Full Stack Engineer");
+    expect(result.company).toBe("Wide and Wise");
+    expect(result.companyLinkedinUrl).toBe("https://www.linkedin.com/company/wideandwise/life");
+    expect(result.companyLogoUrl).toBe(linkedInAlreadyAppliedFixture.companyLogoUrl);
+    expect(result.location).toBe("TÃ¼rkiye");
+    expect(result.rawText).toContain("Workplace Type: remote");
+    expect(result.rawText).toContain("Company LinkedIn URL: https://www.linkedin.com/company/wideandwise/life");
   });
 
   it("marks linkedin company-site apply buttons as external while keeping structured sections", async () => {
@@ -665,6 +831,7 @@ describe("LinkedInAdapter", () => {
     expect(result.title).toBe("Senior Fullstack Developer");
     expect(result.company).toBe("Proxify");
     expect(result.companyLogoUrl).toBeNull();
+    expect(result.companyLinkedinUrl).toBeNull();
     expect(result.applicationType).toBe("external");
     expect(result.descriptionText).toContain("Build remote-first fullstack applications.");
     expect(result.requirementsText).toContain("Strong TypeScript experience.");
@@ -699,6 +866,7 @@ describe("GreenhouseAdapter", () => {
     expect(result.title).toBe("Staff Engineer");
     expect(result.company).toBe("Green Corp");
     expect(result.companyLogoUrl).toBeNull();
+    expect(result.companyLinkedinUrl).toBeNull();
     expect(result.location).toBe("Berlin");
     expect(result.applicationType).toBe("external");
     expect(result.descriptionText).toBe("Greenhouse description");
@@ -734,6 +902,7 @@ describe("LeverAdapter", () => {
     expect(result.title).toBe("Senior Product Designer");
     expect(result.company).toBe("Lever Labs");
     expect(result.companyLogoUrl).toBeNull();
+    expect(result.companyLinkedinUrl).toBeNull();
     expect(result.location).toBe("London");
     expect(result.applicationType).toBe("external");
     expect(result.applyUrl).toContain("/apply");

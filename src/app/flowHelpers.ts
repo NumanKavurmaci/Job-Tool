@@ -2,7 +2,11 @@ import type { Page } from "@playwright/test";
 import type { CandidateProfile } from "../candidate/types.js";
 import type { InputQuestion } from "../questions/types.js";
 import { buildDuplicateReviewReason, getLatestJobReview } from "../utils/jobHistory.js";
-import { persistJobAnalysisRecord } from "../utils/jobPersistence.js";
+import {
+  jobPostingNeedsMetadataRefresh,
+  persistJobAnalysisRecord,
+  refreshJobPostingMetadata,
+} from "../utils/jobPersistence.js";
 import { LINKEDIN_EVALUATION_SESSION_OPTIONS, PARSE_VERSION } from "./constants.js";
 import type { AppDeps } from "./deps.js";
 import { persistJobHistory, persistSystemEvent } from "./observability.js";
@@ -57,9 +61,34 @@ export function createBatchJobEvaluator(args: {
     const latestReview = await getLatestJobReview({
       prisma: deps.prisma,
       jobUrl: url,
+      logger: deps.logger,
     });
 
     if (latestReview) {
+      const existingJobPosting = deps.prisma.jobPosting.findUnique
+        ? await deps.prisma.jobPosting.findUnique({
+            where: { url },
+            select: {
+              id: true,
+              title: true,
+              company: true,
+              companyLogoUrl: true,
+              companyLinkedinUrl: true,
+              location: true,
+            },
+          })
+        : null;
+
+      if (existingJobPosting && jobPostingNeedsMetadataRefresh(existingJobPosting)) {
+        const extracted = await deps.extractJobText(evaluationPage, url);
+        await refreshJobPostingMetadata({
+          prisma: deps.prisma as never,
+          logger: deps.logger,
+          url,
+          extracted,
+        });
+      }
+
       const reason = buildDuplicateReviewReason(latestReview);
       deps.logger.warn({ url, reason }, "Skipping duplicate job review");
       await persistSystemEvent(

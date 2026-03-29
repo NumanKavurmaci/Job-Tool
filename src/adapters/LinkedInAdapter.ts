@@ -74,6 +74,10 @@ const LINKEDIN_COMPANY_LOGO_SELECTORS = [
   "img[alt*='Company logo for']",
   "a[href*='linkedin.com/company/'] img",
 ];
+const LINKEDIN_COMPANY_URL_SELECTORS = [
+  "a[href*='linkedin.com/company/'][componentkey]",
+  "a[href*='linkedin.com/company/']",
+];
 const LINKEDIN_LOCATION_SELECTORS = [
   ".job-details-jobs-unified-top-card__bullet",
   ".topcard__flavor--bullet",
@@ -97,6 +101,9 @@ const LINKEDIN_BADGE_SELECTORS = [
   ".jobs-unified-top-card__job-insight span",
   ".job-details-jobs-unified-top-card__job-insight",
   ".job-details-jobs-unified-top-card__job-insight span",
+  ".job-details-fit-level-preferences button",
+  ".job-details-fit-level-preferences .tvm__text",
+  ".job-details-fit-level-preferences .visually-hidden",
   "a[href*='linkedin.com/jobs/view'] span",
 ];
 const LINKEDIN_ABOUT_COMPANY_SELECTORS = [
@@ -205,6 +212,99 @@ function parseLinkedInAboutCompanyName(text: string | null | undefined): string 
   }
 
   return null;
+}
+
+function parseLinkedInLabeledField(
+  text: string | null | undefined,
+  label: string,
+): string | null {
+  const normalized = optionalText(text);
+  if (!normalized) {
+    return null;
+  }
+
+  const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const regex = new RegExp(`^${escapedLabel}:\\s*(.+)$`, "i");
+  const lines = normalized
+    .split("\n")
+    .map((line) => optionalText(line))
+    .filter((line): line is string => Boolean(line));
+
+  for (const line of lines) {
+    const match = line.match(regex);
+    if (match?.[1]) {
+      return optionalText(match[1]);
+    }
+  }
+
+  return null;
+}
+
+function parseLinkedInWorkplaceType(values: string[]): "remote" | "hybrid" | "onsite" | null {
+  const normalized = values.join("\n").toLowerCase();
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (
+    /\bworkplace type is remote\b/.test(normalized) ||
+    /(^|\n)\s*remote\s*($|\n)/.test(normalized)
+  ) {
+    return "remote";
+  }
+
+  if (
+    /\bworkplace type is hybrid\b/.test(normalized) ||
+    /(^|\n)\s*hybrid\s*($|\n)/.test(normalized)
+  ) {
+    return "hybrid";
+  }
+
+  if (
+    /\bworkplace type is on-?site\b/.test(normalized) ||
+    /(^|\n)\s*on-?site\s*($|\n)/.test(normalized) ||
+    /(^|\n)\s*onsite\s*($|\n)/.test(normalized)
+  ) {
+    return "onsite";
+  }
+
+  return null;
+}
+
+function sanitizeLinkedInLocation(value: string | null | undefined): string | null {
+  const normalized = optionalText(value);
+  if (!normalized) {
+    return null;
+  }
+
+  const cleanSegment = (segment: string | null | undefined) =>
+    optionalText(segment)?.replace(/\s*Â+\s*$/g, "").trim() ?? null;
+
+  const firstLine = normalized.split("\n")[0]?.trim() ?? normalized;
+  const parts = firstLine
+    .split("·")
+    .map((part) => cleanSegment(part))
+    .filter((part): part is string => Boolean(part));
+
+  for (const part of parts) {
+    if (
+      /\b\d+\s+(day|days|week|weeks|month|months|hour|hours)\s+ago\b/i.test(part) ||
+      /\bapplicant/i.test(part) ||
+      /\bpromoted by\b/i.test(part) ||
+      /\bactively reviewing applicants\b/i.test(part)
+    ) {
+      continue;
+    }
+
+    if (/^(remote|hybrid|on-?site|onsite)$/i.test(part)) {
+      continue;
+    }
+
+    return cleanSegment(part);
+  }
+
+  return cleanSegment(parts[0] ?? normalized);
 }
 
 function uniqueText(values: Array<string | null | undefined>): string[] {
@@ -529,9 +629,17 @@ export class LinkedInAdapter implements JobAdapter {
     const pageBodyText = await page.locator("body").innerText().catch(() => "");
     const titleParts = parseLinkedInPageTitle(await page.title().catch(() => null));
     await expandLinkedInAboutSection(page);
+    const aboutText =
+      (await extractSectionText(page, LINKEDIN_ABOUT_TEXT_SELECTORS)) ??
+      (await extractSectionText(page, ["main", "article", "body"]));
     const aboutCompanyText = await extractSectionText(page, LINKEDIN_ABOUT_COMPANY_SELECTORS);
+    const aboutPosition = parseLinkedInLabeledField(aboutText, "Position");
+    const aboutLocation = parseLinkedInLabeledField(aboutText, "Location");
 
-    const rawTitle = (await getTextBySelectors(page, LINKEDIN_TITLE_SELECTORS)) ?? titleParts.title;
+    const rawTitle =
+      (await getTextBySelectors(page, LINKEDIN_TITLE_SELECTORS)) ??
+      aboutPosition ??
+      titleParts.title;
     const companyAriaLabel = await getAttributeBySelectors(
       page,
       LINKEDIN_COMPANY_ARIA_SELECTORS,
@@ -547,15 +655,23 @@ export class LinkedInAdapter implements JobAdapter {
       LINKEDIN_COMPANY_LOGO_SELECTORS,
       "src",
     );
+    const companyLinkedinUrl = await getAttributeBySelectors(
+      page,
+      LINKEDIN_COMPANY_URL_SELECTORS,
+      "href",
+    );
 
     const badgeTexts = flattenTextLines(await getTextsBySelectors(page, LINKEDIN_BADGE_SELECTORS));
+    const workplaceType = parseLinkedInWorkplaceType(badgeTexts);
     const inferredBadgeLocation =
+      aboutLocation ??
       badgeTexts.find((value) => /\b(remote|hybrid|onsite|on-site)\b/i.test(value)) ??
       inferLocationFromBodyText(pageBodyText) ??
       titleParts.location;
-    const location =
+    const rawLocation =
       (await getTextBySelectors(page, LINKEDIN_LOCATION_SELECTORS)) ?? inferredBadgeLocation ?? null;
-    const title = cleanLinkedInTitle(rawTitle, location) ?? titleParts.title;
+    const location = sanitizeLinkedInLocation(rawLocation);
+    const title = cleanLinkedInTitle(rawTitle, location) ?? aboutPosition ?? titleParts.title;
 
     const applyUrl =
       (await getAttributeBySelectors(
@@ -568,9 +684,6 @@ export class LinkedInAdapter implements JobAdapter {
         "href",
       )) ?? (await getCurrentUrl(page));
 
-    const aboutText =
-      (await extractSectionText(page, LINKEDIN_ABOUT_TEXT_SELECTORS)) ??
-      (await extractSectionText(page, ["main", "article", "body"]));
     const aboutSections = parseLinkedInAboutSections(aboutText);
 
     const requirementsText =
@@ -617,7 +730,9 @@ export class LinkedInAdapter implements JobAdapter {
         title ? `Title: ${title}` : null,
         company ? `Company: ${company}` : null,
         companyLogoUrl ? `Company Logo URL: ${companyLogoUrl}` : null,
+        companyLinkedinUrl ? `Company LinkedIn URL: ${companyLinkedinUrl}` : null,
         location ? `Location: ${location}` : null,
+        workplaceType ? `Workplace Type: ${workplaceType}` : null,
         `Application Type: ${applicationType}`,
         badgeTexts.length > 0 ? `Badges:\n${badgeTexts.join("\n")}` : null,
         descriptionText ? `Description:\n${descriptionText}` : null,
@@ -634,6 +749,7 @@ export class LinkedInAdapter implements JobAdapter {
       title,
       company,
       companyLogoUrl,
+      companyLinkedinUrl,
       location,
       platform: this.name,
       applicationType,

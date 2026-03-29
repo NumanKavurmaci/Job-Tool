@@ -76,6 +76,7 @@ export class GenericAdapter implements JobAdapter {
       title,
       company,
       companyLogoUrl: null,
+      companyLinkedinUrl: null,
       location,
       platform: this.name,
       applicationType: "unknown",

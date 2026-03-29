@@ -476,6 +476,7 @@ describe("runEasyApplyDryRun", () => {
 
     expect(result.status).toBe("stopped_not_easy_apply");
     expect(result.stopReason).toContain("already been applied");
+    expect(result.alreadyApplied).toBe(true);
   });
 
   it("stops on unknown primary actions", async () => {
@@ -1001,6 +1002,7 @@ describe("runEasyApplyBatchDryRun", () => {
     expect(result.skippedCount).toBe(1);
     expect(result.jobs[0]?.evaluation.finalDecision).toBe("SKIP");
     expect(result.jobs[0]?.evaluation.reason).toContain("already");
+    expect(result.jobs[0]?.evaluation.alreadyApplied).toBe(true);
     expect(evaluateJob).toHaveBeenCalledTimes(1);
     expect(evaluateJob).toHaveBeenCalledWith("https://www.linkedin.com/jobs/view/2");
   });

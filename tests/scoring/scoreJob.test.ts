@@ -3,7 +3,12 @@ import { scoreJob } from "../../src/scoring/scoreJob.js";
 
 const profile = {
   yearsOfExperience: 3,
-  preferredRoles: ["Backend Engineer", "Software Engineer"],
+  preferredRoles: [
+    "Backend Engineer",
+    "Software Engineer",
+    "Full Stack Engineer",
+    "Full Stack Developer",
+  ],
   preferredTechStack: ["TypeScript", "Node.js", "Prisma", "PostgreSQL"],
   aspirationalTechStack: [
     "Python",
@@ -361,5 +366,67 @@ describe("scoreJob", () => {
 
     expect(juniorResult.breakdown.seniority).toBe(18);
     expect(internResult.breakdown.seniority).toBe(12);
+  });
+
+  it("adds a full-stack adjacency bonus for node typescript react api-microservices roles", () => {
+    const result = scoreJob(
+      {
+        title: "Full Stack Engineer",
+        company: "Wide and Wise",
+        location: "Türkiye",
+        remoteType: "remote",
+        seniority: "mid",
+        mustHaveSkills: [
+          "Node.js",
+          "TypeScript",
+          "React.js",
+          "API development",
+          "microservices architecture",
+        ],
+        niceToHaveSkills: [],
+        technologies: [
+          "Node.js",
+          "TypeScript",
+          "React.js",
+          "API development",
+          "microservices architecture",
+          "PostgreSQL",
+        ],
+        yearsRequired: 3,
+        platform: "linkedin",
+        applicationType: "easy_apply",
+        visaSponsorship: "unknown",
+        workAuthorization: "authorized",
+        openQuestionsCount: 0,
+      },
+      profile,
+    );
+
+    expect(result.breakdown.bonus).toBeGreaterThanOrEqual(8);
+    expect(result.totalScore).toBeGreaterThanOrEqual(70);
+  });
+
+  it("does not add the full-stack adjacency bonus when the role lacks the api-microservices signal", () => {
+    const result = scoreJob(
+      {
+        title: "Full Stack Engineer",
+        company: "Wide and Wise",
+        location: "Türkiye",
+        remoteType: "remote",
+        seniority: "mid",
+        mustHaveSkills: ["Node.js", "TypeScript", "React.js"],
+        niceToHaveSkills: [],
+        technologies: ["Node.js", "TypeScript", "React.js", "PostgreSQL"],
+        yearsRequired: 3,
+        platform: "linkedin",
+        applicationType: "easy_apply",
+        visaSponsorship: "unknown",
+        workAuthorization: "authorized",
+        openQuestionsCount: 0,
+      },
+      profile,
+    );
+
+    expect(result.breakdown.bonus).toBe(4);
   });
 });

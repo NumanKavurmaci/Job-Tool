@@ -65,6 +65,7 @@ export interface EasyApplyRunResult {
   url: string;
   externalApplyUrl?: string;
   reviewDiagnostics?: EasyApplyReviewDiagnostics;
+  alreadyApplied?: boolean;
 }
 
 export interface EasyApplyJobEvaluation {
@@ -73,6 +74,7 @@ export interface EasyApplyJobEvaluation {
   score: number;
   reason: string;
   policyAllowed: boolean;
+  alreadyApplied?: boolean;
 }
 
 export interface EasyApplyBatchJobResult {
@@ -177,6 +179,7 @@ function buildAlreadyAppliedBatchResult(url: string): EasyApplyBatchJobResult {
       score: 0,
       reason: "Job already has a LinkedIn applied badge.",
       policyAllowed: true,
+      alreadyApplied: true,
     },
   };
 }
@@ -304,6 +307,7 @@ async function stopIfApplyUnavailable(
       steps: [],
       stopReason: "This LinkedIn job has already been applied to.",
       url,
+      alreadyApplied: true,
     };
   }
 

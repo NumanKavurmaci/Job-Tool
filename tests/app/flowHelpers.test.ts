@@ -16,7 +16,7 @@ function createDeps() {
       },
       jobPosting: {
         upsert: vi.fn().mockResolvedValue({ id: "job_1", company: "Acme" }),
-        count: vi.fn().mockResolvedValue(0),
+        findUnique: vi.fn().mockResolvedValue(null),
       },
       applicationDecision: {
         create: vi.fn().mockResolvedValue({ id: "decision_1" }),
@@ -146,6 +146,65 @@ describe("app flow helpers", () => {
     expect(deps.extractJobText).not.toHaveBeenCalled();
   });
 
+  it("refreshes missing job metadata before skipping a duplicate review", async () => {
+    const deps = createDeps();
+    deps.prisma.jobReviewHistory.findFirst.mockResolvedValue({
+      createdAt: new Date("2026-03-29T00:00:00.000Z"),
+      status: "SKIPPED",
+      decision: "SKIP",
+      score: 47,
+      policyAllowed: false,
+    });
+    deps.prisma.jobPosting.findUnique.mockResolvedValue({
+      id: "job_1",
+      title: null,
+      company: "Acme",
+      companyLogoUrl: null,
+      companyLinkedinUrl: null,
+      location: null,
+    });
+    deps.extractJobText.mockResolvedValue({
+      rawText: "raw",
+      title: "Recovered Title",
+      company: "Acme",
+      companyLogoUrl: "https://cdn.example.com/acme.png",
+      companyLinkedinUrl: "https://www.linkedin.com/company/acme/",
+      location: "Remote",
+      platform: "linkedin",
+      applicationType: "easy_apply",
+      applyUrl: "https://example.com/apply",
+      currentUrl: "https://example.com/job",
+      descriptionText: "desc",
+      requirementsText: "req",
+      benefitsText: "benefits",
+    });
+
+    const evaluate = createBatchJobEvaluator({
+      disableAiEvaluation: false,
+      scoreThreshold: 60,
+      scoringProfile: {} as any,
+      evaluationPage: { fake: true } as any,
+      deps,
+    });
+
+    await evaluate("https://example.com/job");
+
+    expect(deps.extractJobText).toHaveBeenCalledWith(
+      { fake: true },
+      "https://example.com/job",
+    );
+    expect(deps.prisma.jobPosting.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({
+          title: "Recovered Title",
+          companyLogoUrl: "https://cdn.example.com/acme.png",
+          companyLinkedinUrl: "https://www.linkedin.com/company/acme/",
+          location: "Remote",
+        }),
+      }),
+    );
+  });
+
   it("handles duplicate reviews without score or policyAllowed by falling back safely", async () => {
     const deps = createDeps();
     deps.prisma.jobReviewHistory.findFirst.mockResolvedValue({
@@ -181,6 +240,7 @@ describe("app flow helpers", () => {
       title: "Job",
       company: "Acme",
       companyLogoUrl: "https://cdn.example.com/acme.png",
+      companyLinkedinUrl: "https://www.linkedin.com/company/acme/",
       location: "Remote",
       platform: "linkedin",
     });
@@ -232,6 +292,7 @@ describe("app flow helpers", () => {
       title: "Job",
       company: "Acme",
       companyLogoUrl: null,
+      companyLinkedinUrl: null,
       location: "Remote",
       platform: "linkedin",
     });
@@ -270,6 +331,7 @@ describe("app flow helpers", () => {
       title: "Job",
       company: "Acme",
       companyLogoUrl: null,
+      companyLinkedinUrl: null,
       location: "Remote",
       platform: "linkedin",
     });
@@ -309,6 +371,7 @@ describe("app flow helpers", () => {
       title: "Job",
       company: "Acme",
       companyLogoUrl: null,
+      companyLinkedinUrl: null,
       location: "Remote",
       platform: "linkedin",
     });

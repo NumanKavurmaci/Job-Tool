@@ -65,6 +65,10 @@ export async function persistBatchJobHistory(
   deps: AppDeps,
 ): Promise<void> {
   for (const job of args.jobs) {
+    if (job.evaluation.alreadyApplied) {
+      continue;
+    }
+
     const evaluationStatus =
       job.evaluation.finalDecision === "SKIP" ? "SKIPPED" : "EVALUATED";
 

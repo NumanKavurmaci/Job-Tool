@@ -2,6 +2,7 @@ export const linkedInCrossingHurdlesFixture = {
   pageTitle: "Software Engineer (Fullstack) | Remote | Crossing Hurdles | LinkedIn",
   titleText: "Software Engineer (Fullstack) | Remote",
   companyName: "Crossing Hurdles",
+  companyLinkedinUrl: "https://www.linkedin.com/company/crossing-hurdles/life/",
   companyLogoUrl: "https://media.licdn.com/dms/image/v2/D4D0BAQH9p_tARBMP8Q/company-logo_100_100/company-logo_100_100/0/1698926021513/ticimax_logo",
   aboutCollapsed: [
     "Position: Fullstack Developer (Python/React)",
@@ -54,6 +55,7 @@ export const linkedInCompanyFallbackFixture = {
   pageTitle: "Frontend Developer | Remote | Ticimax | LinkedIn",
   titleText: "Frontend Developer | Remote",
   companyName: "Ticimax",
+  companyLinkedinUrl: "https://www.linkedin.com/company/ticimax/life/",
   companyLogoUrl:
     "https://media.licdn.com/dms/image/v2/D4D0BAQH9p_tARBMP8Q/company-logo_100_100/company-logo_100_100/0/1698926021513/ticimax_logo?e=1776297600&v=beta&t=tSX9eLD5A-mpLG5yY4QjfB-AlmrqN2KegfdlCC_E5x8",
   aboutCompanyText: [
@@ -63,6 +65,80 @@ export const linkedInCompanyFallbackFixture = {
     "Software Development",
     "51-200 employees",
     "266 on LinkedIn",
+  ].join("\n"),
+};
+
+export const linkedInAboutOnlyTitleAndLocationFixture = {
+  pageTitle: "LinkedIn",
+  companyName: "Ticimax",
+  companyLinkedinUrl: "https://www.linkedin.com/company/ticimax/life/",
+  companyLogoUrl:
+    "https://media.licdn.com/dms/image/v2/D4D0BAQH9p_tARBMP8Q/company-logo_100_100/company-logo_100_100/0/1698926021513/ticimax_logo?e=1776297600&v=beta&t=tSX9eLD5A-mpLG5yY4QjfB-AlmrqN2KegfdlCC_E5x8",
+  topMetaLine: "Istanbul, Türkiye · 3 weeks ago · Over 100 applicants",
+  aboutText: [
+    "Shape Your Future at Ticimax!",
+    "Position: System Engineer",
+    "Location: Kozyatağı Allianz Tower (Hybrid)",
+    "Take a Step Closer to Your Dream Career!",
+    "Ticimax is looking for frontier System Engineer to join its dynamic team!",
+  ].join("\n"),
+  aboutCompanyText: [
+    "About the company",
+    "Ticimax",
+    "35,373 followers",
+    "Software Development",
+    "51-200 employees",
+  ].join("\n"),
+};
+
+export const linkedInRemoteBadgeFixture = {
+  pageTitle: "Full Stack Engineer | Wide and Wise | LinkedIn",
+  titleText: "Full Stack Engineer",
+  companyName: "Wide and Wise",
+  companyLinkedinUrl: "https://www.linkedin.com/company/wideandwise/life/",
+  companyLogoUrl:
+    "https://media.licdn.com/dms/image/v2/D4D0BAQFtrP8uBT65jA/company-logo_100_100/B4DZuNWVhoKQAY-/0/1767603002412/wideandwise_logo",
+  locationMetaLine:
+    "Türkiye · 4 days ago · Over 100 applicants\n\nPromoted by hirer · Actively reviewing applicants",
+  badgeTexts: [
+    "Remote",
+    "Matches your job preferences, workplace type is Remote.",
+    "Full-time",
+  ].join("\n"),
+  aboutText: [
+    "About the job",
+    "We are looking for a Full Stack Developer to join our partner company!",
+    "Key Responsibilities",
+    "Develop and maintain full-stack web applications.",
+  ].join("\n"),
+};
+
+export const linkedInAlreadyAppliedFixture = {
+  pageTitle: "Full Stack Engineer | Wide and Wise | LinkedIn",
+  titleText: "Full Stack Engineer",
+  companyName: "Wide and Wise",
+  companyLinkedinUrl: "https://www.linkedin.com/company/wideandwise/life",
+  companyLogoUrl:
+    "https://media.licdn.com/dms/image/v2/D4D0BAQFtrP8uBT65jA/company-logo_100_100/B4DZuNWVhoKQAY-/0/1767603002412/wideandwise_logo?e=1776297600&v=beta&t=Gt7Bp9BjRaSEfQnxxHPDOcngIap3UDV7Fk2skMbPZz0",
+  locationMetaLine:
+    "TÃ¼rkiye Â· 4 days ago Â· Over 100 applicants\nPromoted by hirer Â· Actively reviewing applicants",
+  stickyMetaLine: "Wide and Wise · TÃ¼rkiye (Remote)",
+  badgeTexts: [
+    "Remote",
+    "Matches your job preferences, workplace type is Remote.",
+    "Full-time",
+  ].join("\n"),
+  appliedText: [
+    "Applied 4 minutes ago",
+    "See application",
+    "Applied 4 minutes ago for Full Stack Engineer",
+  ].join("\n"),
+  aboutText: [
+    "About the job",
+    "We are looking for a Full Stack Developer to join our partner company!",
+    "Key Responsibilities",
+    "Develop and maintain full-stack web applications, including front-end interfaces and back-end services.",
+    "Experience with microservices architecture and API development.",
   ].join("\n"),
 };
 
@@ -146,6 +222,32 @@ export const linkedInReviewModalHtml = `
           </div>
         </footer>
       </div>
+    </div>
+  </div>
+</div>
+`.trim();
+
+export const linkedInApplicationSentModalHtml = `
+<div data-test-modal="" role="dialog" tabindex="-1" class="artdeco-modal artdeco-modal--layer-default">
+  <div class="artdeco-modal__content ember-view">
+    <div class="display-flex flex-column justify-space-between full-height">
+      <div>
+        <h3 class="jpac-modal-header t-20 t-bold">
+          Your application was sent to Wide and Wise!
+        </h3>
+        <p class="t-14 t-black--light text-align-center mb6">
+          You can keep track of your application in the "Applied" tab of My Jobs
+        </p>
+      </div>
+      <button
+        aria-label="Dismiss"
+        class="artdeco-button artdeco-button--circle artdeco-button--muted artdeco-button--2 artdeco-button--tertiary artdeco-modal__dismiss"
+        data-test-modal-close-btn=""
+        type="button"
+        onclick="this.closest('[role=dialog]').remove()"
+      >
+        <span class="artdeco-button__text"></span>
+      </button>
     </div>
   </div>
 </div>

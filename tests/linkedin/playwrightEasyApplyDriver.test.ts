@@ -1,6 +1,7 @@
 import { chromium, type Browser } from "@playwright/test";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  linkedInApplicationSentModalHtml,
   linkedInPreReviewModalHtml,
   linkedInReviewModalHtml,
 } from "../fixtures/linkedin.js";
@@ -80,6 +81,41 @@ describe("PlaywrightLinkedInEasyApplyDriver", () => {
         label: "Submit application",
       },
     ]);
+
+    await page.close();
+  });
+
+  it("dismisses the application-sent modal through the X button when Not now is not present", async () => {
+    const page = await browser.newPage();
+    await page.setContent(linkedInApplicationSentModalHtml);
+
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page);
+    const dismissed = await driver.dismissCompletionModal();
+
+    expect(dismissed).toBe(true);
+    expect(await page.locator(".jpac-modal-header").count()).toBe(0);
+
+    await page.close();
+  });
+
+  it("detects already-applied linkedin jobs from the see-application badge", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <div class="jobs-s-apply jobs-s-apply--fadein inline-flex mr2">
+        <div class="artdeco-inline-feedback artdeco-inline-feedback--success" role="alert">
+          <span class="artdeco-inline-feedback__message">Applied 4 minutes ago</span>
+        </div>
+        <a id="jobs-apply-see-application-link" href="/jobs-tracker?stage=applied" class="jobs-s-apply__application-link">
+          See application
+          <span class="a11y-text">Applied 4 minutes ago for Full Stack Engineer</span>
+        </a>
+      </div>
+    `);
+
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page);
+    const alreadyApplied = await driver.isAlreadyApplied();
+
+    expect(alreadyApplied).toBe(true);
 
     await page.close();
   });

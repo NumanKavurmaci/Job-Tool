@@ -68,11 +68,23 @@ export async function recordJobReviewHistory(args: {
 export async function getLatestJobReview(args: {
   prisma: JobHistoryWriter;
   jobUrl: string;
+  logger?: JobHistoryLogger;
 }): Promise<JobReviewHistory | null> {
-  return args.prisma.jobReviewHistory.findFirst({
-    where: { jobUrl: args.jobUrl },
-    orderBy: [{ createdAt: "desc" }],
-  });
+  try {
+    return await args.prisma.jobReviewHistory.findFirst({
+      where: { jobUrl: args.jobUrl },
+      orderBy: [{ createdAt: "desc" }],
+    });
+  } catch (error) {
+    args.logger?.warn(
+      {
+        jobUrl: args.jobUrl,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      "Failed to load latest job review history",
+    );
+    return null;
+  }
 }
 
 export function buildDuplicateReviewReason(

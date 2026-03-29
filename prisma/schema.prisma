@@ -13,6 +13,7 @@ model JobPosting {
   title          String?
   company        String?
   companyLogoUrl String?
+  companyLinkedinUrl String?
   firmId         String?
   location       String?
   platform       String?
@@ -33,6 +34,7 @@ model Firm {
   id                String       @id @default(cuid())
   name              String       @unique
   logoUrl           String?
+  linkedinUrl       String?
   totalReviewedJobs Int          @default(0)
   appliedJobs       Int          @default(0)
   skippedJobs       Int          @default(0)

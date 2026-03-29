@@ -90,6 +90,27 @@ describe("jobHistory", () => {
     });
   });
 
+  it("fails open if latest-review lookup errors", async () => {
+    const findFirst = vi.fn().mockRejectedValue(new Error("db down"));
+    const warn = vi.fn();
+
+    const result = await getLatestJobReview({
+      prisma: {
+        jobReviewHistory: { findFirst },
+      } as never,
+      jobUrl: "https://example.com/jobs/1",
+      logger: { warn } as never,
+    });
+
+    expect(result).toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobUrl: "https://example.com/jobs/1",
+      }),
+      "Failed to load latest job review history",
+    );
+  });
+
   it("builds a human-readable duplicate review reason", () => {
     const reason = buildDuplicateReviewReason({
       createdAt: new Date("2026-03-29T10:00:00.000Z"),

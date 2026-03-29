@@ -45,6 +45,7 @@ describe("job flow", () => {
       title: "Title",
       company: "Company",
       companyLogoUrl: "https://cdn.example.com/company.png",
+      companyLinkedinUrl: "https://www.linkedin.com/company/company/",
       location: "Istanbul",
       platform: "greenhouse",
     });
@@ -92,9 +93,11 @@ describe("job flow", () => {
       expect.objectContaining({
         update: expect.objectContaining({
           companyLogoUrl: "https://cdn.example.com/company.png",
+          companyLinkedinUrl: "https://www.linkedin.com/company/company/",
         }),
         create: expect.objectContaining({
           companyLogoUrl: "https://cdn.example.com/company.png",
+          companyLinkedinUrl: "https://www.linkedin.com/company/company/",
         }),
       }),
     );
@@ -131,6 +134,7 @@ describe("job flow", () => {
       title: "Title",
       company: "Company",
       companyLogoUrl: null,
+      companyLinkedinUrl: null,
       location: "Remote",
       platform: "linkedin",
     });

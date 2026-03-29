@@ -1,28 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
+import { prisma } from "../../src/db/client.js";
 
-const prismaClientMock = vi.fn();
-const PrismaClientMock = vi.fn(function PrismaClientMock(this: object) {
-  return prismaClientMock();
-});
-
-vi.mock("@prisma/client", () => ({
-  PrismaClient: PrismaClientMock,
-}));
-
-describe("db client", () => {
-  beforeEach(() => {
-    vi.resetModules();
-    prismaClientMock.mockReset();
-    PrismaClientMock.mockClear();
+describe("db client runtime", () => {
+  afterAll(async () => {
+    await prisma.$disconnect();
   });
 
-  it("creates a Prisma client instance", async () => {
-    const instance = { marker: "prisma" };
-    prismaClientMock.mockImplementation(() => instance);
+  it("can execute a real query against the configured local database", async () => {
+    const result = await prisma.$queryRaw<Array<{ ok: bigint }>>`SELECT 1 as ok`;
 
-    const module = await import("../../src/db/client.js");
-
-    expect(PrismaClientMock).toHaveBeenCalledTimes(1);
-    expect(module.prisma).toBe(instance);
+    expect(result[0]?.ok).toBe(1n);
   });
 });

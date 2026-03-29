@@ -5,6 +5,7 @@ export interface ExtractedJobContent {
   title: string | null;
   company: string | null;
   companyLogoUrl: string | null;
+  companyLinkedinUrl: string | null;
   location: string | null;
   platform: string;
   applicationType: "easy_apply" | "external" | "unknown";

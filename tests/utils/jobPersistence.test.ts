@@ -1,15 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
-import { persistJobAnalysisRecord } from "../../src/utils/jobPersistence.js";
+import {
+  persistDetectedAppliedJobRecord,
+  persistJobAnalysisRecord,
+} from "../../src/utils/jobPersistence.js";
 
 function createArgs() {
   const prisma = {
     firm: {
-      upsert: vi.fn().mockResolvedValue({ id: "firm_1", name: "Acme", logoUrl: null }),
-      update: vi.fn().mockResolvedValue({ id: "firm_1", name: "Acme", logoUrl: "https://cdn.example.com/acme.png" }),
+      upsert: vi.fn().mockResolvedValue({ id: "firm_1", name: "Acme", logoUrl: null, linkedinUrl: null }),
+      update: vi.fn().mockResolvedValue({ id: "firm_1", name: "Acme", logoUrl: "https://cdn.example.com/acme.png", linkedinUrl: "https://www.linkedin.com/company/acme/" }),
     },
     jobPosting: {
       upsert: vi.fn().mockResolvedValue({ id: "job_1", company: "Acme" }),
-      count: vi.fn().mockResolvedValue(3),
+      findUnique: vi.fn(),
     },
     applicationDecision: {
       create: vi.fn().mockResolvedValue({ id: "decision_3" }),
@@ -30,6 +33,7 @@ function createArgs() {
       title: "Frontend Engineer",
       company: "Acme",
       companyLogoUrl: "https://cdn.example.com/acme.png",
+      companyLinkedinUrl: "https://www.linkedin.com/company/acme/",
       location: "Remote",
       platform: "linkedin",
       applicationType: "easy_apply" as const,
@@ -85,12 +89,16 @@ describe("job persistence", () => {
 
     expect(result.jobPosting.id).toBe("job_1");
     expect(result.applicationDecision.id).toBe("decision_3");
-    expect(args.prisma.firm.upsert).toHaveBeenCalledWith({
+    expect(args.prisma.firm.upsert).toHaveBeenNthCalledWith(1, {
       where: { name: "Acme" },
-      update: { logoUrl: "https://cdn.example.com/acme.png" },
+      update: {
+        logoUrl: "https://cdn.example.com/acme.png",
+        linkedinUrl: "https://www.linkedin.com/company/acme/",
+      },
       create: {
         name: "Acme",
         logoUrl: "https://cdn.example.com/acme.png",
+        linkedinUrl: "https://www.linkedin.com/company/acme/",
       },
     });
     expect(args.prisma.jobPosting.upsert).toHaveBeenCalledWith(
@@ -98,6 +106,7 @@ describe("job persistence", () => {
         update: expect.objectContaining({
           firmId: "firm_1",
           companyLogoUrl: "https://cdn.example.com/acme.png",
+          companyLinkedinUrl: "https://www.linkedin.com/company/acme/",
         }),
       }),
     );
@@ -105,7 +114,8 @@ describe("job persistence", () => {
       where: { id: "firm_1" },
       data: {
         logoUrl: "https://cdn.example.com/acme.png",
-        totalReviewedJobs: 3,
+        linkedinUrl: "https://www.linkedin.com/company/acme/",
+        totalReviewedJobs: 2,
         appliedJobs: 1,
         skippedJobs: 1,
         decisionIdsJson: JSON.stringify(["decision_3", "decision_2", "decision_1"]),
@@ -116,6 +126,7 @@ describe("job persistence", () => {
   it("skips firm creation when company is unknown", async () => {
     const args = createArgs();
     args.extracted.company = null;
+    args.extracted.companyLinkedinUrl = null;
     args.parsed.company = null;
     args.prisma.jobPosting.upsert.mockResolvedValue({ id: "job_1", company: null });
 
@@ -130,5 +141,52 @@ describe("job persistence", () => {
         }),
       }),
     );
+  });
+
+  it("detects when a posting needs metadata refresh", async () => {
+    const { jobPostingNeedsMetadataRefresh } = await import("../../src/utils/jobPersistence.js");
+
+    expect(jobPostingNeedsMetadataRefresh(null)).toBe(true);
+    expect(
+      jobPostingNeedsMetadataRefresh({
+        title: "Title",
+        company: "Acme",
+        companyLogoUrl: "logo",
+        companyLinkedinUrl: "linkedin",
+        location: "Remote",
+      }),
+    ).toBe(false);
+    expect(
+      jobPostingNeedsMetadataRefresh({
+        title: "",
+        company: "Acme",
+        companyLogoUrl: "logo",
+        companyLinkedinUrl: "linkedin",
+        location: "Remote",
+      }),
+    ).toBe(true);
+  });
+
+  it("persists detected already-applied jobs as apply decisions and updates the firm snapshot", async () => {
+    const args = createArgs();
+
+    const result = await persistDetectedAppliedJobRecord({
+      prisma: args.prisma as never,
+      logger: args.logger as never,
+      url: args.url,
+      extracted: args.extracted,
+      reason: "Detected LinkedIn applied badge; application was already submitted outside the bot.",
+    });
+
+    expect(result.applicationDecision.id).toBe("decision_3");
+    expect(args.prisma.applicationDecision.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        jobPostingId: "job_1",
+        decision: "APPLY",
+        score: 0,
+        policyAllowed: true,
+      }),
+    });
+    expect(args.prisma.firm.update).toHaveBeenCalled();
   });
 });
