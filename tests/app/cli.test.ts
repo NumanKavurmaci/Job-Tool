@@ -61,7 +61,7 @@ describe("app cli", () => {
       resumePath: expect.any(String),
       count: 2,
       disableAiEvaluation: false,
-      scoreThreshold: 60,
+      scoreThreshold: 40,
     });
   });
 });

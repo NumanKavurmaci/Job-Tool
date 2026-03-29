@@ -1,4 +1,5 @@
 import {
+  DEFAULT_SCORE_THRESHOLD,
   DEFAULT_LINKEDIN_EASY_APPLY_URL,
   DEFAULT_RESUME_PATH,
   isLinkedInCollectionUrl,
@@ -122,7 +123,7 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
     const resumePath = getFlag("--resume") ?? DEFAULT_RESUME_PATH;
     const positionalArgs = getPositionalTailArgs();
     const countFromFlag = getIntegerFlag("--count");
-    const scoreThreshold = getIntegerFlag("--score-threshold") ?? 60;
+    const scoreThreshold = getIntegerFlag("--score-threshold") ?? DEFAULT_SCORE_THRESHOLD;
     const disableAiEvaluation = hasFlag("--disable-ai-evaluation");
     const trailingPositional = positionalArgs.at(-1);
     const positionalCount =
@@ -161,7 +162,7 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
     const resumePath = getFlag("--resume") ?? DEFAULT_RESUME_PATH;
     const positionalArgs = getPositionalTailArgs();
     const countFromFlag = getIntegerFlag("--count");
-    const scoreThreshold = getIntegerFlag("--score-threshold") ?? 60;
+    const scoreThreshold = getIntegerFlag("--score-threshold") ?? DEFAULT_SCORE_THRESHOLD;
     const disableAiEvaluation = hasFlag("--disable-ai-evaluation");
     const trailingPositional = positionalArgs.at(-1);
     const positionalCount =

@@ -416,7 +416,7 @@ describe("phase 5 index flows", () => {
         resumePath: expect.any(String),
         count: 1,
         disableAiEvaluation: false,
-        scoreThreshold: 60,
+        scoreThreshold: 40,
       });
 
     expect(module.parseCliArgs(["easy-apply-dry-run"])).toEqual({
@@ -425,7 +425,7 @@ describe("phase 5 index flows", () => {
       resumePath: expect.any(String),
       count: 1,
       disableAiEvaluation: false,
-      scoreThreshold: 60,
+      scoreThreshold: 40,
     });
 
     expect(module.parseCliArgs(["easy-apply-dry-run", "--count", "3"])).toEqual({
@@ -434,7 +434,7 @@ describe("phase 5 index flows", () => {
       resumePath: expect.any(String),
       count: 3,
       disableAiEvaluation: false,
-      scoreThreshold: 60,
+      scoreThreshold: 40,
     });
 
     expect(module.parseCliArgs(["easy-apply-dry-run", "2"])).toEqual({
@@ -443,7 +443,7 @@ describe("phase 5 index flows", () => {
       resumePath: expect.any(String),
       count: 2,
       disableAiEvaluation: false,
-      scoreThreshold: 60,
+      scoreThreshold: 40,
     });
 
     expect(
@@ -475,7 +475,7 @@ describe("phase 5 index flows", () => {
       resumePath: expect.any(String),
       count: 1,
       disableAiEvaluation: false,
-      scoreThreshold: 60,
+      scoreThreshold: 40,
     });
 
     expect(
@@ -992,7 +992,7 @@ describe("phase 5 index flows", () => {
       shouldApply: true,
       finalDecision: "APPLY",
       score: 81,
-      reason: "Score 81 meets the configured threshold of 60.",
+      reason: "Score 81 meets the configured threshold of 40.",
       policyAllowed: true,
     });
     expect(deps.extractJobText).toHaveBeenCalled();
@@ -1007,7 +1007,7 @@ describe("phase 5 index flows", () => {
         url: "https://www.linkedin.com/jobs/view/1",
         finalDecision: "APPLY",
         totalScore: 81,
-        scoreThreshold: 60,
+        scoreThreshold: 40,
       }),
       "LinkedIn Easy Apply job evaluated",
     );
