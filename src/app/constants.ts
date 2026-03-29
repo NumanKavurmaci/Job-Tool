@@ -22,6 +22,29 @@ export function isLinkedInCollectionUrl(url: string): boolean {
   return /linkedin\.com\/jobs\/collections\//i.test(url);
 }
 
+export function getLinkedInCurrentJobId(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    if (!/linkedin\.com$/i.test(parsed.hostname) && !/\.linkedin\.com$/i.test(parsed.hostname)) {
+      return null;
+    }
+
+    const currentJobId = parsed.searchParams.get("currentJobId")?.trim();
+    return currentJobId && /^\d+$/.test(currentJobId) ? currentJobId : null;
+  } catch {
+    return null;
+  }
+}
+
+export function resolveLinkedInSingleJobUrl(url: string): string {
+  const currentJobId = getLinkedInCurrentJobId(url);
+  if (!currentJobId) {
+    return url;
+  }
+
+  return `https://www.linkedin.com/jobs/view/${currentJobId}/`;
+}
+
 function findDefaultResumePath(): string | undefined {
   const userDir = path.join(process.cwd(), "user");
   const candidates = existsSync(userDir)

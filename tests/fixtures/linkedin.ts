@@ -252,3 +252,169 @@ export const linkedInApplicationSentModalHtml = `
   </div>
 </div>
 `.trim();
+
+export const linkedInSafetyReminderModalHtml = `
+<button
+  id="easy-apply-trigger"
+  type="button"
+  aria-label="Easy Apply to TravelShop Turkey"
+  onclick="
+    document.getElementById('safety-reminder')?.removeAttribute('hidden');
+  "
+>
+  Easy Apply
+</button>
+
+<div
+  id="safety-reminder"
+  role="dialog"
+  hidden
+>
+  <header id="dialog-header">
+    <h2>Job search safety reminder</h2>
+  </header>
+  <div>
+    <button type="button">Review job post</button>
+    <a
+      href="#continue"
+      onclick="
+        event.preventDefault();
+        document.getElementById('safety-reminder')?.remove();
+        document.getElementById('easy-apply-modal')?.removeAttribute('hidden');
+      "
+    >
+      Continue applying
+    </a>
+  </div>
+</div>
+
+<div
+  id="easy-apply-modal"
+  data-test-modal=""
+  role="dialog"
+  tabindex="-1"
+  hidden
+  class="artdeco-modal artdeco-modal--layer-default jobs-easy-apply-modal"
+  aria-labelledby="jobs-apply-header"
+>
+  <div class="artdeco-modal__header ember-view">
+    <h2 id="jobs-apply-header">Apply to TravelShop Turkey</h2>
+  </div>
+  <div class="artdeco-modal__content jobs-easy-apply-modal__content p0 ember-view">
+    <div>
+      <form>
+        <label for="phone-field">Phone number</label>
+        <input id="phone-field" type="text" />
+        <footer role="presentation">
+          <div class="display-flex justify-flex-end ph5 pv4">
+            <button aria-label="Review your application" data-live-test-easy-apply-review-button="" type="button">
+              <span class="artdeco-button__text">Review</span>
+            </button>
+          </div>
+        </footer>
+      </form>
+    </div>
+  </div>
+</div>
+`.trim();
+
+export const linkedInSafetyReminderNoDialogHtml = `
+<button
+  id="easy-apply-trigger"
+  type="button"
+  aria-label="Easy Apply to TravelShop Turkey"
+  onclick="
+    document.getElementById('safety-reminder')?.removeAttribute('hidden');
+  "
+>
+  Easy Apply
+</button>
+
+<div hidden id="safety-reminder">
+  <div role="main" data-sdui-screen="com.linkedin.sdui.flagshipnav.jobs.PreApplySafetyTipsModal">
+    <header id="dialog-header">
+      <h2>Job search safety reminder</h2>
+    </header>
+    <div>
+      <button type="button">Review job post</button>
+      <a
+        href="#continue"
+        onclick="
+          event.preventDefault();
+          document.getElementById('safety-reminder')?.remove();
+          document.getElementById('easy-apply-modal')?.removeAttribute('hidden');
+        "
+      >
+        Continue applying
+      </a>
+    </div>
+  </div>
+</div>
+
+<div
+  id="easy-apply-modal"
+  data-test-modal=""
+  role="dialog"
+  tabindex="-1"
+  hidden
+  class="artdeco-modal artdeco-modal--layer-default jobs-easy-apply-modal"
+  aria-labelledby="jobs-apply-header"
+>
+  <div class="artdeco-modal__header ember-view">
+    <h2 id="jobs-apply-header">Apply to TravelShop Turkey</h2>
+  </div>
+  <div class="artdeco-modal__content jobs-easy-apply-modal__content p0 ember-view">
+    <div>
+      <form>
+        <footer role="presentation">
+          <div class="display-flex justify-flex-end ph5 pv4">
+            <button aria-label="Review your application" data-live-test-easy-apply-review-button="" type="button">
+              <span class="artdeco-button__text">Review</span>
+            </button>
+          </div>
+        </footer>
+      </form>
+    </div>
+  </div>
+</div>
+`.trim();
+
+export const linkedInSafetyReminderPopupHtml = `
+<button
+  id="easy-apply-trigger"
+  type="button"
+  aria-label="Easy Apply to TravelShop Turkey"
+  onclick="
+    const popup = window.open('', '_blank');
+    if (!popup) return;
+    popup.document.write(\`
+      <div
+        id='easy-apply-modal'
+        data-test-modal=''
+        role='dialog'
+        tabindex='-1'
+        class='artdeco-modal artdeco-modal--layer-default jobs-easy-apply-modal'
+        aria-labelledby='jobs-apply-header'
+      >
+        <div class='artdeco-modal__header ember-view'>
+          <h2 id='jobs-apply-header'>Apply to TravelShop Turkey</h2>
+        </div>
+        <div class='artdeco-modal__content jobs-easy-apply-modal__content p0 ember-view'>
+          <form>
+            <footer role='presentation'>
+              <div class='display-flex justify-flex-end ph5 pv4'>
+                <button aria-label='Review your application' data-live-test-easy-apply-review-button='' type='button'>
+                  <span class='artdeco-button__text'>Review</span>
+                </button>
+              </div>
+            </footer>
+          </form>
+        </div>
+      </div>
+    \`);
+    popup.document.close();
+  "
+>
+  Easy Apply
+</button>
+`.trim();

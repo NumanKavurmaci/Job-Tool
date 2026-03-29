@@ -20,6 +20,11 @@ import {
   persistRunArtifact,
   persistSystemEvent,
 } from "../observability.js";
+import type {
+  EasyApplyAnsweredQuestion,
+  EasyApplyRunResult,
+  EasyApplyStepReport,
+} from "../../linkedin/easyApply.js";
 
 const DETECTED_ALREADY_APPLIED_REASON =
   "Detected LinkedIn applied badge; application was already submitted outside the bot.";
@@ -32,6 +37,97 @@ function isAlreadyAppliedBatchJob(job: {
   evaluation: { alreadyApplied?: boolean };
 }): boolean {
   return job.evaluation.alreadyApplied === true;
+}
+
+function collectAnsweredQuestions(steps: EasyApplyStepReport[]): EasyApplyAnsweredQuestion[] {
+  return steps.flatMap((step) => step.questions ?? []);
+}
+
+function buildPreparedSurveyPayload(steps: EasyApplyStepReport[]) {
+  const answeredQuestions = collectAnsweredQuestions(steps);
+  if (answeredQuestions.length === 0) {
+    return null;
+  }
+
+  return {
+    questions: answeredQuestions.map((entry) => entry.question),
+    answers: answeredQuestions.map((entry, index) => ({
+      order: index,
+      question: entry.question,
+      resolved: entry.resolved,
+      filled: entry.filled,
+      ...(entry.details ? { details: entry.details } : {}),
+    })),
+  };
+}
+
+async function createCandidateProfileSnapshotForSurvey(args: {
+  profile: Awaited<ReturnType<AppDeps["loadCandidateMasterProfile"]>>;
+  deps: AppDeps;
+}) {
+  return args.deps.prisma.candidateProfileSnapshot.create({
+    data: {
+      fullName: args.profile.fullName,
+      linkedinUrl: args.profile.linkedinUrl ?? null,
+      resumePath: args.profile.sourceMetadata.resumePath ?? null,
+      profileJson: JSON.stringify(args.profile),
+    },
+  });
+}
+
+async function persistEasyApplySurveyAnswers(args: {
+  results: Array<{ url: string; steps: EasyApplyStepReport[] }>;
+  profile: Awaited<ReturnType<AppDeps["loadCandidateMasterProfile"]>>;
+  runType: "easy-apply" | "easy-apply-dry-run" | "easy-apply-batch";
+  deps: AppDeps;
+}) {
+  const payloads = args.results
+    .map((result) => ({
+      url: result.url,
+      payload: buildPreparedSurveyPayload(result.steps),
+    }))
+    .filter((entry): entry is { url: string; payload: NonNullable<ReturnType<typeof buildPreparedSurveyPayload>> } => entry.payload != null);
+
+  if (payloads.length === 0) {
+    return [];
+  }
+
+  const snapshot = await createCandidateProfileSnapshotForSurvey({
+    profile: args.profile,
+    deps: args.deps,
+  });
+
+  const preparedAnswerSets = [];
+  for (const entry of payloads) {
+    const preparedAnswerSet = await args.deps.prisma.preparedAnswerSet.create({
+      data: {
+        candidateProfileId: snapshot.id,
+        questionsJson: JSON.stringify(entry.payload.questions),
+        answersJson: JSON.stringify({
+          sourceUrl: entry.url,
+          runType: args.runType,
+          answers: entry.payload.answers,
+        }),
+      },
+    });
+    preparedAnswerSets.push(preparedAnswerSet);
+  }
+
+  await persistSystemEvent(
+    {
+      level: "INFO",
+      scope: "linkedin.easy_apply",
+      message: "Easy Apply survey answers saved.",
+      runType: args.runType,
+      details: {
+        candidateProfileSnapshotId: snapshot.id,
+        preparedAnswerSetCount: preparedAnswerSets.length,
+      },
+    },
+    args.deps,
+  );
+
+  return preparedAnswerSets;
 }
 
 async function persistDetectedAppliedJob(args: {
@@ -295,6 +391,12 @@ export async function runEasyApplyDryRunFlow(
   };
 
   if (!("jobs" in result)) {
+    const preparedAnswerSets = await persistEasyApplySurveyAnswers({
+      results: [{ url: result.url, steps: result.steps }],
+      profile,
+      runType: args.mode,
+      deps,
+    });
     if (!isAlreadyAppliedSingleRun(result)) {
       await persistJobHistory(
         {
@@ -318,11 +420,24 @@ export async function runEasyApplyDryRunFlow(
     });
     return {
       ...response,
+      ...(preparedAnswerSets.length > 0 ? { preparedAnswerSets } : {}),
       reportPath,
     };
   }
 
-  return response;
+  const preparedAnswerSets = await persistEasyApplySurveyAnswers({
+    results: result.jobs
+      .filter((job): job is typeof job & { result: EasyApplyRunResult } => job.result != null)
+      .map((job) => ({ url: job.url, steps: job.result.steps })),
+    profile,
+    runType: args.mode,
+    deps,
+  });
+
+  return {
+    ...response,
+    ...(preparedAnswerSets.length > 0 ? { preparedAnswerSets } : {}),
+  };
 }
 
 export async function runEasyApplyFlow(
@@ -433,10 +548,18 @@ export async function runEasyApplyFlow(
     deps,
   });
 
+  const preparedAnswerSets = await persistEasyApplySurveyAnswers({
+    results: [{ url: result.url, steps: result.steps }],
+    profile,
+    runType: args.mode,
+    deps,
+  });
+
   return {
     mode: args.mode,
     profile,
     easyApply: result,
+    ...(preparedAnswerSets.length > 0 ? { preparedAnswerSets } : {}),
     reportPath,
   };
 }
@@ -571,10 +694,20 @@ export async function runEasyApplyBatchFlow(
     deps,
   });
 
+  const preparedAnswerSets = await persistEasyApplySurveyAnswers({
+    results: result.jobs
+      .filter((job): job is typeof job & { result: EasyApplyRunResult } => job.result != null)
+      .map((job) => ({ url: job.url, steps: job.result.steps })),
+    profile,
+    runType: args.mode,
+    deps,
+  });
+
   return {
     mode: args.mode,
     profile,
     easyApply: result,
+    ...(preparedAnswerSets.length > 0 ? { preparedAnswerSets } : {}),
     reportPath,
   };
 }

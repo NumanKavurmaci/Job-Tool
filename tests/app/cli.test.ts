@@ -93,4 +93,28 @@ describe("app cli", () => {
       resumePath: expect.any(String),
     });
   });
+
+  it("treats collection links with currentJobId as single LinkedIn job URLs for single-job apply flows", () => {
+    expect(parseCliArgs([
+      "easy-apply-dry-run",
+      "https://www.linkedin.com/jobs/collections/top-applicant/?currentJobId=4387565844",
+    ])).toEqual({
+      mode: "easy-apply-dry-run",
+      url: "https://www.linkedin.com/jobs/view/4387565844/",
+      resumePath: expect.any(String),
+      count: 1,
+      disableAiEvaluation: false,
+      scoreThreshold: 40,
+      useAiScoreAdjustment: false,
+    });
+
+    expect(parseCliArgs([
+      "easy-apply",
+      "https://www.linkedin.com/jobs/collections/top-applicant/?currentJobId=4387565844",
+    ])).toEqual({
+      mode: "easy-apply",
+      url: "https://www.linkedin.com/jobs/view/4387565844/",
+      resumePath: expect.any(String),
+    });
+  });
 });

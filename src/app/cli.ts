@@ -2,6 +2,7 @@ import {
   DEFAULT_SCORE_THRESHOLD,
   DEFAULT_LINKEDIN_EASY_APPLY_URL,
   DEFAULT_RESUME_PATH,
+  resolveLinkedInSingleJobUrl,
   isLinkedInCollectionUrl,
 } from "./constants.js";
 
@@ -138,6 +139,8 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
     const url =
       (positionalCount ? positionalArgs.slice(0, -1) : positionalArgs)[0] ??
       DEFAULT_LINKEDIN_EASY_APPLY_URL;
+    const normalizedUrl =
+      count === 1 ? resolveLinkedInSingleJobUrl(url) : url;
 
     if (!resumePath) {
       throw new Error("--resume is required for easy-apply-dry-run when no default CV is available.");
@@ -145,7 +148,7 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
 
     return {
       mode: "easy-apply-dry-run",
-      url,
+      url: normalizedUrl,
       resumePath,
       count,
       disableAiEvaluation,
@@ -177,16 +180,17 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
     const resumePath = getFlag("--resume") ?? DEFAULT_RESUME_PATH;
     const positionalArgs = getPositionalTailArgs();
     const url = positionalArgs[0];
+    const normalizedUrl = url ? resolveLinkedInSingleJobUrl(url) : url;
     if (!resumePath) {
       throw new Error("--resume is required for easy-apply when no default CV is available.");
     }
-    if (!url) {
+    if (!normalizedUrl) {
       throw new Error("--url is required for easy-apply.");
     }
-    if (isLinkedInCollectionUrl(url)) {
+    if (isLinkedInCollectionUrl(normalizedUrl)) {
       throw new Error("easy-apply requires a single LinkedIn job URL, not a collection URL.");
     }
-    return { mode: "easy-apply", url, resumePath };
+    return { mode: "easy-apply", url: normalizedUrl, resumePath };
   }
 
   if (first === "easy-apply-batch") {

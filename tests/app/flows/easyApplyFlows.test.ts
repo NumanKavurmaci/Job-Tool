@@ -32,6 +32,12 @@ function createDeps(): AppDeps {
       error: vi.fn(),
     } as any,
     prisma: {
+      candidateProfileSnapshot: {
+        create: vi.fn().mockResolvedValue({ id: "snapshot_1" }),
+      },
+      preparedAnswerSet: {
+        create: vi.fn().mockResolvedValue({ id: "prepared_1" }),
+      },
       systemLog: { create: vi.fn().mockResolvedValue({}) },
       jobReviewHistory: {
         create: vi.fn().mockResolvedValue({}),
@@ -107,7 +113,30 @@ describe("easy apply flows", () => {
     });
     (deps.runEasyApplyDryRun as any).mockResolvedValue({
       status: "ready_to_submit",
-      steps: [{ action: "review" }],
+      steps: [{
+        action: "review",
+        questions: [
+          {
+            question: {
+              fieldKey: "phone",
+              label: "Phone",
+              inputType: "phone",
+              required: true,
+            },
+            resolved: {
+              questionType: "contact_info",
+              strategy: "deterministic",
+              answer: "+905000000000",
+              confidence: 0.99,
+              confidenceLabel: "high",
+              source: "candidate-profile",
+              notes: [],
+            },
+            filled: true,
+            details: "Filled the field.",
+          },
+        ],
+      }],
       stopReason: "Reached the final submit step.",
       url: "https://www.linkedin.com/jobs/view/1",
     });
@@ -143,6 +172,17 @@ describe("easy apply flows", () => {
         message: "LinkedIn Easy Apply dry run finished.",
         runType: "easy-apply-dry-run",
         jobUrl: "https://www.linkedin.com/jobs/view/1",
+      }),
+    });
+    expect(deps.prisma.candidateProfileSnapshot.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        fullName: "Jane",
+        resumePath: "./resume.pdf",
+      }),
+    });
+    expect(deps.prisma.preparedAnswerSet.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        candidateProfileId: "snapshot_1",
       }),
     });
     expect(evaluationPage.close).toHaveBeenCalledTimes(1);
@@ -229,7 +269,30 @@ describe("easy apply flows", () => {
           },
           result: {
             status: "ready_to_submit",
-            steps: [{ action: "review" }],
+            steps: [{
+              action: "review",
+              questions: [
+                {
+                  question: {
+                    fieldKey: "salary",
+                    label: "Salary",
+                    inputType: "number",
+                    required: true,
+                  },
+                  resolved: {
+                    questionType: "salary_expectation",
+                    strategy: "deterministic",
+                    answer: "80000",
+                    confidence: 0.99,
+                    confidenceLabel: "high",
+                    source: "candidate-profile",
+                    notes: [],
+                  },
+                  filled: true,
+                  details: "Filled the field.",
+                },
+              ],
+            }],
             stopReason: "Reached final submit.",
             url: "https://www.linkedin.com/jobs/view/1",
           },
@@ -255,6 +318,11 @@ describe("easy apply flows", () => {
     expect(result.reportPath).toBe("artifacts/batch-runs/run.json");
     expect(deps.runEasyApplyBatchDryRun).toHaveBeenCalledTimes(1);
     expect(deps.prisma.jobReviewHistory.create).toHaveBeenCalledTimes(2);
+    expect(deps.prisma.preparedAnswerSet.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        candidateProfileId: "snapshot_1",
+      }),
+    });
     expect(deps.prisma.systemLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         level: "INFO",
@@ -469,6 +537,65 @@ describe("easy apply flows", () => {
         scope: "linkedin.easy_apply",
         message: "LinkedIn Easy Apply finished.",
         runType: "easy-apply",
+      }),
+    });
+  });
+
+  it("persists survey answers for the live easy-apply flow when questions were answered", async () => {
+    const deps = createDeps();
+    mockWithPage(deps);
+    (deps.loadCandidateMasterProfile as any).mockResolvedValue({
+      fullName: "Jane",
+      linkedinUrl: "https://linkedin.com/in/jane",
+      sourceMetadata: { resumePath: "./resume.pdf" },
+    });
+    (deps.resolveAnswer as any).mockResolvedValue({ answer: "ok" });
+    (deps.createEasyApplyDriver as any).mockResolvedValue({ driver: true });
+    (deps.runEasyApply as any).mockResolvedValue({
+      status: "ready_to_submit",
+      steps: [{
+        action: "review",
+        questions: [
+          {
+            question: {
+              fieldKey: "linkedin",
+              label: "LinkedIn",
+              inputType: "url",
+              required: false,
+            },
+            resolved: {
+              questionType: "linkedin",
+              strategy: "deterministic",
+              answer: "https://linkedin.com/in/jane",
+              confidence: 0.99,
+              confidenceLabel: "high",
+              source: "candidate-profile",
+              notes: [],
+            },
+            filled: true,
+            details: "Filled the field.",
+          },
+        ],
+      }],
+      stopReason: "Reached final submit.",
+      url: "https://www.linkedin.com/jobs/view/1",
+    });
+    (deps.writeRunReport as any).mockResolvedValue("artifacts/easy-apply-runs/live.json");
+
+    const { runEasyApplyFlow } = await import("../../../src/app/flows/easyApplyFlows.js");
+    const result = await runEasyApplyFlow(
+      {
+        mode: "easy-apply",
+        url: "https://www.linkedin.com/jobs/view/1",
+        resumePath: "./resume.pdf",
+      },
+      deps,
+    );
+
+    expect(result.preparedAnswerSets).toEqual([{ id: "prepared_1" }]);
+    expect(deps.prisma.preparedAnswerSet.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        candidateProfileId: "snapshot_1",
       }),
     });
   });

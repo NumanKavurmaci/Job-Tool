@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { ensureLinkedInAuthenticated } from "../adapters/LinkedInAdapter.js";
 import type {
   EasyApplyDriver,
@@ -23,6 +23,23 @@ const EXTERNAL_APPLY_TRIGGER_SELECTOR = [
   "button#jobs-apply-button-id[role='link']",
   "button.jobs-apply-button[aria-label*='company website']",
   "a[aria-label*='company website']",
+].join(", ");
+
+const SAFETY_REMINDER_TITLE_SELECTOR = [
+  "[data-sdui-screen='com.linkedin.sdui.flagshipnav.jobs.PreApplySafetyTipsModal'] h2",
+  "#dialog-header h2",
+  ".f76ea9ea h2",
+  "#dialog-header h2",
+  "header h2",
+  "h2",
+].join(", ");
+
+const CONTINUE_APPLYING_SELECTOR = [
+  "[data-sdui-screen='com.linkedin.sdui.flagshipnav.jobs.PreApplySafetyTipsModal'] a:has-text('Continue applying')",
+  "[data-sdui-screen='com.linkedin.sdui.flagshipnav.jobs.PreApplySafetyTipsModal'] button:has-text('Continue applying')",
+  "a:has-text('Continue applying')",
+  "button:has-text('Continue applying')",
+  "a[href*='/apply/'][href*='openSDUIApplyFlow=true']",
 ].join(", ");
 
 async function annotateQuestions(page: Page): Promise<EasyApplyQuestionView[]> {
@@ -144,7 +161,94 @@ async function annotateQuestions(page: Page): Promise<EasyApplyQuestionView[]> {
 }
 
 export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
-  constructor(private readonly page: Page) {}
+  constructor(private page: Page) {}
+
+  private isBlankPage(page: Page): boolean {
+    const url = page.url().trim().toLowerCase();
+    return url === "" || url === "about:blank";
+  }
+
+  private async closeBlankPages(): Promise<void> {
+    const pages = this.page.context().pages().filter((page) => !page.isClosed());
+    for (const page of pages) {
+      if (page === this.page) {
+        continue;
+      }
+      if (!this.isBlankPage(page)) {
+        continue;
+      }
+      await page.close().catch(() => undefined);
+    }
+  }
+
+  private async adoptNewestPageAfterClick(): Promise<void> {
+    const context = this.page.context();
+    const activePage = this.page;
+    const pages = context.pages().filter((page) => !page.isClosed());
+    const newestPage = pages.at(-1);
+
+    if (!newestPage || newestPage === activePage) {
+      await this.closeBlankPages();
+      return;
+    }
+
+    await newestPage.waitForLoadState("domcontentloaded").catch(() => undefined);
+    if (this.isBlankPage(newestPage)) {
+      await this.closeBlankPages();
+      return;
+    }
+    this.page = newestPage;
+    await this.page.bringToFront().catch(() => undefined);
+    await this.closeBlankPages();
+  }
+
+  private async clickFollowingNewPage(locator: Locator): Promise<void> {
+    const originalPage = this.page;
+    const popupPromise = this.page.waitForEvent("popup", { timeout: 500 }).catch(() => null);
+    await locator.click();
+    const popup = await popupPromise;
+    if (popup) {
+      await popup.waitForLoadState("domcontentloaded").catch(() => undefined);
+      let popupNavigated = !this.isBlankPage(popup);
+      for (let attempt = 0; attempt < 6 && !popupNavigated; attempt += 1) {
+        await popup.waitForTimeout(500).catch(() => undefined);
+        popupNavigated = !this.isBlankPage(popup);
+      }
+
+      if (popupNavigated && !this.isBlankPage(popup)) {
+        this.page = popup;
+        await this.page.bringToFront().catch(() => undefined);
+      } else {
+        await popup.close().catch(() => undefined);
+        this.page = originalPage;
+      }
+
+      await this.page.waitForTimeout(1_500);
+      await this.closeBlankPages();
+      return;
+    }
+    await this.adoptNewestPageAfterClick();
+    await this.page.waitForTimeout(1_500);
+  }
+
+  private async continuePastSafetyReminder(): Promise<boolean> {
+    const title = this.page.locator(SAFETY_REMINDER_TITLE_SELECTOR).filter({
+      hasText: /Job search safety reminder/i,
+    }).first();
+    if ((await title.count()) === 0) {
+      return false;
+    }
+
+    const continueApplying = this.page.locator(CONTINUE_APPLYING_SELECTOR).filter({
+      hasText: /Continue applying/i,
+    }).first();
+    if ((await continueApplying.count()) === 0) {
+      return false;
+    }
+
+    await this.clickFollowingNewPage(continueApplying);
+    return true;
+  }
 
   async open(url: string): Promise<void> {
     await this.page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
@@ -198,11 +302,12 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
 
   async openEasyApply(): Promise<void> {
     const locator = this.page.locator(EASY_APPLY_TRIGGER_SELECTOR).first();
-    await locator.click();
-    await this.page.waitForTimeout(1_500);
+    await this.clickFollowingNewPage(locator);
+    await this.continuePastSafetyReminder().catch(() => undefined);
   }
 
   async collectQuestions(): Promise<EasyApplyQuestionView[]> {
+    await this.continuePastSafetyReminder().catch(() => undefined);
     return annotateQuestions(this.page);
   }
 
@@ -271,6 +376,7 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
   }
 
   async collectStepState(): Promise<EasyApplyStepStateSnapshot> {
+    await this.continuePastSafetyReminder().catch(() => undefined);
     const dialog = this.page.locator(".jobs-easy-apply-modal, [role='dialog']").first();
     const script = `
       const normalize = (value) => (value ?? "").replace(/\\s+/g, " ").trim();
@@ -342,6 +448,7 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
   }
 
   async collectReviewDiagnostics(): Promise<EasyApplyReviewDiagnostics> {
+    await this.continuePastSafetyReminder().catch(() => undefined);
     const dialog = this.page.locator(".jobs-easy-apply-modal, [role='dialog']").first();
     const script = `
       const normalize = (value) => (value ?? "").replace(/\\s+/g, " ").trim();
@@ -590,8 +697,7 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
             "[data-live-test-easy-apply-next-button], [data-easy-apply-next-button], button[aria-label*='Continue to next step'], button:has-text('Next')",
           )
           .first();
-    await locator.click();
-    await this.page.waitForTimeout(1_500);
+    await this.clickFollowingNewPage(locator);
   }
 
   async dismissCompletionModal(): Promise<boolean> {

@@ -1,9 +1,11 @@
 import { chromium, type Browser } from "@playwright/test";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   linkedInApplicationSentModalHtml,
   linkedInPreReviewModalHtml,
   linkedInReviewModalHtml,
+  linkedInSafetyReminderModalHtml,
+  linkedInSafetyReminderNoDialogHtml,
 } from "../fixtures/linkedin.js";
 import { PlaywrightLinkedInEasyApplyDriver } from "../../src/linkedin/playwrightEasyApplyDriver.js";
 
@@ -118,5 +120,133 @@ describe("PlaywrightLinkedInEasyApplyDriver", () => {
     expect(alreadyApplied).toBe(true);
 
     await page.close();
+  });
+
+  it("continues past the job search safety reminder modal instead of stopping on it", async () => {
+    const page = await browser.newPage();
+    await page.setContent(linkedInSafetyReminderModalHtml);
+
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page);
+    await driver.openEasyApply();
+    const result = await driver.collectStepState();
+
+    expect(result).toEqual({
+      modalTitle: "Apply to TravelShop Turkey",
+      headingText: null,
+      primaryAction: "review",
+      buttonLabels: ["Review"],
+    });
+
+    await page.close();
+  });
+
+  it("continues past the safety reminder when LinkedIn renders it without role=dialog", async () => {
+    const page = await browser.newPage();
+    await page.setContent(linkedInSafetyReminderNoDialogHtml);
+
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page);
+    await driver.openEasyApply();
+    const result = await driver.collectStepState();
+
+    expect(result).toEqual({
+      modalTitle: "Apply to TravelShop Turkey",
+      headingText: null,
+      primaryAction: "review",
+      buttonLabels: ["Review"],
+    });
+
+    await page.close();
+  });
+
+  it("adopts the popup page when LinkedIn opens the safety reminder in a new tab", async () => {
+    const page = await browser.newPage();
+    const popupPage = await browser.newPage();
+    await page.setContent(`
+      <button id="easy-apply-trigger" type="button" aria-label="Easy Apply to TravelShop Turkey">
+        Easy Apply
+      </button>
+    `);
+    await popupPage.goto(`data:text/html,${encodeURIComponent(`
+      <div
+        data-test-modal=""
+        role="dialog"
+        tabindex="-1"
+        class="artdeco-modal artdeco-modal--layer-default jobs-easy-apply-modal"
+        aria-labelledby="jobs-apply-header"
+      >
+        <div class="artdeco-modal__header ember-view">
+          <h2 id="jobs-apply-header">Apply to TravelShop Turkey</h2>
+        </div>
+        <div class="artdeco-modal__content jobs-easy-apply-modal__content p0 ember-view">
+          <form>
+            <footer role="presentation">
+              <div class="display-flex justify-flex-end ph5 pv4">
+                <button aria-label="Review your application" data-live-test-easy-apply-review-button="" type="button">
+                  <span class="artdeco-button__text">Review</span>
+                </button>
+              </div>
+            </footer>
+          </form>
+        </div>
+      </div>
+    `)}`);
+    vi.spyOn(page, "waitForEvent").mockResolvedValue(popupPage as never);
+
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page);
+    await driver.openEasyApply();
+    const result = await driver.collectStepState();
+
+    expect(result).toEqual({
+      modalTitle: "Apply to TravelShop Turkey",
+      headingText: null,
+      primaryAction: "review",
+      buttonLabels: ["Review"],
+    });
+    expect(page.context().pages().filter((candidate) => !candidate.isClosed())).toHaveLength(1);
+  });
+
+  it("ignores about:blank popups and keeps the original page active", async () => {
+    const page = await browser.newPage();
+    const blankPopup = await browser.newPage();
+    await page.setContent(`
+      <button id="easy-apply-trigger" type="button" aria-label="Easy Apply to TravelShop Turkey">
+        Easy Apply
+      </button>
+      <div
+        data-test-modal=""
+        role="dialog"
+        tabindex="-1"
+        class="artdeco-modal artdeco-modal--layer-default jobs-easy-apply-modal"
+        aria-labelledby="jobs-apply-header"
+      >
+        <div class="artdeco-modal__header ember-view">
+          <h2 id="jobs-apply-header">Apply to TravelShop Turkey</h2>
+        </div>
+        <div class="artdeco-modal__content jobs-easy-apply-modal__content p0 ember-view">
+          <form>
+            <footer role="presentation">
+              <div class="display-flex justify-flex-end ph5 pv4">
+                <button aria-label="Review your application" data-live-test-easy-apply-review-button="" type="button">
+                  <span class="artdeco-button__text">Review</span>
+                </button>
+              </div>
+            </footer>
+          </form>
+        </div>
+      </div>
+    `);
+    vi.spyOn(page, "waitForEvent").mockResolvedValue(blankPopup as never);
+
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page);
+    await driver.openEasyApply();
+    const result = await driver.collectStepState();
+
+    expect(result).toEqual({
+      modalTitle: "Apply to TravelShop Turkey",
+      headingText: null,
+      primaryAction: "review",
+      buttonLabels: ["Review"],
+    });
+    expect(blankPopup.isClosed()).toBe(true);
   });
 });

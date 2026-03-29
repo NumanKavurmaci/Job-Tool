@@ -10,7 +10,8 @@ import {
   planExternalApplicationAnswers,
 } from "../../external/discovery.js";
 import { fillExternalApplicationPage } from "../../external/fill.js";
-import { persistRunArtifact } from "../observability.js";
+import { persistRunArtifact, persistSystemEvent } from "../observability.js";
+import type { ExternalApplicationPlannedAnswer } from "../../external/types.js";
 
 function truncate(value: string, max = 5000) {
   return value.length <= max ? value : `${value.slice(0, max)}...`;
@@ -51,6 +52,62 @@ function chooseRecommendedLink(input: {
 
 function advisorySaysStay(text: string): boolean {
   return /^STAY\s*$/i.test(text.trim());
+}
+
+async function persistExternalApplyAnswers(args: {
+  sourceUrl: string;
+  finalUrl: string;
+  platform: string;
+  answerPlan: ExternalApplicationPlannedAnswer[];
+  profile: Awaited<ReturnType<AppDeps["loadCandidateMasterProfile"]>>;
+  runType: "external-apply-dry-run";
+  deps: AppDeps;
+}) {
+  if (args.answerPlan.length === 0) {
+    return [];
+  }
+
+  const snapshot = await args.deps.prisma.candidateProfileSnapshot.create({
+    data: {
+      fullName: args.profile.fullName,
+      linkedinUrl: args.profile.linkedinUrl ?? null,
+      resumePath: args.profile.sourceMetadata.resumePath ?? null,
+      profileJson: JSON.stringify(args.profile),
+    },
+  });
+
+  const preparedAnswerSet = await args.deps.prisma.preparedAnswerSet.create({
+    data: {
+      candidateProfileId: snapshot.id,
+      questionsJson: JSON.stringify(args.answerPlan.map((entry) => entry.question)),
+      answersJson: JSON.stringify({
+        sourceUrl: args.sourceUrl,
+        finalUrl: args.finalUrl,
+        platform: args.platform,
+        runType: args.runType,
+        answers: args.answerPlan,
+      }),
+    },
+  });
+
+  await persistSystemEvent(
+    {
+      level: "INFO",
+      scope: "external.apply",
+      message: "External application answers saved.",
+      runType: args.runType,
+      jobUrl: args.sourceUrl,
+      details: {
+        candidateProfileSnapshotId: snapshot.id,
+        preparedAnswerSetId: preparedAnswerSet.id,
+        answerCount: args.answerPlan.length,
+        platform: args.platform,
+      },
+    },
+    args.deps,
+  );
+
+  return [preparedAnswerSet];
 }
 
 export async function runExternalApplyDryRunFlow(
@@ -172,6 +229,16 @@ export async function runExternalApplyDryRunFlow(
     deps,
   });
 
+  const preparedAnswerSets = await persistExternalApplyAnswers({
+    sourceUrl: args.url,
+    finalUrl: result.discovery.finalUrl,
+    platform: result.discovery.platform,
+    answerPlan: result.answerPlan,
+    profile: candidateProfile,
+    runType: args.mode,
+    deps,
+  });
+
   deps.logger.info(
     {
       sourceUrl: args.url,
@@ -184,6 +251,7 @@ export async function runExternalApplyDryRunFlow(
 
   return {
     ...result,
+    ...(preparedAnswerSets.length > 0 ? { preparedAnswerSets } : {}),
     reportPath,
   };
 }

@@ -136,6 +136,17 @@ describe("external apply flows", () => {
 
     const deps = {
       loadCandidateMasterProfile: vi.fn().mockResolvedValue(buildCandidateProfile()),
+      prisma: {
+        candidateProfileSnapshot: {
+          create: vi.fn().mockResolvedValue({ id: "snapshot_1" }),
+        },
+        preparedAnswerSet: {
+          create: vi.fn().mockResolvedValue({ id: "prepared_1" }),
+        },
+        systemLog: {
+          create: vi.fn().mockResolvedValue({}),
+        },
+      },
       withPage: vi.fn(async (fn: (page: unknown) => Promise<unknown>) =>
         fn(
           createFlowPage({
@@ -187,6 +198,19 @@ describe("external apply flows", () => {
         prefix: "external-apply-dry-run",
       }),
     );
+    expect(deps.prisma.candidateProfileSnapshot.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        fullName: "Jane Doe",
+        linkedinUrl: "https://linkedin.com/in/jane",
+        resumePath: "./user/resume.pdf",
+      }),
+    });
+    expect(deps.prisma.preparedAnswerSet.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        candidateProfileId: "snapshot_1",
+      }),
+    });
+    expect(result.preparedAnswerSets).toEqual([{ id: "prepared_1" }]);
   });
 
   it("keeps the bot on the current page when AI explicitly says STAY", async () => {
@@ -204,6 +228,17 @@ describe("external apply flows", () => {
 
     const deps = {
       loadCandidateMasterProfile: vi.fn().mockResolvedValue(buildCandidateProfile()),
+      prisma: {
+        candidateProfileSnapshot: {
+          create: vi.fn().mockResolvedValue({ id: "snapshot_1" }),
+        },
+        preparedAnswerSet: {
+          create: vi.fn().mockResolvedValue({ id: "prepared_1" }),
+        },
+        systemLog: {
+          create: vi.fn().mockResolvedValue({}),
+        },
+      },
       withPage: vi.fn(async (fn: (page: unknown) => Promise<unknown>) =>
         fn(
           createFlowPage({
@@ -239,6 +274,7 @@ describe("external apply flows", () => {
         text: "STAY",
       }),
     );
+    expect(deps.prisma.preparedAnswerSet.create).not.toHaveBeenCalled();
   });
 
   it("falls back to the first discovered precursor link when AI advice is invalid or unavailable", async () => {
@@ -276,6 +312,17 @@ describe("external apply flows", () => {
 
     const deps = {
       loadCandidateMasterProfile: vi.fn().mockResolvedValue(buildCandidateProfile()),
+      prisma: {
+        candidateProfileSnapshot: {
+          create: vi.fn().mockResolvedValue({ id: "snapshot_1" }),
+        },
+        preparedAnswerSet: {
+          create: vi.fn().mockResolvedValue({ id: "prepared_1" }),
+        },
+        systemLog: {
+          create: vi.fn().mockResolvedValue({}),
+        },
+      },
       withPage: vi.fn(async (fn: (page: unknown) => Promise<unknown>) =>
         fn(
           createFlowPage({
@@ -309,5 +356,10 @@ describe("external apply flows", () => {
       }),
       "AI precursor recommendation failed; falling back to the first discovered link",
     );
+    expect(deps.prisma.preparedAnswerSet.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        candidateProfileId: "snapshot_1",
+      }),
+    });
   });
 });
