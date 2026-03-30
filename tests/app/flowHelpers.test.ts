@@ -114,6 +114,10 @@ describe("app flow helpers", () => {
       score: 0,
       reason: "AI evaluation disabled for this batch run.",
       policyAllowed: true,
+      diagnostics: {
+        metadataRead: false,
+        companyInfoRead: false,
+      },
     });
     expect(deps.extractJobText).not.toHaveBeenCalled();
   });
@@ -247,7 +251,7 @@ describe("app flow helpers", () => {
     deps.scoreJob.mockReturnValue({ totalScore: 61 });
     deps.evaluatePolicy.mockReturnValue({ allowed: true, reasons: [] });
 
-    await expect(evaluate("https://example.com/job")).resolves.toEqual({
+    await expect(evaluate("https://example.com/job")).resolves.toMatchObject({
       shouldApply: true,
       finalDecision: "APPLY",
       score: 61,
@@ -299,7 +303,7 @@ describe("app flow helpers", () => {
       deps,
     });
 
-    await expect(evaluate("https://example.com/job")).resolves.toEqual({
+    await expect(evaluate("https://example.com/job")).resolves.toMatchObject({
       shouldApply: true,
       finalDecision: "APPLY",
       score: 75,
@@ -381,7 +385,7 @@ describe("app flow helpers", () => {
 
     const result = await evaluate("https://example.com/job");
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       shouldApply: true,
       finalDecision: "APPLY",
       score: 62,
@@ -401,6 +405,22 @@ describe("app flow helpers", () => {
         decision: "APPLY",
         policyAllowed: true,
         platform: "linkedin",
+      }),
+    });
+    expect(deps.prisma.systemLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        scope: "linkedin.batch",
+        message: "Batch job context extracted.",
+        jobUrl: "https://example.com/job",
+        detailsJson: expect.stringContaining("\"companyInfoRead\":true"),
+      }),
+    });
+    expect(deps.prisma.systemLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        scope: "linkedin.batch",
+        message: "Batch job evaluation completed.",
+        jobUrl: "https://example.com/job",
+        detailsJson: expect.stringContaining("\"applicationType\":null"),
       }),
     });
   });
@@ -436,7 +456,7 @@ describe("app flow helpers", () => {
     const result = await evaluate("https://example.com/job");
 
     expect(deps.withPage).toHaveBeenCalledTimes(1);
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       shouldApply: false,
       finalDecision: "SKIP",
       score: 40,
@@ -479,7 +499,7 @@ describe("app flow helpers", () => {
 
     const result = await evaluate("https://example.com/job");
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       shouldApply: false,
       finalDecision: "SKIP",
       score: 90,
@@ -539,6 +559,15 @@ describe("app flow helpers", () => {
       score: 12,
       reason: "Configured workplace-policy bypass matched this job location, so the role will be applied.",
       policyAllowed: true,
+      diagnostics: {
+        title: "Job",
+        company: "Acme",
+        location: "Berlin, Germany",
+        companyLinkedinUrl: null,
+        applicationType: "easy_apply",
+        companyInfoRead: true,
+        metadataRead: true,
+      },
     });
   });
 

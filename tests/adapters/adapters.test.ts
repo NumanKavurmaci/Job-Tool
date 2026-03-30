@@ -780,6 +780,36 @@ describe("LinkedInAdapter", () => {
     expect(result.rawText).toContain("Remote");
   });
 
+  it("falls back to the linkedin page-title location when the top-card location is only workplace type", async () => {
+    const { LinkedInAdapter } = await import("../../src/adapters/LinkedInAdapter.js");
+    const page = createMockPage({
+      currentUrl: "https://www.linkedin.com/jobs/view/4367404687/",
+      title: "Soverin hiring Full stack-developer in Amsterdam, North Holland, Netherlands | LinkedIn",
+      selectors: {
+        ".job-details-jobs-unified-top-card__job-title": {
+          text: "Full stack-developer",
+        },
+        ".job-details-jobs-unified-top-card__company-name": {
+          text: "Soverin",
+        },
+        ".job-details-jobs-unified-top-card__bullet": {
+          text: "Hybrid",
+        },
+        "[data-testid='expandable-text-box']": {
+          text: "About the job\nLocation: Hybrid\nAmsterdam office.\n",
+        },
+        body: {
+          text: "Full stack-developer\nSoverin\nHybrid\nAmsterdam office.\nEasy Apply",
+        },
+      },
+    });
+
+    const result = await new LinkedInAdapter().extract(page as never, page.url());
+
+    expect(result.location).toBe("Amsterdam, North Holland, Netherlands");
+    expect(result.rawText).toContain("Location: Amsterdam, North Holland, Netherlands");
+  });
+
   it("extracts title, company, linkedin company url, logo, and remote workplace data from an already-applied linkedin job", async () => {
     const { LinkedInAdapter } = await import("../../src/adapters/LinkedInAdapter.js");
     const page = createMockPage({

@@ -124,6 +124,15 @@ function parseLinkedInPageTitle(
     };
   }
 
+  const hiringMatch = cleaned.match(/^(.+?)\s+hiring\s+(.+?)\s+in\s+(.+)$/i);
+  if (hiringMatch) {
+    return {
+      company: optionalText(hiringMatch[1]),
+      title: optionalText(hiringMatch[2]),
+      location: optionalText(hiringMatch[3]),
+    };
+  }
+
   const parts = cleaned
     .split("|")
     .map((part) => optionalText(part))
@@ -305,6 +314,15 @@ function sanitizeLinkedInLocation(value: string | null | undefined): string | nu
   }
 
   return cleanSegment(parts[0] ?? normalized);
+}
+
+function isGenericLinkedInWorkplaceLocation(value: string | null | undefined): boolean {
+  const normalized = optionalText(value)?.toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return /^(remote|hybrid|on-?site|onsite)$/i.test(normalized);
 }
 
 function uniqueText(values: Array<string | null | undefined>): string[] {
@@ -704,7 +722,14 @@ export class LinkedInAdapter implements JobAdapter {
       titleParts.location;
     const rawLocation =
       (await getTextBySelectors(page, LINKEDIN_LOCATION_SELECTORS)) ?? inferredBadgeLocation ?? null;
-    const location = sanitizeLinkedInLocation(rawLocation);
+    const sanitizedRawLocation = sanitizeLinkedInLocation(rawLocation);
+    const fallbackTitleLocation = sanitizeLinkedInLocation(titleParts.location);
+    const location =
+      isGenericLinkedInWorkplaceLocation(sanitizedRawLocation) &&
+      fallbackTitleLocation &&
+      !isGenericLinkedInWorkplaceLocation(fallbackTitleLocation)
+        ? fallbackTitleLocation
+        : sanitizedRawLocation;
     const title = cleanLinkedInTitle(rawTitle, location) ?? aboutPosition ?? titleParts.title;
 
     const applyUrl =

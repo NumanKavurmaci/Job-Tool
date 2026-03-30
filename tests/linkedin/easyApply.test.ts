@@ -1107,6 +1107,158 @@ describe("runEasyApplyBatchInternal", () => {
     expect(result.jobs[0]?.result?.status).toBe("submitted");
   });
 
+  it("starts processing approved jobs immediately instead of waiting for the whole scan to finish", async () => {
+    const driver = {
+      open: vi.fn(),
+      openCollection: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn().mockResolvedValue([]),
+      collectVisibleJobs: vi
+        .fn()
+        .mockResolvedValueOnce([
+          { url: "https://www.linkedin.com/jobs/view/1", alreadyApplied: false },
+          { url: "https://www.linkedin.com/jobs/view/2", alreadyApplied: false },
+        ])
+        .mockResolvedValueOnce([
+          { url: "https://www.linkedin.com/jobs/view/3", alreadyApplied: false },
+        ]),
+      goToNextResultsPage: vi.fn().mockResolvedValue(true),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn().mockResolvedValue("submit"),
+      advance: vi.fn(),
+      dismissCompletionModal: vi.fn().mockResolvedValue(true),
+    };
+
+    const evaluateJob = vi
+      .fn()
+      .mockResolvedValueOnce({
+        shouldApply: true,
+        finalDecision: "APPLY",
+        score: 91,
+        reason: "Excellent fit.",
+        policyAllowed: true,
+      })
+      .mockResolvedValueOnce({
+        shouldApply: true,
+        finalDecision: "APPLY",
+        score: 87,
+        reason: "Excellent fit.",
+        policyAllowed: true,
+      });
+
+    const result = await runEasyApplyBatchInternal(
+      {
+        driver,
+        url: "https://www.linkedin.com/jobs/collections/easy-apply",
+        targetCount: 2,
+        candidateProfile: profile,
+        evaluateJob,
+        resolveAnswer: async () => ({
+          questionType: "contact_info",
+          strategy: "deterministic",
+          answer: "123",
+          confidence: 0.95,
+          confidenceLabel: "high",
+          source: "candidate-profile",
+        }),
+      },
+      "submit",
+    );
+
+    expect(result.status).toBe("completed");
+    expect(result.jobs[0]?.result?.status).toBe("submitted");
+    expect(result.jobs[1]?.result?.status).toBe("submitted");
+    expect(driver.open.mock.invocationCallOrder[0]).toBeGreaterThan(
+      evaluateJob.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(driver.open.mock.invocationCallOrder[1]).toBeGreaterThan(
+      evaluateJob.mock.invocationCallOrder[1] ?? 0,
+    );
+    expect(driver.goToNextResultsPage).not.toHaveBeenCalled();
+    expect(evaluateJob).not.toHaveBeenCalledWith("https://www.linkedin.com/jobs/view/3");
+  });
+
+  it("processes an approved job before paginating to discover later matches", async () => {
+    const driver = {
+      open: vi.fn(),
+      openCollection: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn().mockResolvedValue([]),
+      collectVisibleJobs: vi
+        .fn()
+        .mockResolvedValueOnce([
+          { url: "https://www.linkedin.com/jobs/view/1", alreadyApplied: false },
+          { url: "https://www.linkedin.com/jobs/view/2", alreadyApplied: false },
+        ])
+        .mockResolvedValueOnce([
+          { url: "https://www.linkedin.com/jobs/view/3", alreadyApplied: false },
+        ]),
+      goToNextResultsPage: vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn().mockResolvedValue("submit"),
+      advance: vi.fn(),
+      dismissCompletionModal: vi.fn().mockResolvedValue(true),
+    };
+
+    const evaluateJob = vi
+      .fn()
+      .mockResolvedValueOnce({
+        shouldApply: false,
+        finalDecision: "SKIP",
+        score: 19,
+        reason: "Low fit.",
+        policyAllowed: true,
+      })
+      .mockResolvedValueOnce({
+        shouldApply: true,
+        finalDecision: "APPLY",
+        score: 84,
+        reason: "Strong fit.",
+        policyAllowed: true,
+      })
+      .mockResolvedValueOnce({
+        shouldApply: true,
+        finalDecision: "APPLY",
+        score: 81,
+        reason: "Strong fit.",
+        policyAllowed: true,
+      });
+
+    const result = await runEasyApplyBatchInternal(
+      {
+        driver,
+        url: "https://www.linkedin.com/jobs/collections/easy-apply",
+        targetCount: 2,
+        candidateProfile: profile,
+        evaluateJob,
+        resolveAnswer: async () => ({
+          questionType: "contact_info",
+          strategy: "deterministic",
+          answer: "123",
+          confidence: 0.95,
+          confidenceLabel: "high",
+          source: "candidate-profile",
+        }),
+      },
+      "submit",
+    );
+
+    expect(result.status).toBe("completed");
+    expect(result.attemptedCount).toBe(2);
+    expect(driver.open.mock.invocationCallOrder[0]).toBeGreaterThan(
+      evaluateJob.mock.invocationCallOrder[1] ?? 0,
+    );
+    expect(driver.goToNextResultsPage.mock.invocationCallOrder[0]).toBeGreaterThan(
+      driver.open.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(result.jobs[1]?.result?.status).toBe("submitted");
+    expect(result.jobs[2]?.result?.status).toBe("submitted");
+  });
+
   it("uses dry-run mode to stop at ready_to_submit for approved jobs", async () => {
     const driver = {
       open: vi.fn(),

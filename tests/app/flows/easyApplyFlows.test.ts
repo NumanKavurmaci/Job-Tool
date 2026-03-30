@@ -396,6 +396,65 @@ describe("easy apply flows", () => {
     expect(evaluationPage.close).toHaveBeenCalledTimes(1);
   });
 
+  it("emits an audit error when batch returns approved jobs without processing results", async () => {
+    const deps = createDeps();
+    const { evaluationPage } = mockWithPage(deps);
+    (deps.loadCandidateMasterProfile as any).mockResolvedValue({
+      fullName: "Jane",
+      sourceMetadata: { resumePath: "./resume.pdf" },
+    });
+    (deps.loadCandidateProfile as any).mockResolvedValue({});
+    (deps.resolveAnswer as any).mockResolvedValue({ answer: "ok" });
+    (deps.createEasyApplyDriver as any).mockResolvedValue({ driver: true });
+    (deps.runEasyApplyBatch as any).mockResolvedValue({
+      status: "partial",
+      collectionUrl: "https://www.linkedin.com/jobs/collections/easy-apply",
+      requestedCount: 1,
+      attemptedCount: 0,
+      evaluatedCount: 1,
+      skippedCount: 0,
+      pagesVisited: 1,
+      stopReason: "Stopped before processing.",
+      jobs: [
+        {
+          url: "https://www.linkedin.com/jobs/view/1",
+          evaluation: {
+            shouldApply: true,
+            finalDecision: "APPLY",
+            score: 72,
+            reason: "Good fit",
+            policyAllowed: true,
+          },
+        },
+      ],
+    });
+    (deps.writeRunReport as any).mockResolvedValue("artifacts/batch-runs/live.json");
+
+    const { runEasyApplyBatchFlow } = await import("../../../src/app/flows/easyApplyFlows.js");
+    await runEasyApplyBatchFlow(
+      {
+        mode: "easy-apply-batch",
+        url: "https://www.linkedin.com/jobs/collections/easy-apply",
+        resumePath: "./resume.pdf",
+        count: 1,
+        disableAiEvaluation: false,
+        scoreThreshold: 60,
+        useAiScoreAdjustment: false,
+        dryRun: false,
+      },
+      deps,
+    );
+
+    expect(deps.prisma.systemLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        level: "ERROR",
+        scope: "linkedin.batch.audit",
+        message: "Approved batch jobs were never processed.",
+      }),
+    });
+    expect(evaluationPage.close).toHaveBeenCalledTimes(1);
+  });
+
   it("handles dry-run failures by wrapping them in a LinkedIn app error", async () => {
     const deps = createDeps();
     mockWithPage(deps);
@@ -700,6 +759,162 @@ describe("easy apply flows", () => {
         scope: "linkedin.batch",
         message: "LinkedIn Easy Apply batch finished.",
         runType: "easy-apply-batch",
+      }),
+    });
+    expect(evaluationPage.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes structured per-job batch observability events for discovery, decision, and processing", async () => {
+    const deps = createDeps();
+    const { evaluationPage } = mockWithPage(deps);
+    (deps.loadCandidateMasterProfile as any).mockResolvedValue({
+      fullName: "Jane",
+      sourceMetadata: { resumePath: "./resume.pdf" },
+    });
+    (deps.loadCandidateProfile as any).mockResolvedValue({});
+    (deps.resolveAnswer as any).mockResolvedValue({ answer: "ok" });
+    (deps.createEasyApplyDriver as any).mockResolvedValue({ driver: true });
+    (deps.runEasyApplyBatch as any).mockImplementation(async (input: any) => {
+      await input.observeBatchEvent?.({
+        type: "collection_opened",
+        collectionUrl: input.url,
+        pageNumber: 1,
+      });
+      await input.observeBatchEvent?.({
+        type: "job_discovered",
+        collectionUrl: input.url,
+        jobUrl: "https://www.linkedin.com/jobs/view/1",
+        pageNumber: 1,
+        alreadyApplied: false,
+      });
+      await input.observeBatchEvent?.({
+        type: "job_evaluated",
+        collectionUrl: input.url,
+        jobUrl: "https://www.linkedin.com/jobs/view/1",
+        pageNumber: 1,
+        evaluation: {
+          shouldApply: true,
+          finalDecision: "APPLY",
+          score: 72,
+          reason: "Good fit",
+          policyAllowed: true,
+          diagnostics: {
+            title: "Engineer",
+            company: "Acme",
+            location: "Remote",
+            applicationType: "easy_apply",
+            companyInfoRead: true,
+            metadataRead: true,
+          },
+        },
+      });
+      await input.observeBatchEvent?.({
+        type: "job_processing_started",
+        collectionUrl: input.url,
+        jobUrl: "https://www.linkedin.com/jobs/view/1",
+        pageNumber: 1,
+        attemptIndex: 1,
+        evaluation: {
+          shouldApply: true,
+          finalDecision: "APPLY",
+          score: 72,
+          reason: "Good fit",
+          policyAllowed: true,
+          diagnostics: {
+            applicationType: "easy_apply",
+          },
+        },
+      });
+      await input.observeBatchEvent?.({
+        type: "job_processing_finished",
+        collectionUrl: input.url,
+        jobUrl: "https://www.linkedin.com/jobs/view/1",
+        pageNumber: 1,
+        attemptIndex: 1,
+        evaluation: {
+          shouldApply: true,
+          finalDecision: "APPLY",
+          score: 72,
+          reason: "Good fit",
+          policyAllowed: true,
+        },
+        result: {
+          status: "stopped_external_apply",
+          steps: [],
+          stopReason: "This LinkedIn job redirects to an external application page.",
+          url: "https://www.linkedin.com/jobs/view/1",
+          externalApplyUrl: "https://company.example/apply",
+        },
+      });
+
+      return {
+        status: "completed",
+        collectionUrl: input.url,
+        requestedCount: 1,
+        attemptedCount: 1,
+        evaluatedCount: 1,
+        skippedCount: 0,
+        pagesVisited: 1,
+        stopReason: "Processed 1 job.",
+        jobs: [
+          {
+            url: "https://www.linkedin.com/jobs/view/1",
+            evaluation: {
+              shouldApply: true,
+              finalDecision: "APPLY",
+              score: 72,
+              reason: "Good fit",
+              policyAllowed: true,
+            },
+            result: {
+              status: "stopped_external_apply",
+              steps: [],
+              stopReason: "This LinkedIn job redirects to an external application page.",
+              url: "https://www.linkedin.com/jobs/view/1",
+              externalApplyUrl: "https://company.example/apply",
+            },
+          },
+        ],
+      };
+    });
+    (deps.writeRunReport as any).mockResolvedValue("artifacts/batch-runs/live.json");
+
+    const { runEasyApplyBatchFlow } = await import("../../../src/app/flows/easyApplyFlows.js");
+    await runEasyApplyBatchFlow(
+      {
+        mode: "easy-apply-batch",
+        url: "https://www.linkedin.com/jobs/collections/easy-apply",
+        resumePath: "./resume.pdf",
+        count: 1,
+        disableAiEvaluation: false,
+        scoreThreshold: 60,
+        useAiScoreAdjustment: false,
+        dryRun: false,
+      },
+      deps,
+    );
+
+    expect(deps.prisma.systemLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        scope: "linkedin.batch",
+        message: "Discovered job on LinkedIn collection page.",
+        jobUrl: "https://www.linkedin.com/jobs/view/1",
+      }),
+    });
+    expect(deps.prisma.systemLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        scope: "linkedin.batch",
+        message: "Recorded batch decision for job.",
+        jobUrl: "https://www.linkedin.com/jobs/view/1",
+        detailsJson: expect.stringContaining("\"applicationType\":\"easy_apply\""),
+      }),
+    });
+    expect(deps.prisma.systemLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        scope: "linkedin.batch",
+        message: "Finished application processing for approved job.",
+        jobUrl: "https://www.linkedin.com/jobs/view/1",
+        detailsJson: expect.stringContaining("\"externalApplyUrl\":\"https://company.example/apply\""),
       }),
     });
     expect(evaluationPage.close).toHaveBeenCalledTimes(1);

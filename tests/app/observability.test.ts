@@ -195,4 +195,84 @@ describe("app observability helpers", () => {
       }),
     );
   });
+
+  it("detects silent batch anomalies when approved jobs are missing processing results", async () => {
+    const { collectBatchRunAnomalies } = await import("../../src/app/observability.js");
+
+    const anomalies = collectBatchRunAnomalies({
+      status: "partial",
+      collectionUrl: "https://www.linkedin.com/jobs/collections/top-applicant/",
+      requestedCount: 2,
+      attemptedCount: 0,
+      evaluatedCount: 1,
+      skippedCount: 0,
+      pagesVisited: 1,
+      stopReason: "Stopped early.",
+      jobs: [
+        {
+          url: "https://example.com/1",
+          evaluation: {
+            shouldApply: true,
+            finalDecision: "APPLY",
+            score: 72,
+            reason: "Good fit",
+            policyAllowed: true,
+          },
+        },
+      ],
+    });
+
+    expect(anomalies).toEqual([
+      expect.objectContaining({
+        level: "ERROR",
+        message: "Approved batch jobs were never processed.",
+      }),
+    ]);
+  });
+
+  it("persists batch anomalies into system logs", async () => {
+    const { persistBatchRunAnomalies } = await import("../../src/app/observability.js");
+    const deps = { prisma: {}, logger: {} } as any;
+
+    await persistBatchRunAnomalies(
+      {
+        runType: "easy-apply-batch",
+        collectionUrl: "https://www.linkedin.com/jobs/collections/top-applicant/",
+        result: {
+          status: "partial",
+          collectionUrl: "https://www.linkedin.com/jobs/collections/top-applicant/",
+          requestedCount: 2,
+          attemptedCount: 0,
+          evaluatedCount: 1,
+          skippedCount: 0,
+          pagesVisited: 1,
+          stopReason: "Stopped early.",
+          jobs: [
+            {
+              url: "https://example.com/1",
+              evaluation: {
+                shouldApply: true,
+                finalDecision: "APPLY",
+                score: 72,
+                reason: "Good fit",
+                policyAllowed: true,
+              },
+            },
+          ],
+        },
+      },
+      deps,
+    );
+
+    expect(writeSystemLogMock).toHaveBeenCalledWith({
+      prisma: deps.prisma,
+      logger: deps.logger,
+      entry: expect.objectContaining({
+        level: "ERROR",
+        scope: "linkedin.batch.audit",
+        message: "Approved batch jobs were never processed.",
+        runType: "easy-apply-batch",
+      }),
+    });
+  });
 });

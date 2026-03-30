@@ -1,4 +1,8 @@
-import type { EasyApplyBatchJobResult, EasyApplyRunResult } from "../linkedin/easyApply.js";
+import type {
+  EasyApplyBatchJobResult,
+  EasyApplyBatchRunResult,
+  EasyApplyRunResult,
+} from "../linkedin/easyApply.js";
 import {
   recordJobReviewHistory,
   type JobReviewHistoryInput,
@@ -121,5 +125,95 @@ export async function persistBatchJobHistory(
         deps,
       );
     }
+  }
+}
+
+export function collectBatchRunAnomalies(result: EasyApplyBatchRunResult): Array<{
+  level: "WARN" | "ERROR";
+  message: string;
+  details: Record<string, unknown>;
+}> {
+  const anomalies: Array<{
+    level: "WARN" | "ERROR";
+    message: string;
+    details: Record<string, unknown>;
+  }> = [];
+
+  const approvedJobs = result.jobs.filter((job) => job.evaluation.shouldApply);
+  const processedJobs = approvedJobs.filter((job) => job.result != null);
+  const missingProcessing = approvedJobs.filter((job) => job.result == null);
+
+  if (missingProcessing.length > 0) {
+    anomalies.push({
+      level: "ERROR",
+      message: "Approved batch jobs were never processed.",
+      details: {
+        approvedCount: approvedJobs.length,
+        processedCount: processedJobs.length,
+        missingJobUrls: missingProcessing.map((job) => job.url),
+      },
+    });
+  }
+
+  if (result.attemptedCount !== processedJobs.length) {
+    anomalies.push({
+      level: "ERROR",
+      message: "Batch attemptedCount does not match the number of processed jobs.",
+      details: {
+        attemptedCount: result.attemptedCount,
+        processedCount: processedJobs.length,
+      },
+    });
+  }
+
+  if (result.evaluatedCount !== result.jobs.length) {
+    anomalies.push({
+      level: "ERROR",
+      message: "Batch evaluatedCount does not match the number of recorded jobs.",
+      details: {
+        evaluatedCount: result.evaluatedCount,
+        recordedJobs: result.jobs.length,
+      },
+    });
+  }
+
+  const duplicateUrls = result.jobs
+    .map((job) => job.url)
+    .filter((url, index, all) => all.indexOf(url) !== index);
+  if (duplicateUrls.length > 0) {
+    anomalies.push({
+      level: "WARN",
+      message: "Batch recorded duplicate job URLs.",
+      details: {
+        duplicateJobUrls: [...new Set(duplicateUrls)],
+      },
+    });
+  }
+
+  return anomalies;
+}
+
+export async function persistBatchRunAnomalies(
+  args: {
+    runType: "easy-apply-batch" | "easy-apply-dry-run";
+    collectionUrl: string;
+    result: EasyApplyBatchRunResult;
+  },
+  deps: AppDeps,
+): Promise<void> {
+  const anomalies = collectBatchRunAnomalies(args.result);
+
+  for (const anomaly of anomalies) {
+    await persistSystemEvent(
+      {
+        level: anomaly.level,
+        scope: "linkedin.batch.audit",
+        message: anomaly.message,
+        runType: args.runType,
+        jobUrl: args.collectionUrl,
+        details: anomaly.details,
+      },
+      deps,
+    );
   }
 }

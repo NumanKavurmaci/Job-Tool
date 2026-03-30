@@ -75,6 +75,15 @@ export interface EasyApplyJobEvaluation {
   reason: string;
   policyAllowed: boolean;
   alreadyApplied?: boolean;
+  diagnostics?: {
+    title?: string | null;
+    company?: string | null;
+    location?: string | null;
+    companyLinkedinUrl?: string | null;
+    applicationType?: string | null;
+    companyInfoRead?: boolean;
+    metadataRead?: boolean;
+  };
 }
 
 export interface EasyApplyBatchJobResult {
@@ -146,7 +155,51 @@ export interface EasyApplyBatchRunInput {
     candidateProfile: CandidateProfile;
   }) => Promise<ResolvedAnswer>;
   maxSteps?: number;
+  observeBatchEvent?: (event: EasyApplyBatchEvent) => Promise<void> | void;
 }
+
+export type EasyApplyBatchEvent =
+  | {
+      type: "collection_opened";
+      collectionUrl: string;
+      pageNumber: number;
+    }
+  | {
+      type: "job_discovered";
+      collectionUrl: string;
+      jobUrl: string;
+      pageNumber: number;
+      alreadyApplied: boolean;
+    }
+  | {
+      type: "job_evaluated";
+      collectionUrl: string;
+      jobUrl: string;
+      pageNumber: number;
+      evaluation: EasyApplyJobEvaluation;
+    }
+  | {
+      type: "job_processing_started";
+      collectionUrl: string;
+      jobUrl: string;
+      pageNumber: number;
+      attemptIndex: number;
+      evaluation: EasyApplyJobEvaluation;
+    }
+  | {
+      type: "job_processing_finished";
+      collectionUrl: string;
+      jobUrl: string;
+      pageNumber: number;
+      attemptIndex: number;
+      evaluation: EasyApplyJobEvaluation;
+      result: EasyApplyRunResult;
+    }
+  | {
+      type: "page_advanced";
+      collectionUrl: string;
+      pageNumber: number;
+    };
 
 interface PreparedStepQuestionResult {
   answeredQuestion: EasyApplyAnsweredQuestion;
@@ -561,15 +614,20 @@ export async function runEasyApplyBatchInternal(
   const requestedCount = Math.max(1, Math.floor(input.targetCount));
   const seenUrls = new Set<string>();
   const jobs: EasyApplyBatchJobResult[] = [];
-  const approvedUrls: string[] = [];
   let pagesVisited = 0;
   let skippedCount = 0;
+  let attemptedCount = 0;
 
   await input.driver.ensureAuthenticated(input.url);
   await input.driver.openCollection(input.url);
   pagesVisited += 1;
+  await input.observeBatchEvent?.({
+    type: "collection_opened",
+    collectionUrl: input.url,
+    pageNumber: pagesVisited,
+  });
 
-  while (approvedUrls.length < requestedCount) {
+  while (attemptedCount < requestedCount) {
     const visibleJobs = await collectVisibleBatchJobs(input.driver);
 
     for (const job of visibleJobs) {
@@ -579,14 +637,36 @@ export async function runEasyApplyBatchInternal(
       }
 
       seenUrls.add(url);
+      await input.observeBatchEvent?.({
+        type: "job_discovered",
+        collectionUrl: input.url,
+        jobUrl: url,
+        pageNumber: pagesVisited,
+        alreadyApplied,
+      });
 
       if (alreadyApplied) {
         skippedCount += 1;
-        jobs.push(buildAlreadyAppliedBatchResult(url));
+        const batchJob = buildAlreadyAppliedBatchResult(url);
+        jobs.push(batchJob);
+        await input.observeBatchEvent?.({
+          type: "job_evaluated",
+          collectionUrl: input.url,
+          jobUrl: url,
+          pageNumber: pagesVisited,
+          evaluation: batchJob.evaluation,
+        });
         continue;
       }
 
       const evaluation = await input.evaluateJob(url);
+      await input.observeBatchEvent?.({
+        type: "job_evaluated",
+        collectionUrl: input.url,
+        jobUrl: url,
+        pageNumber: pagesVisited,
+        evaluation,
+      });
 
       if (!evaluation.shouldApply) {
         skippedCount += 1;
@@ -594,14 +674,39 @@ export async function runEasyApplyBatchInternal(
         continue;
       }
 
-      approvedUrls.push(url);
-      jobs.push({ url, evaluation });
-      if (approvedUrls.length >= requestedCount) {
+      const entry: EasyApplyBatchJobResult = { url, evaluation };
+      jobs.push(entry);
+
+      try {
+        await input.observeBatchEvent?.({
+          type: "job_processing_started",
+          collectionUrl: input.url,
+          jobUrl: url,
+          pageNumber: pagesVisited,
+          attemptIndex: attemptedCount + 1,
+          evaluation,
+        });
+        entry.result = await processApprovedBatchJob(input, url, submitMode);
+      } catch (error) {
+        entry.result = buildJobProcessingFailure(url, error);
+      }
+      await input.observeBatchEvent?.({
+        type: "job_processing_finished",
+        collectionUrl: input.url,
+        jobUrl: url,
+        pageNumber: pagesVisited,
+        attemptIndex: attemptedCount + 1,
+        evaluation,
+        result: entry.result,
+      });
+
+      attemptedCount += 1;
+      if (attemptedCount >= requestedCount) {
         break;
       }
     }
 
-    if (approvedUrls.length >= requestedCount) {
+    if (attemptedCount >= requestedCount) {
       break;
     }
 
@@ -611,9 +716,14 @@ export async function runEasyApplyBatchInternal(
     }
 
     pagesVisited += 1;
+    await input.observeBatchEvent?.({
+      type: "page_advanced",
+      collectionUrl: input.url,
+      pageNumber: pagesVisited,
+    });
   }
 
-  if (jobs.length === 0 && approvedUrls.length === 0) {
+  if (jobs.length === 0 && attemptedCount === 0) {
     return {
       status: "stopped_no_jobs",
       collectionUrl: input.url,
@@ -626,22 +736,6 @@ export async function runEasyApplyBatchInternal(
       stopReason:
         "No LinkedIn Easy Apply jobs were discovered from the collection page.",
     };
-  }
-
-  let attemptedCount = 0;
-  for (const url of approvedUrls) {
-    let result: EasyApplyRunResult;
-    try {
-      result = await processApprovedBatchJob(input, url, submitMode);
-    } catch (error) {
-      result = buildJobProcessingFailure(url, error);
-    }
-
-    const entry = jobs.find((job) => job.url === url);
-    if (entry) {
-      entry.result = result;
-    }
-    attemptedCount += 1;
   }
 
   const status = attemptedCount >= requestedCount ? "completed" : "partial";

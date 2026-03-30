@@ -14,6 +14,7 @@ import {
   loadMasterProfileForArgs,
 } from "../flowHelpers.js";
 import {
+  persistBatchRunAnomalies,
   mapEasyApplyStatusToHistoryStatus,
   persistBatchJobHistory,
   persistJobHistory,
@@ -22,6 +23,7 @@ import {
 } from "../observability.js";
 import type {
   EasyApplyAnsweredQuestion,
+  EasyApplyBatchEvent,
   EasyApplyRunResult,
   EasyApplyStepReport,
 } from "../../linkedin/easyApply.js";
@@ -236,6 +238,128 @@ function getEasyApplyRunType(args: EasyApplyArgs | EasyApplyBatchArgs): EasyAppl
   return args.mode === "easy-apply-batch" ? "easy-apply-batch" : "easy-apply";
 }
 
+function createBatchEventObserver(args: {
+  deps: AppDeps;
+  runType: EasyApplyRunType;
+}) {
+  return async (event: EasyApplyBatchEvent) => {
+    switch (event.type) {
+      case "collection_opened":
+        await persistSystemEvent(
+          {
+            level: "INFO",
+            scope: "linkedin.batch",
+            message: "Opened LinkedIn collection page for batch processing.",
+            runType: args.runType,
+            jobUrl: event.collectionUrl,
+            details: {
+              pageNumber: event.pageNumber,
+            },
+          },
+          args.deps,
+        );
+        return;
+      case "job_discovered":
+        await persistSystemEvent(
+          {
+            level: "INFO",
+            scope: "linkedin.batch",
+            message: "Discovered job on LinkedIn collection page.",
+            runType: args.runType,
+            jobUrl: event.jobUrl,
+            details: {
+              collectionUrl: event.collectionUrl,
+              pageNumber: event.pageNumber,
+              alreadyApplied: event.alreadyApplied,
+            },
+          },
+          args.deps,
+        );
+        return;
+      case "job_evaluated":
+        await persistSystemEvent(
+          {
+            level: "INFO",
+            scope: "linkedin.batch",
+            message: "Recorded batch decision for job.",
+            runType: args.runType,
+            jobUrl: event.jobUrl,
+            details: {
+              collectionUrl: event.collectionUrl,
+              pageNumber: event.pageNumber,
+              finalDecision: event.evaluation.finalDecision,
+              shouldApply: event.evaluation.shouldApply,
+              score: event.evaluation.score,
+              decisionReason: event.evaluation.reason,
+              policyAllowed: event.evaluation.policyAllowed,
+              alreadyApplied: event.evaluation.alreadyApplied ?? false,
+              diagnostics: event.evaluation.diagnostics ?? null,
+            },
+          },
+          args.deps,
+        );
+        return;
+      case "job_processing_started":
+        await persistSystemEvent(
+          {
+            level: "INFO",
+            scope: "linkedin.batch",
+            message: "Starting application processing for approved job.",
+            runType: args.runType,
+            jobUrl: event.jobUrl,
+            details: {
+              collectionUrl: event.collectionUrl,
+              pageNumber: event.pageNumber,
+              attemptIndex: event.attemptIndex,
+              finalDecision: event.evaluation.finalDecision,
+              decisionReason: event.evaluation.reason,
+              applicationType: event.evaluation.diagnostics?.applicationType ?? null,
+            },
+          },
+          args.deps,
+        );
+        return;
+      case "job_processing_finished":
+        await persistSystemEvent(
+          {
+            level: "INFO",
+            scope: "linkedin.batch",
+            message: "Finished application processing for approved job.",
+            runType: args.runType,
+            jobUrl: event.jobUrl,
+            details: {
+              collectionUrl: event.collectionUrl,
+              pageNumber: event.pageNumber,
+              attemptIndex: event.attemptIndex,
+              finalDecision: event.evaluation.finalDecision,
+              resultStatus: event.result.status,
+              stopReason: event.result.stopReason,
+              stepCount: event.result.steps.length,
+              externalApplyUrl: event.result.externalApplyUrl ?? null,
+            },
+          },
+          args.deps,
+        );
+        return;
+      case "page_advanced":
+        await persistSystemEvent(
+          {
+            level: "INFO",
+            scope: "linkedin.batch",
+            message: "Advanced to the next LinkedIn collection page.",
+            runType: args.runType,
+            jobUrl: event.collectionUrl,
+            details: {
+              pageNumber: event.pageNumber,
+            },
+          },
+          args.deps,
+        );
+        return;
+    }
+  };
+}
+
 export async function runEasyApplyDryRunFlow(
   args: EasyApplyArgs | EasyApplyBatchArgs,
   deps: AppDeps,
@@ -266,12 +390,17 @@ export async function runEasyApplyDryRunFlow(
           ...(evaluationPage ? { evaluationPage } : {}),
           deps,
         });
+        const observeBatchEvent = createBatchEventObserver({
+          deps,
+          runType,
+        });
         const sharedInput = {
           driver,
           url: args.url,
           candidateProfile: profile,
           evaluateJob,
           resolveAnswer: resolveCandidateAnswer,
+          observeBatchEvent,
         };
 
         try {
@@ -382,6 +511,14 @@ export async function runEasyApplyDryRunFlow(
   );
 
   if ("jobs" in result) {
+    await persistBatchRunAnomalies(
+      {
+        runType: "easy-apply-dry-run",
+        collectionUrl: args.url,
+        result,
+      },
+      deps,
+    );
     await persistBatchJobHistory(
       {
         source: "easy-apply-dry-run",
@@ -618,6 +755,10 @@ export async function runEasyApplyBatchFlow(
           ...(evaluationPage ? { evaluationPage } : {}),
           deps,
         });
+        const observeBatchEvent = createBatchEventObserver({
+          deps,
+          runType,
+        });
 
         try {
           const batchResult = await deps.runEasyApplyBatch({
@@ -627,6 +768,7 @@ export async function runEasyApplyBatchFlow(
             candidateProfile: profile,
             evaluateJob,
             resolveAnswer: resolveCandidateAnswer,
+            observeBatchEvent,
           });
 
           for (const job of batchResult.jobs) {
@@ -680,6 +822,14 @@ export async function runEasyApplyBatchFlow(
         evaluatedCount: result.evaluatedCount,
         skippedCount: result.skippedCount,
       },
+    },
+    deps,
+  );
+  await persistBatchRunAnomalies(
+    {
+      runType: "easy-apply-batch",
+      collectionUrl: args.url,
+      result,
     },
     deps,
   );

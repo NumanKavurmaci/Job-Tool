@@ -61,6 +61,10 @@ export function createBatchJobEvaluator(args: {
       score: 0,
       reason: "AI evaluation disabled for this batch run.",
       policyAllowed: true,
+      diagnostics: {
+        metadataRead: false,
+        companyInfoRead: false,
+      },
     });
   }
 
@@ -180,6 +184,34 @@ export function createBatchJobEvaluator(args: {
     }
 
     const extracted = await deps.extractJobText(evaluationPage, url);
+    const diagnostics = {
+      title: extracted.title ?? null,
+      company: extracted.company ?? null,
+      location: extracted.location ?? null,
+      companyLinkedinUrl: extracted.companyLinkedinUrl ?? null,
+      applicationType: extracted.applicationType ?? null,
+      companyInfoRead: Boolean(
+        extracted.company || extracted.companyLinkedinUrl || extracted.companyLogoUrl,
+      ),
+      metadataRead: Boolean(
+        extracted.title ||
+          extracted.company ||
+          extracted.location ||
+          extracted.companyLinkedinUrl ||
+          extracted.companyLogoUrl,
+      ),
+    };
+    await persistSystemEvent(
+      {
+        level: "INFO",
+        scope: "linkedin.batch",
+        message: "Batch job context extracted.",
+        runType: "easy-apply-batch",
+        jobUrl: url,
+        details: diagnostics,
+      },
+      deps,
+    );
     const llmInput = deps.formatJobForLLM(extracted);
     const parseResult = await deps.parseJob(llmInput);
     const normalized = deps.normalizeParsedJob(parseResult.parsed, extracted);
@@ -215,6 +247,26 @@ export function createBatchJobEvaluator(args: {
         reasons: !policy.allowed ? policy.reasons : [reason],
       },
       "LinkedIn Easy Apply job evaluated",
+    );
+    await persistSystemEvent(
+      {
+        level: "INFO",
+        scope: "linkedin.batch",
+        message: "Batch job evaluation completed.",
+        runType: "easy-apply-batch",
+        jobUrl: url,
+        details: {
+          finalDecision,
+          shouldApply: finalDecision === "APPLY",
+          score: score.totalScore,
+          scoreThreshold: args.scoreThreshold,
+          policyAllowed: policy.allowed,
+          decisionReason: reason,
+          policyReasons: policy.reasons,
+          diagnostics,
+        },
+      },
+      deps,
     );
 
     const persisted = await persistJobAnalysisRecord({
@@ -262,6 +314,7 @@ export function createBatchJobEvaluator(args: {
       score: score.totalScore,
       reason,
       policyAllowed: policy.allowed,
+      diagnostics,
     };
   };
 
