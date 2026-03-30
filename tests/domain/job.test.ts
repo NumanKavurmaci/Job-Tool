@@ -550,4 +550,49 @@ describe("normalizeParsedJob", () => {
 
     expect(result.applicationType).toBe("easy_apply");
   });
+
+  it("prefers structured extracted location and workplace signals over a noisy parsed guess", () => {
+    const result = normalizeParsedJob(
+      {
+        title: "Backend Developer",
+        company: "Solid-ICT",
+        location: "Europe",
+        platform: "linkedin",
+        seniority: null,
+        mustHaveSkills: [],
+        niceToHaveSkills: [],
+        technologies: [],
+        yearsRequired: 5,
+        remoteType: "remote",
+        visaSponsorship: null,
+        workAuthorization: null,
+      },
+      {
+        rawText: [
+          "Title: Backend Developer",
+          "Company: Solid-ICT",
+          "Location: Istanbul, Türkiye",
+          "Workplace Type: hybrid",
+          "Application Type: easy_apply",
+          "About the company:",
+          "We've done great work in Istanbul and have decided to bring the same quality of work to clients in Europe.",
+        ].join("\n"),
+        title: "Backend Developer",
+        company: "Solid-ICT",
+        location: "Istanbul, Türkiye",
+        platform: "linkedin",
+        applicationType: "easy_apply",
+        applyUrl: "https://www.linkedin.com/jobs/view/4395042318/",
+        currentUrl: "https://www.linkedin.com/jobs/view/4395042318/",
+        descriptionText:
+          "Design and develop scalable backend services and APIs. Hybrid collaboration model.",
+        requirementsText:
+          "Strong backend development experience (.NET, Node.js, Java, or similar).",
+        benefitsText: null,
+      },
+    );
+
+    expect(result.location).toBe("Istanbul, Türkiye");
+    expect(result.remoteType).toBe("hybrid");
+  });
 });

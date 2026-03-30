@@ -89,6 +89,13 @@ describe("job flow", () => {
 
     expect(result.finalDecision).toBe("SKIP");
     expect(deps.extractJobText).toHaveBeenCalledWith(page, "https://example.com/job");
+    expect(deps.formatJobForLLM).toHaveBeenCalledWith(
+      expect.objectContaining({ location: "Istanbul" }),
+      { omitLocation: true },
+    );
+    expect(deps.parseJob).toHaveBeenCalledWith("prompt", {
+      excludeLocation: true,
+    });
     expect(deps.prisma.jobReviewHistory.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         jobPostingId: "job_1",
@@ -232,5 +239,121 @@ describe("job flow", () => {
     expect(result.finalReasons).toEqual([
       "Configured workplace-policy bypass matched this job location, so the role was forced to APPLY.",
     ]);
+  });
+
+  it("keeps location in the LLM prompt when extracted metadata does not contain one", async () => {
+    const deps = createDeps();
+    const page = { fake: "page" };
+    deps.withPage.mockImplementation(async (_options: unknown, fn: (page: unknown) => Promise<unknown>) => fn(page));
+    deps.loadCandidateProfile.mockResolvedValue({ yearsOfExperience: 3 });
+    deps.extractJobText.mockResolvedValue({
+      rawText: "raw body",
+      title: "Title",
+      company: "Company",
+      companyLogoUrl: null,
+      companyLinkedinUrl: null,
+      location: null,
+      platform: "linkedin",
+    });
+    deps.formatJobForLLM.mockReturnValue("prompt");
+    deps.parseJob.mockResolvedValue({
+      parsed: {
+        title: "Title",
+        company: "Company",
+        location: "Berlin, Germany",
+        platform: "linkedin",
+      },
+      provider: "local",
+      model: "test-model",
+    });
+    deps.normalizeParsedJob.mockReturnValue({ platform: "linkedin" });
+    deps.scoreJob.mockReturnValue({
+      totalScore: 70,
+      breakdown: { skill: 20, seniority: 20, location: 20, tech: 5, bonus: 5 },
+    });
+    deps.evaluatePolicy.mockReturnValue({ allowed: true, reasons: [] });
+    deps.decideJob.mockReturnValue({ decision: "APPLY", reason: "Good fit." });
+    deps.prisma.jobPosting.upsert.mockResolvedValue({ id: "job_1" });
+    deps.prisma.applicationDecision.create.mockResolvedValue({ id: "decision_1" });
+    deps.writeRunReport.mockResolvedValue("artifacts/job-runs/decide.json");
+
+    await runJobFlow("decide", "https://www.linkedin.com/jobs/view/1", deps);
+
+    expect(deps.formatJobForLLM).toHaveBeenCalledWith(
+      expect.objectContaining({ location: null }),
+      { omitLocation: false },
+    );
+    expect(deps.parseJob).toHaveBeenCalledWith("prompt", {
+      excludeLocation: false,
+    });
+  });
+
+  it("blocks the Solid-ICT Istanbul case even if the parse layer would have guessed Europe", async () => {
+    const deps = createDeps();
+    const page = { fake: "page" };
+    deps.withPage.mockImplementation(async (_options: unknown, fn: (page: unknown) => Promise<unknown>) => fn(page));
+    deps.loadCandidateProfile.mockResolvedValue({
+      yearsOfExperience: 5,
+      workplacePolicyBypassLocations: ["Europe"],
+    });
+    deps.extractJobText.mockResolvedValue({
+      rawText: "raw body",
+      title: "Backend Developer",
+      company: "Solid-ICT",
+      companyLogoUrl: null,
+      companyLinkedinUrl: "https://www.linkedin.com/company/solidict/",
+      location: "Istanbul, Türkiye",
+      platform: "linkedin",
+      applicationType: "easy_apply",
+    });
+    deps.formatJobForLLM.mockReturnValue("prompt");
+    deps.parseJob.mockResolvedValue({
+      parsed: {
+        title: "Backend Developer",
+        company: "Solid-ICT",
+        location: null,
+        platform: "linkedin",
+      },
+      provider: "local",
+      model: "test-model",
+    });
+    deps.normalizeParsedJob.mockReturnValue({
+      title: "Backend Developer",
+      company: "Solid-ICT",
+      location: "Istanbul, Türkiye",
+      platform: "linkedin",
+      remoteType: "hybrid",
+      applicationType: "easy_apply",
+    });
+    deps.scoreJob.mockReturnValue({
+      totalScore: 21,
+      breakdown: { skill: 6, seniority: 5, location: 0, tech: 5, bonus: 5 },
+    });
+    deps.evaluatePolicy.mockReturnValue({
+      allowed: false,
+      reasons: ["Hybrid roles are only allowed in configured locations."],
+    });
+    deps.decideJob.mockReturnValue({ decision: "APPLY", reason: "Score override." });
+    deps.prisma.jobPosting.upsert.mockResolvedValue({ id: "job_1" });
+    deps.prisma.applicationDecision.create.mockResolvedValue({ id: "decision_1" });
+    deps.writeRunReport.mockResolvedValue("artifacts/job-runs/decide.json");
+
+    const result = await runJobFlow(
+      "decide",
+      "https://www.linkedin.com/jobs/view/4395042318/",
+      deps,
+    );
+
+    expect(result.finalDecision).toBe("SKIP");
+    expect(result.finalReasons).toEqual([
+      "Hybrid roles are only allowed in configured locations.",
+    ]);
+    expect(deps.formatJobForLLM).toHaveBeenCalledWith(
+      expect.objectContaining({ location: "Istanbul, Türkiye" }),
+      { omitLocation: true },
+    );
+    expect(deps.parseJob).toHaveBeenCalledWith("prompt", {
+      excludeLocation: true,
+    });
   });
 });

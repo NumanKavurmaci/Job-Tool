@@ -48,9 +48,6 @@ const EUROPE_LOCATION_PATTERNS = [
   /\bscotland\b/i,
   /\bwales\b/i,
   /\bnorthern ireland\b/i,
-  /\bturkiye\b/i,
-  /\btürkiye\b/i,
-  /\bturkey\b/i,
 ];
 
 const EUROPE_REGION_LABELS = new Set([
@@ -61,11 +58,33 @@ const EUROPE_REGION_LABELS = new Set([
   "emea",
 ]);
 
+function trimOrNull(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
+}
+
+export function normalizePolicyText(value: string | null | undefined): string {
+  return (value ?? "")
+    .normalize("NFKD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .trim();
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function includesAny(haystack: string, needles: string[]): string | null {
-  const lowerHaystack = haystack.toLowerCase();
+  const normalizedHaystack = normalizePolicyText(haystack);
 
   for (const needle of needles) {
-    if (lowerHaystack.includes(needle.toLowerCase())) {
+    const normalizedNeedle = normalizePolicyText(needle);
+    if (!normalizedNeedle) {
+      continue;
+    }
+
+    if (normalizedHaystack.includes(normalizedNeedle)) {
       return needle;
     }
   }
@@ -77,10 +96,15 @@ function includesAllowedHybridLocation(
   location: string | null,
   allowedHybridLocations: string[],
 ): string | null {
-  const normalizedLocation = (location ?? "").toLowerCase();
+  const normalizedLocation = normalizePolicyText(location);
 
   for (const allowedLocation of allowedHybridLocations) {
-    if (normalizedLocation.includes(allowedLocation.toLowerCase())) {
+    const normalizedAllowedLocation = normalizePolicyText(allowedLocation);
+    if (!normalizedAllowedLocation) {
+      continue;
+    }
+
+    if (normalizedLocation.includes(normalizedAllowedLocation)) {
       return allowedLocation;
     }
   }
@@ -89,15 +113,15 @@ function includesAllowedHybridLocation(
 }
 
 function includesRoleKeyword(haystack: string, keywords: string[]): string | null {
-  const normalizedHaystack = haystack.toLowerCase();
+  const normalizedHaystack = normalizePolicyText(haystack);
 
   for (const keyword of keywords) {
-    const normalizedKeyword = keyword.trim().toLowerCase();
+    const normalizedKeyword = normalizePolicyText(keyword);
     if (!normalizedKeyword) {
       continue;
     }
 
-    const pattern = new RegExp(`\\b${normalizedKeyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+    const pattern = new RegExp(`\\b${escapeRegex(normalizedKeyword)}\\b`, "i");
     if (pattern.test(normalizedHaystack)) {
       return keyword;
     }
@@ -106,7 +130,13 @@ function includesRoleKeyword(haystack: string, keywords: string[]): string | nul
   return null;
 }
 
-function hasPreferredStackOverlap(job: NormalizedJob, profile: CandidateProfile): boolean {
+export function hasPreferredStackOverlap(
+  job: Pick<NormalizedJob, "title" | "technologies" | "mustHaveSkills" | "niceToHaveSkills">,
+  profile: Pick<
+    CandidateProfile,
+    "preferredTechStack" | "aspirationalTechStack" | "preferredRoleOverlapSignals"
+  >,
+): boolean {
   const haystack = [
     job.title,
     ...job.technologies,
@@ -114,10 +144,11 @@ function hasPreferredStackOverlap(job: NormalizedJob, profile: CandidateProfile)
     ...job.niceToHaveSkills,
   ]
     .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
+    .join(" ");
 
-  if (!haystack) {
+  const normalizedHaystack = normalizePolicyText(haystack);
+
+  if (!normalizedHaystack) {
     return false;
   }
 
@@ -127,11 +158,19 @@ function hasPreferredStackOverlap(job: NormalizedJob, profile: CandidateProfile)
     ...profile.preferredRoleOverlapSignals,
   ];
 
-  return preferredSignals.some((signal) => haystack.includes(signal.toLowerCase()));
+  return preferredSignals.some((signal) =>
+    normalizedHaystack.includes(normalizePolicyText(signal)),
+  );
 }
 
-function isPureJavaRole(job: NormalizedJob, profile: CandidateProfile): boolean {
-  const title = (job.title ?? "").toLowerCase();
+export function isPureJavaRole(
+  job: Pick<NormalizedJob, "title" | "technologies" | "mustHaveSkills" | "niceToHaveSkills">,
+  profile: Pick<
+    CandidateProfile,
+    "preferredTechStack" | "aspirationalTechStack" | "preferredRoleOverlapSignals"
+  >,
+): boolean {
+  const title = normalizePolicyText(job.title);
   if (!title) {
     return false;
   }
@@ -149,35 +188,42 @@ function isPureJavaRole(job: NormalizedJob, profile: CandidateProfile): boolean 
   return !hasPreferredStackOverlap(job, profile);
 }
 
-function isEuropeCenteredLocation(location: string | null | undefined): boolean {
-  const normalizedLocation = location?.trim();
+export function isEuropeCenteredLocationText(location: string | null | undefined): boolean {
+  const normalizedLocation = trimOrNull(location);
   if (!normalizedLocation) {
+    return false;
+  }
+
+  const foldedLocation = normalizePolicyText(normalizedLocation);
+  if (/\bturkiye\b/.test(foldedLocation) || /\bturkey\b/.test(foldedLocation)) {
     return false;
   }
 
   return EUROPE_LOCATION_PATTERNS.some((pattern) => pattern.test(normalizedLocation));
 }
 
-function matchesConfiguredWorkplacePolicyBypass(
+export function matchesConfiguredWorkplacePolicyBypass(
   location: string | null | undefined,
   configuredRegions: string[] | undefined,
 ): boolean {
-  const normalizedLocation = location?.trim();
+  const normalizedLocation = trimOrNull(location);
   if (!normalizedLocation) {
     return false;
   }
 
+  const foldedLocation = normalizePolicyText(normalizedLocation);
+
   for (const configuredRegion of configuredRegions ?? []) {
-    const normalizedRegion = configuredRegion.trim().toLowerCase();
+    const normalizedRegion = normalizePolicyText(configuredRegion);
     if (!normalizedRegion) {
       continue;
     }
 
-    if (EUROPE_REGION_LABELS.has(normalizedRegion) && isEuropeCenteredLocation(normalizedLocation)) {
+    if (EUROPE_REGION_LABELS.has(normalizedRegion) && isEuropeCenteredLocationText(normalizedLocation)) {
       return true;
     }
 
-    if (normalizedLocation.toLowerCase().includes(normalizedRegion)) {
+    if (foldedLocation.includes(normalizedRegion)) {
       return true;
     }
   }
@@ -186,12 +232,7 @@ function matchesConfiguredWorkplacePolicyBypass(
 }
 
 export function isEuropeCenteredJob(job: Pick<NormalizedJob, "location">): boolean {
-  const location = job.location?.trim();
-  if (!location) {
-    return false;
-  }
-
-  return isEuropeCenteredLocation(location);
+  return isEuropeCenteredLocationText(job.location);
 }
 
 export function shouldBypassWorkplacePolicy(
@@ -204,18 +245,50 @@ export function shouldBypassWorkplacePolicy(
   );
 }
 
-export function evaluatePolicy(
-  job: NormalizedJob,
-  profile: CandidateProfile,
-): PolicyResult {
-  const reasons: string[] = [];
-  const combinedRole = `${job.title ?? ""} ${job.seniority}`;
-  const combinedLocation = `${job.location ?? ""} ${job.remoteType}`;
-  const workplacePolicyBypassed = shouldBypassWorkplacePolicy(job, profile);
+export function getMissingRequiredFields(
+  job: Pick<NormalizedJob, "title" | "company" | "location">,
+): string[] {
+  return [
+    !job.title && "title",
+    !job.company && "company",
+    !job.location && "location",
+  ].filter((value): value is string => Boolean(value));
+}
 
+function buildCombinedRole(job: Pick<NormalizedJob, "title" | "seniority">): string {
+  return `${job.title ?? ""} ${job.seniority}`.trim();
+}
+
+function buildCombinedLocation(job: Pick<NormalizedJob, "location" | "remoteType">): string {
+  return `${job.location ?? ""} ${job.remoteType}`.trim();
+}
+
+function collectPlatformReasons(
+  job: Pick<NormalizedJob, "platform" | "applicationType">,
+): string[] {
   if (job.platform === "linkedin" && job.applicationType !== "easy_apply") {
-    reasons.push("Only LinkedIn Easy Apply jobs are allowed in this phase.");
+    return ["Only LinkedIn Easy Apply jobs are allowed in this phase."];
   }
+
+  return [];
+}
+
+function collectRoleReasons(
+  job: Pick<
+    NormalizedJob,
+    "title" | "seniority" | "technologies" | "mustHaveSkills" | "niceToHaveSkills"
+  >,
+  profile: Pick<
+    CandidateProfile,
+    | "excludedRoles"
+    | "disallowedRoleKeywords"
+    | "preferredTechStack"
+    | "aspirationalTechStack"
+    | "preferredRoleOverlapSignals"
+  >,
+): string[] {
+  const reasons: string[] = [];
+  const combinedRole = buildCombinedRole(job);
 
   const excludedRole = includesAny(combinedRole, profile.excludedRoles);
   if (excludedRole) {
@@ -233,6 +306,20 @@ export function evaluatePolicy(
   if (isPureJavaRole(job, profile)) {
     reasons.push("Role family excluded by profile: pure Java role without target stack overlap.");
   }
+
+  return reasons;
+}
+
+function collectLocationReasons(
+  job: Pick<NormalizedJob, "location" | "remoteType">,
+  profile: Pick<
+    CandidateProfile,
+    "excludedLocations" | "allowedHybridLocations" | "workplacePolicyBypassLocations"
+  >,
+): string[] {
+  const reasons: string[] = [];
+  const combinedLocation = buildCombinedLocation(job);
+  const workplacePolicyBypassed = shouldBypassWorkplacePolicy(job, profile);
 
   const excludedLocation = includesAny(combinedLocation, profile.excludedLocations);
   if (excludedLocation) {
@@ -256,6 +343,15 @@ export function evaluatePolicy(
     }
   }
 
+  return reasons;
+}
+
+function collectAuthorizationReasons(
+  job: Pick<NormalizedJob, "visaSponsorship" | "workAuthorization">,
+  profile: Pick<CandidateProfile, "visaRequirement" | "workAuthorizationStatus">,
+): string[] {
+  const reasons: string[] = [];
+
   if (profile.visaRequirement === "required" && job.visaSponsorship === "no") {
     reasons.push("Visa sponsorship mismatch.");
   }
@@ -267,20 +363,44 @@ export function evaluatePolicy(
     reasons.push("Work authorization is unknown.");
   }
 
+  return reasons;
+}
+
+function collectQualityReasons(
+  job: Pick<NormalizedJob, "openQuestionsCount" | "title" | "company" | "location">,
+): string[] {
+  const reasons: string[] = [];
+
   if (job.openQuestionsCount > 2) {
     reasons.push(`Too many open questions: ${job.openQuestionsCount}.`);
   }
 
-  const missingRequired = [
-    !job.title && "title",
-    !job.company && "company",
-    !job.location && "location",
-  ].filter(Boolean);
-
+  const missingRequired = getMissingRequiredFields(job);
   if (missingRequired.length > 0) {
     reasons.push(`Missing required fields: ${missingRequired.join(", ")}.`);
   }
 
+  return reasons;
+}
+
+export function collectPolicyReasons(
+  job: NormalizedJob,
+  profile: CandidateProfile,
+): string[] {
+  return [
+    ...collectPlatformReasons(job),
+    ...collectRoleReasons(job, profile),
+    ...collectLocationReasons(job, profile),
+    ...collectAuthorizationReasons(job, profile),
+    ...collectQualityReasons(job),
+  ];
+}
+
+export function evaluatePolicy(
+  job: NormalizedJob,
+  profile: CandidateProfile,
+): PolicyResult {
+  const reasons = collectPolicyReasons(job, profile);
   return {
     allowed: reasons.length === 0,
     reasons,

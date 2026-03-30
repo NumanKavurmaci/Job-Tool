@@ -43,8 +43,13 @@ export async function runJobFlow(
     "Job content extracted",
   );
 
-  const llmInput = deps.formatJobForLLM(extracted);
-  const parseResult = await deps.parseJob(llmInput);
+  const hasStructuredLocation = Boolean(extracted.location);
+  const llmInput = deps.formatJobForLLM(extracted, {
+    omitLocation: hasStructuredLocation,
+  });
+  const parseResult = await deps.parseJob(llmInput, {
+    excludeLocation: hasStructuredLocation,
+  });
   const parsed = parseResult.parsed;
   const normalized = deps.normalizeParsedJob(parsed, extracted);
   const score = options?.useAiScoreAdjustment

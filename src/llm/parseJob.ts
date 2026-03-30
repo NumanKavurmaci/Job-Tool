@@ -14,14 +14,24 @@ export interface ParseJobResult {
   rawText: string;
 }
 
+export type ParseJobOptions = {
+  excludeLocation?: boolean;
+};
+
 function summarizeValidationError(error: ZodError): string {
   return error.issues
     .map((issue) => `${issue.path.join(".") || "root"}: ${issue.message}`)
     .join("; ");
 }
 
-export async function parseJob(formattedJobText: string): Promise<ParseJobResult> {
-  const prompt = buildParseJobPrompt(formattedJobText);
+export async function parseJob(
+  formattedJobText: string,
+  options: ParseJobOptions = {},
+): Promise<ParseJobResult> {
+  const prompt = buildParseJobPrompt(
+    formattedJobText,
+    options.excludeLocation ? { excludeLocation: true } : {},
+  );
   const provider = resolveProvider();
   const startedAt = Date.now();
 
@@ -97,6 +107,13 @@ export async function parseJob(formattedJobText: string): Promise<ParseJobResult
       },
       "LLM parse succeeded",
     );
+
+    if (options.excludeLocation) {
+      parsed = {
+        ...parsed,
+        location: null,
+      };
+    }
 
     return {
       parsed,

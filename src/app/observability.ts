@@ -10,6 +10,9 @@ import {
 import { writeSystemLog, type SystemLogInput } from "../utils/systemLog.js";
 import type { AppDeps } from "./deps.js";
 
+export const MISSING_BATCH_PROCESSING_RESULT_REASON =
+  "Approved job never produced a processing result. The batch run lost the apply outcome before it could be recorded.";
+
 export async function persistRunArtifact(args: {
   category:
     | "answer-runs"
@@ -128,6 +131,29 @@ export async function persistBatchJobHistory(
   }
 }
 
+export function ensureBatchJobProcessingResults(result: EasyApplyBatchRunResult): {
+  result: EasyApplyBatchRunResult;
+  synthesizedJobUrls: string[];
+} {
+  const synthesizedJobUrls: string[] = [];
+
+  for (const job of result.jobs) {
+    if (!job.evaluation.shouldApply || job.result != null) {
+      continue;
+    }
+
+    job.result = {
+      status: "stopped_unknown_action",
+      steps: [],
+      stopReason: MISSING_BATCH_PROCESSING_RESULT_REASON,
+      url: job.url,
+    };
+    synthesizedJobUrls.push(job.url);
+  }
+
+  return { result, synthesizedJobUrls };
+}
+
 export function collectBatchRunAnomalies(result: EasyApplyBatchRunResult): Array<{
   level: "WARN" | "ERROR";
   message: string;
@@ -151,6 +177,20 @@ export function collectBatchRunAnomalies(result: EasyApplyBatchRunResult): Array
         approvedCount: approvedJobs.length,
         processedCount: processedJobs.length,
         missingJobUrls: missingProcessing.map((job) => job.url),
+      },
+    });
+  }
+
+  const repairedProcessing = approvedJobs.filter(
+    (job) => job.result?.stopReason === MISSING_BATCH_PROCESSING_RESULT_REASON,
+  );
+  if (repairedProcessing.length > 0) {
+    anomalies.push({
+      level: "ERROR",
+      message: "Approved batch jobs lost their processing result and were repaired for observability.",
+      details: {
+        repairedCount: repairedProcessing.length,
+        repairedJobUrls: repairedProcessing.map((job) => job.url),
       },
     });
   }

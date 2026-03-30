@@ -49,4 +49,89 @@ describe("formatJobForLLM", () => {
     expect(output).toContain("Requirements:\nStrong SQL and Python experience.");
     expect(output).toContain("Benefits:\nN/A");
   });
+
+  it("omits location from the LLM payload when structured location is already trusted", () => {
+    const output = formatJobForLLM(
+      {
+        rawText: "LinkedIn raw body",
+        title: "Backend Engineer",
+        company: "Acme",
+        location: "Istanbul, Türkiye",
+        platform: "linkedin",
+        applicationType: "easy_apply",
+        applyUrl: "https://www.linkedin.com/jobs/view/1234567890/",
+        currentUrl: "https://www.linkedin.com/jobs/view/1234567890/",
+        descriptionText: "Hybrid collaboration model.",
+        requirementsText: "Node.js",
+        benefitsText: null,
+      },
+      { omitLocation: true },
+    );
+
+    expect(output).not.toContain("Location:");
+    expect(output).toContain("Title: Backend Engineer");
+    expect(output).toContain("Company: Acme");
+  });
+
+  it("keeps location in the prompt when no lock is requested", () => {
+    const output = formatJobForLLM({
+      rawText: "LinkedIn raw body",
+      title: "Backend Engineer",
+      company: "Acme",
+      location: "Istanbul, Türkiye",
+      platform: "linkedin",
+      applicationType: "easy_apply",
+      applyUrl: "https://www.linkedin.com/jobs/view/1234567890/",
+      currentUrl: "https://www.linkedin.com/jobs/view/1234567890/",
+      descriptionText: "Hybrid collaboration model.",
+      requirementsText: "Node.js",
+      benefitsText: null,
+    });
+
+    expect(output).toContain("Location: Istanbul, Türkiye");
+  });
+
+  it("omits only the location line while keeping application metadata", () => {
+    const output = formatJobForLLM(
+      {
+        rawText: "LinkedIn raw body",
+        title: "Backend Engineer",
+        company: "Acme",
+        location: "Istanbul, Türkiye",
+        platform: "linkedin",
+        applicationType: "easy_apply",
+        applyUrl: "https://www.linkedin.com/jobs/view/1234567890/",
+        currentUrl: "https://www.linkedin.com/jobs/view/1234567890/",
+        descriptionText: "Hybrid collaboration model.",
+        requirementsText: "Node.js",
+        benefitsText: null,
+      },
+      { omitLocation: true },
+    );
+
+    expect(output).toContain("Platform: linkedin");
+    expect(output).toContain("Application Type: easy_apply");
+    expect(output).toContain(
+      "Apply URL: https://www.linkedin.com/jobs/view/1234567890/",
+    );
+    expect(output).not.toContain("Location:");
+  });
+
+  it("falls back to N/A when location is missing and omission is not requested", () => {
+    const output = formatJobForLLM({
+      rawText: "LinkedIn raw body",
+      title: "Backend Engineer",
+      company: "Acme",
+      location: null,
+      platform: "linkedin",
+      applicationType: null,
+      applyUrl: null,
+      currentUrl: "https://www.linkedin.com/jobs/view/1234567890/",
+      descriptionText: "Hybrid collaboration model.",
+      requirementsText: "Node.js",
+      benefitsText: null,
+    });
+
+    expect(output).toContain("Location: N/A");
+  });
 });

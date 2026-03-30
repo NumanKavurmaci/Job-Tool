@@ -810,6 +810,143 @@ describe("LinkedInAdapter", () => {
     expect(result.rawText).toContain("Location: Amsterdam, North Holland, Netherlands");
   });
 
+  it("infers a Netherlands location from about text when linkedin top-card only says hybrid", async () => {
+    const { LinkedInAdapter } = await import("../../src/adapters/LinkedInAdapter.js");
+    const page = createMockPage({
+      currentUrl: "https://www.linkedin.com/jobs/view/4395023854/",
+      title: "Javascript Developer | Doghouse Recruitment | LinkedIn",
+      selectors: {
+        ".job-details-jobs-unified-top-card__job-title": {
+          text: "Javascript Developer",
+        },
+        ".job-details-jobs-unified-top-card__company-name": {
+          text: "Doghouse Recruitment",
+        },
+        ".job-details-jobs-unified-top-card__bullet": {
+          text: "Hybrid",
+        },
+        "[data-testid='expandable-text-box']": {
+          text: [
+            "Full Stack Developer - JavaScript (Node.js & TypeScript & React) - Rotterdam Area - Hybrid",
+            "They are looking for someone located close to the Rotterdam Area.",
+            "Only candidates in the Netherlands!",
+          ].join("\n"),
+        },
+        body: {
+          text: [
+            "Javascript Developer",
+            "Doghouse Recruitment",
+            "Hybrid",
+            "Rotterdam Area - Hybrid",
+            "Only candidates in the Netherlands!",
+            "Easy Apply",
+          ].join("\n"),
+        },
+      },
+    });
+
+    const result = await new LinkedInAdapter().extract(page as never, page.url());
+
+    expect(result.location).toBe("Rotterdam Area");
+    expect(result.rawText).toContain("Location: Rotterdam Area");
+  });
+
+  it.each([
+    {
+      url: "https://www.linkedin.com/jobs/view/4369050417/",
+      title: "Founding Engineer (Back-end/AI) | Saber | LinkedIn",
+      company: "Saber",
+      about: [
+        "FOR THIS ROLE YOU MUST BE BASED IN THE NETHERLANDS",
+        "Join us from Delft.",
+      ].join("\n"),
+      expectedLocation: "THE NETHERLANDS",
+    },
+    {
+      url: "https://www.linkedin.com/jobs/view/4388694772/",
+      title: "Software Engineer | Station | LinkedIn",
+      company: "Station",
+      about: [
+        "Software Engineer",
+        "Python/FastAPI/React",
+        "Amsterdam",
+        "My client is scaling quickly.",
+      ].join("\n"),
+      expectedLocation: "Amsterdam",
+    },
+    {
+      url: "https://www.linkedin.com/jobs/view/4381027561/",
+      title: "Javascript Developer | Doghouse Recruitment | LinkedIn",
+      company: "Doghouse Recruitment",
+      about: [
+        "Senior Full Stack Developer (Node.js / TypeScript) | Utrecht | E-Learning [EUR 70K]",
+        "Hybrid role.",
+      ].join("\n"),
+      expectedLocation: "Utrecht",
+    },
+    {
+      url: "https://www.linkedin.com/jobs/view/4369783514/",
+      title: "Developer | Audax Renewables Netherlands | LinkedIn",
+      company: "Audax Renewables Netherlands",
+      about: [
+        "Developer",
+        "Audax Energy Trade/ Almere - 32 - 40 uur per week",
+        "Hybrid collaboration model.",
+      ].join("\n"),
+      expectedLocation: "Almere",
+    },
+    {
+      url: "https://www.linkedin.com/jobs/view/4386331622/",
+      title: "Frontend Developer | ALTEN Nederland | LinkedIn",
+      company: "ALTEN Nederland",
+      about: [
+        "Frontend & UX Designer - Rotterdam - ALTEN Nederland",
+        "The role is hybrid.",
+      ].join("\n"),
+      expectedLocation: "Rotterdam",
+    },
+  ])("recovers Europe location for logged hybrid case $url", async ({
+    url,
+    title,
+    company,
+    about,
+    expectedLocation,
+  }) => {
+    const { LinkedInAdapter } = await import("../../src/adapters/LinkedInAdapter.js");
+    const page = createMockPage({
+      currentUrl: url,
+      title,
+      selectors: {
+        ".job-details-jobs-unified-top-card__job-title": {
+          text: "Recovered title",
+        },
+        ".job-details-jobs-unified-top-card__company-name": {
+          text: company,
+        },
+        ".job-details-jobs-unified-top-card__bullet": {
+          text: "Hybrid",
+        },
+        "[data-testid='expandable-text-box']": {
+          text: about,
+        },
+        body: {
+          text: [
+            "Recovered title",
+            company,
+            "Hybrid",
+            about,
+            "Easy Apply",
+          ].join("\n"),
+        },
+      },
+    });
+
+    const result = await new LinkedInAdapter().extract(page as never, page.url());
+
+    expect(result.location).toBe(expectedLocation);
+    expect(result.rawText).toContain(`Location: ${expectedLocation}`);
+  });
+
   it("extracts title, company, linkedin company url, logo, and remote workplace data from an already-applied linkedin job", async () => {
     const { LinkedInAdapter } = await import("../../src/adapters/LinkedInAdapter.js");
     const page = createMockPage({

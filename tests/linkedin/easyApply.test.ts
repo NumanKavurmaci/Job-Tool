@@ -804,6 +804,59 @@ describe("runEasyApplyBatchDryRun", () => {
     expect(result.jobs[1]?.result.stopReason).toContain("modal did not open");
   });
 
+  it("preserves a failed processing result for approved job 4386362641 when the modal never opens", async () => {
+    const driver = {
+      open: vi.fn(),
+      openCollection: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn().mockRejectedValue(
+        new Error("Easy Apply modal did not open after clicking the trigger."),
+      ),
+      collectQuestions: vi.fn().mockResolvedValue([]),
+      collectVisibleJobs: vi.fn().mockResolvedValue([
+        { url: "https://www.linkedin.com/jobs/view/4386362641", alreadyApplied: false },
+      ]),
+      goToNextResultsPage: vi.fn().mockResolvedValue(false),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn().mockResolvedValue("submit"),
+      advance: vi.fn(),
+      dismissCompletionModal: vi.fn().mockResolvedValue(true),
+    };
+
+    const result = await runEasyApplyBatchInternal(
+      {
+        driver,
+        url: "https://www.linkedin.com/jobs/collections/easy-apply",
+        targetCount: 1,
+        candidateProfile: profile,
+        evaluateJob: async () => ({
+          shouldApply: true,
+          finalDecision: "APPLY",
+          score: 58,
+          reason: "Configured workplace-policy bypass matched this job location, so the role will be applied.",
+          policyAllowed: true,
+        }),
+        resolveAnswer: async () => ({
+          questionType: "contact_info",
+          strategy: "deterministic",
+          answer: "123",
+          confidence: 0.95,
+          confidenceLabel: "high",
+          source: "candidate-profile",
+        }),
+      },
+      "submit",
+    );
+
+    expect(result.status).toBe("completed");
+    expect(result.jobs[0]?.url).toBe("https://www.linkedin.com/jobs/view/4386362641");
+    expect(result.jobs[0]?.result?.status).toBe("stopped_unknown_action");
+    expect(result.jobs[0]?.result?.stopReason).toContain(
+      "Easy Apply modal did not open after clicking the trigger.",
+    );
+  });
+
   it("skips bad-fit jobs and keeps paginating until enough eligible jobs are found", async () => {
     const driver = {
       open: vi.fn(),

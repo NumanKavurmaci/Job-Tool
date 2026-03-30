@@ -285,9 +285,9 @@ export function normalizeParsedJob(
   parsed: ParsedJob,
   extracted: ExtractedJobContent,
 ): NormalizedJob {
-  const title = parsed.title ?? extracted.title ?? null;
-  const company = parsed.company ?? extracted.company ?? null;
-  const location = parsed.location ?? extracted.location ?? null;
+  const title = extracted.title ?? parsed.title ?? null;
+  const company = extracted.company ?? parsed.company ?? null;
+  const location = extracted.location ?? parsed.location ?? null;
   const mustHaveSkills = uniqueNormalized(parsed.mustHaveSkills);
   const niceToHaveSkills = uniqueNormalized(parsed.niceToHaveSkills);
   const technologies = inferTechnologies(
@@ -306,6 +306,14 @@ export function normalizeParsedJob(
     parsed.technologies ?? [],
   );
 
+  const extractedRemoteType = inferRemoteTypeFromText([
+    extracted.location,
+    extracted.descriptionText,
+    extracted.requirementsText,
+    extracted.benefitsText,
+    extracted.rawText,
+  ]);
+
   const inferredRemoteType = inferRemoteTypeFromText([
     parsed.remoteType,
     extracted.location,
@@ -314,6 +322,8 @@ export function normalizeParsedJob(
     extracted.benefitsText,
     extracted.rawText,
   ]);
+
+  const parsedRemoteType = canonicalizeRemoteType(parsed.remoteType);
 
   const inferredSeniority = inferSeniorityFromText(title, [
     title,
@@ -328,9 +338,11 @@ export function normalizeParsedJob(
     company,
     location,
     remoteType:
-      canonicalizeRemoteType(parsed.remoteType) === "unknown"
-        ? inferredRemoteType
-        : canonicalizeRemoteType(parsed.remoteType),
+      extractedRemoteType !== "unknown"
+        ? extractedRemoteType
+        : parsedRemoteType === "unknown"
+          ? inferredRemoteType
+          : parsedRemoteType,
     seniority:
       canonicalizeSeniority(title, parsed.seniority) === "unknown"
         ? inferredSeniority

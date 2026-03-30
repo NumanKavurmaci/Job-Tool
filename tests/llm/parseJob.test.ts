@@ -139,4 +139,141 @@ describe("parseJob orchestration", () => {
     });
     expect(errorMock).toHaveBeenCalled();
   });
+
+  it("drops parsed location when the caller locks location externally", async () => {
+    parseJobMock.mockResolvedValue({
+      text: JSON.stringify({
+        title: "Backend Engineer",
+        company: "Acme",
+        location: "Europe",
+        platform: "generic",
+        seniority: "Mid",
+        mustHaveSkills: ["TypeScript"],
+        niceToHaveSkills: [],
+        technologies: ["TypeScript"],
+        yearsRequired: 3,
+        remoteType: "Hybrid",
+        visaSponsorship: "yes",
+        workAuthorization: "authorized",
+      }),
+      provider: "local",
+      model: "openai/gpt-oss-20b",
+    });
+
+    const { parseJob } = await import("../../src/llm/parseJob.js");
+    const result = await parseJob("Title: Backend Engineer", {
+      excludeLocation: true,
+    });
+
+    expect(result.parsed.location).toBeNull();
+    expect(parseJobMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: expect.stringContaining('"location": null'),
+      }),
+    );
+  });
+
+  it("keeps provider-returned location when location is not locked", async () => {
+    parseJobMock.mockResolvedValue({
+      text: JSON.stringify({
+        title: "Backend Engineer",
+        company: "Acme",
+        location: "Berlin, Germany",
+        platform: "generic",
+        seniority: "Mid",
+        mustHaveSkills: ["TypeScript"],
+        niceToHaveSkills: [],
+        technologies: ["TypeScript"],
+        yearsRequired: 3,
+        remoteType: "Hybrid",
+        visaSponsorship: "yes",
+        workAuthorization: "authorized",
+      }),
+      provider: "local",
+      model: "openai/gpt-oss-20b",
+    });
+
+    const { parseJob } = await import("../../src/llm/parseJob.js");
+    const result = await parseJob("Title: Backend Engineer");
+
+    expect(result.parsed.location).toBe("Berlin, Germany");
+    expect(parseJobMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: expect.stringContaining('"location": string | null'),
+      }),
+    );
+  });
+
+  it("preserves non-location fields when excludeLocation is enabled", async () => {
+    parseJobMock.mockResolvedValue({
+      text: JSON.stringify({
+        title: "Backend Engineer",
+        company: "Acme",
+        location: "Europe",
+        platform: "linkedin",
+        seniority: "Senior",
+        mustHaveSkills: ["TypeScript", "Node.js"],
+        niceToHaveSkills: ["Kafka"],
+        technologies: ["TypeScript", "Node.js", "Kafka"],
+        yearsRequired: 5,
+        remoteType: "Hybrid",
+        visaSponsorship: "no",
+        workAuthorization: "authorized",
+      }),
+      provider: "local",
+      model: "openai/gpt-oss-20b",
+    });
+
+    const { parseJob } = await import("../../src/llm/parseJob.js");
+    const result = await parseJob("Title: Backend Engineer", {
+      excludeLocation: true,
+    });
+
+    expect(result.parsed).toMatchObject({
+      title: "Backend Engineer",
+      company: "Acme",
+      platform: "linkedin",
+      seniority: "Senior",
+      remoteType: "Hybrid",
+      visaSponsorship: "no",
+      workAuthorization: "authorized",
+    });
+    expect(result.parsed.mustHaveSkills).toEqual(["TypeScript", "Node.js"]);
+    expect(result.parsed.location).toBeNull();
+  });
+
+  it("logs successful parses even when location is excluded", async () => {
+    parseJobMock.mockResolvedValue({
+      text: JSON.stringify({
+        title: "Backend Engineer",
+        company: "Acme",
+        location: "Europe",
+        platform: "linkedin",
+        seniority: "Senior",
+        mustHaveSkills: [],
+        niceToHaveSkills: [],
+        technologies: [],
+        yearsRequired: null,
+        remoteType: "Hybrid",
+        visaSponsorship: null,
+        workAuthorization: "unknown",
+      }),
+      provider: "local",
+      model: "openai/gpt-oss-20b",
+    });
+
+    const { parseJob } = await import("../../src/llm/parseJob.js");
+    await parseJob("Title: Backend Engineer", {
+      excludeLocation: true,
+    });
+
+    expect(infoMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "llm.parse.succeeded",
+        provider: "local",
+        model: "openai/gpt-oss-20b",
+      }),
+      "LLM parse succeeded",
+    );
+  });
 });

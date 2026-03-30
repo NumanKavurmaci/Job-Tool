@@ -1,4 +1,19 @@
-export function buildParseJobPrompt(formattedJobText: string): string {
+export type BuildParseJobPromptOptions = {
+  excludeLocation?: boolean;
+};
+
+export function buildParseJobPrompt(
+  formattedJobText: string,
+  options: BuildParseJobPromptOptions = {},
+): string {
+  const locationRule = options.excludeLocation
+    ? '- Do not infer or return location when adapter metadata already provided it; set "location" to null'
+    : "- Prefer explicitly labeled fields over weak guesses";
+
+  const locationSchemaLine = options.excludeLocation
+    ? '  "location": null,'
+    : '  "location": string | null,';
+
   return `
 Extract the job posting into JSON.
 
@@ -11,13 +26,13 @@ Rules:
 - yearsRequired must be a number or null
 - visaSponsorship must be "yes", "no", or null
 - workAuthorization must be "authorized", "requires-sponsorship", "unknown", or null
-- Prefer explicitly labeled fields over weak guesses
+${locationRule}
 
 Schema:
 {
   "title": string | null,
   "company": string | null,
-  "location": string | null,
+${locationSchemaLine}
   "platform": string | null,
   "seniority": string | null,
   "mustHaveSkills": string[],

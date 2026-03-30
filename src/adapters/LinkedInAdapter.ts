@@ -358,10 +358,72 @@ function flattenTextLines(values: string[]): string[] {
   );
 }
 
+function extractLocationCandidateFromLine(line: string): string | null {
+  const normalized = optionalText(line);
+  if (!normalized) {
+    return null;
+  }
+
+  const explicitLocation = normalized.match(
+    /\b(?:location|based in|located close to|only candidates in)\b[:\s-]*(.+)$/i,
+  );
+  if (explicitLocation?.[1]) {
+    const cleaned = optionalText(
+      explicitLocation[1]
+        .replace(/\b(work(?:ing)? setup|only|ideally|candidates?)\b.*$/i, "")
+        .replace(/\b(remote|hybrid|on-site|onsite)\b/gi, "")
+        .replace(/[()]/g, " ")
+        .replace(/\s{2,}/g, " ")
+        .replace(/[-–]\s*$/g, ""),
+    );
+    if (cleaned && !isGenericLinkedInWorkplaceLocation(cleaned)) {
+      return cleaned;
+    }
+  }
+
+  const trailingWorkplaceType = normalized.match(
+    /^(.+?)(?:\s*[-–]\s*|\s+\()(?:(remote|hybrid|on-site|onsite))\)?$/i,
+  );
+  if (trailingWorkplaceType?.[1]) {
+    const cleaned = optionalText(trailingWorkplaceType[1]);
+    if (cleaned && !isGenericLinkedInWorkplaceLocation(cleaned)) {
+      return cleaned;
+    }
+  }
+
+  if (
+    /\b(netherlands|germany|france|spain|italy|portugal|poland|belgium|austria|sweden|norway|switzerland|denmark|finland|ireland)\b/i.test(
+      normalized,
+    )
+  ) {
+    const wordCount = normalized.split(/\s+/).filter(Boolean).length;
+    if (!/[,\-–/()]/.test(normalized) && wordCount > 2) {
+      return null;
+    }
+    return normalized;
+  }
+
+  const cityMatch = normalized.match(/\b(amsterdam|rotterdam|utrecht|delft|almere|gent)\b/i);
+  if (cityMatch?.[1]) {
+    return cityMatch[1];
+  }
+
+  return null;
+}
+
 function inferLocationFromBodyText(bodyText: string): string | null {
   const lines = flattenTextLines([bodyText]);
 
   for (const line of lines) {
+    const locationCandidate = extractLocationCandidateFromLine(line);
+    if (locationCandidate) {
+      return locationCandidate;
+    }
+
+    if (isGenericLinkedInWorkplaceLocation(line)) {
+      continue;
+    }
+
     if (
       /\b(remote|hybrid|on-site|onsite)\b/i.test(line) &&
       /[a-zA-ZğüşöçıİĞÜŞÖÇ]/.test(line)
@@ -720,12 +782,17 @@ export class LinkedInAdapter implements JobAdapter {
       badgeTexts.find((value) => /\b(remote|hybrid|onsite|on-site)\b/i.test(value)) ??
       inferLocationFromBodyText(pageBodyText) ??
       titleParts.location;
-    const rawLocation =
-      (await getTextBySelectors(page, LINKEDIN_LOCATION_SELECTORS)) ?? inferredBadgeLocation ?? null;
+    const topCardLocation = await getTextBySelectors(page, LINKEDIN_LOCATION_SELECTORS);
+    const fallbackBodyLocation = sanitizeLinkedInLocation(inferredBadgeLocation);
+    const rawLocation = topCardLocation ?? inferredBadgeLocation ?? null;
     const sanitizedRawLocation = sanitizeLinkedInLocation(rawLocation);
     const fallbackTitleLocation = sanitizeLinkedInLocation(titleParts.location);
     const location =
       isGenericLinkedInWorkplaceLocation(sanitizedRawLocation) &&
+      fallbackBodyLocation &&
+      !isGenericLinkedInWorkplaceLocation(fallbackBodyLocation)
+        ? fallbackBodyLocation
+        : isGenericLinkedInWorkplaceLocation(sanitizedRawLocation) &&
       fallbackTitleLocation &&
       !isGenericLinkedInWorkplaceLocation(fallbackTitleLocation)
         ? fallbackTitleLocation

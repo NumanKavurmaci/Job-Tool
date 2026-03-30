@@ -4,11 +4,18 @@ export function section(label: string, value: string | null | undefined): string
   return `${label}:\n${value?.trim() ? value.trim() : "N/A"}`;
 }
 
-export function formatJobForLLM(job: ExtractedJobContent): string {
+export type FormatJobForLLMOptions = {
+  omitLocation?: boolean;
+};
+
+export function formatJobForLLM(
+  job: ExtractedJobContent,
+  options: FormatJobForLLMOptions = {},
+): string {
   return [
     `Title: ${job.title ?? "N/A"}`,
     `Company: ${job.company ?? "N/A"}`,
-    `Location: ${job.location ?? "N/A"}`,
+    ...(options.omitLocation ? [] : [`Location: ${job.location ?? "N/A"}`]),
     `Platform: ${job.platform}`,
     `Application Type: ${job.applicationType}`,
     `Apply URL: ${job.applyUrl ?? "N/A"}`,

@@ -445,11 +445,112 @@ describe("easy apply flows", () => {
       deps,
     );
 
+    expect(deps.logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobUrl: "https://www.linkedin.com/jobs/view/1",
+        collectionUrl: "https://www.linkedin.com/jobs/collections/easy-apply",
+        reason: "approved_job_missing_processing_result",
+      }),
+      "Approved batch job lost its processing result; synthesized a failure result",
+    );
     expect(deps.prisma.systemLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         level: "ERROR",
         scope: "linkedin.batch.audit",
-        message: "Approved batch jobs were never processed.",
+        message: "Approved batch jobs lost their processing result and were repaired for observability.",
+      }),
+    });
+    expect(deps.writeRunReport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: "batch-runs",
+        payload: expect.objectContaining({
+          result: expect.objectContaining({
+            jobs: [
+              expect.objectContaining({
+                url: "https://www.linkedin.com/jobs/view/1",
+                result: expect.objectContaining({
+                  status: "stopped_unknown_action",
+                }),
+              }),
+            ],
+          }),
+        }),
+      }),
+    );
+    expect(evaluationPage.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps approved batch jobs observable for regression case 4386362641 when processing result goes missing", async () => {
+    const deps = createDeps();
+    const { evaluationPage } = mockWithPage(deps);
+    (deps.loadCandidateMasterProfile as any).mockResolvedValue({
+      fullName: "Jane",
+      sourceMetadata: { resumePath: "./resume.pdf" },
+    });
+    (deps.loadCandidateProfile as any).mockResolvedValue({});
+    (deps.resolveAnswer as any).mockResolvedValue({ answer: "ok" });
+    (deps.createEasyApplyDriver as any).mockResolvedValue({ driver: true });
+    (deps.runEasyApplyBatch as any).mockResolvedValue({
+      status: "partial",
+      collectionUrl: "https://www.linkedin.com/jobs/collections/easy-apply",
+      requestedCount: 1,
+      attemptedCount: 0,
+      evaluatedCount: 1,
+      skippedCount: 0,
+      pagesVisited: 1,
+      stopReason: "Stopped before processing.",
+      jobs: [
+        {
+          url: "https://www.linkedin.com/jobs/view/4386362641",
+          evaluation: {
+            shouldApply: true,
+            finalDecision: "APPLY",
+            score: 58,
+            reason: "Configured workplace-policy bypass matched this job location, so the role will be applied.",
+            policyAllowed: true,
+          },
+        },
+      ],
+    });
+    (deps.writeRunReport as any).mockResolvedValue("artifacts/batch-runs/live.json");
+
+    const { runEasyApplyBatchFlow } = await import("../../../src/app/flows/easyApplyFlows.js");
+    await runEasyApplyBatchFlow(
+      {
+        mode: "easy-apply-batch",
+        url: "https://www.linkedin.com/jobs/collections/easy-apply",
+        resumePath: "./resume.pdf",
+        count: 1,
+        disableAiEvaluation: false,
+        scoreThreshold: 40,
+        useAiScoreAdjustment: false,
+        dryRun: false,
+      },
+      deps,
+    );
+
+    expect(deps.writeRunReport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          result: expect.objectContaining({
+            jobs: [
+              expect.objectContaining({
+                url: "https://www.linkedin.com/jobs/view/4386362641",
+                result: expect.objectContaining({
+                  status: "stopped_unknown_action",
+                  stopReason: expect.stringContaining("Approved job never produced a processing result"),
+                }),
+              }),
+            ],
+          }),
+        }),
+      }),
+    );
+    expect(deps.prisma.systemLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        level: "ERROR",
+        scope: "linkedin.batch.audit",
+        detailsJson: expect.stringContaining("4386362641"),
       }),
     });
     expect(evaluationPage.close).toHaveBeenCalledTimes(1);

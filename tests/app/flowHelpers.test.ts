@@ -262,6 +262,13 @@ describe("app flow helpers", () => {
       { fake: true },
       "https://example.com/job",
     );
+    expect(deps.formatJobForLLM).toHaveBeenCalledWith(
+      expect.objectContaining({ location: "Remote" }),
+      { omitLocation: true },
+    );
+    expect(deps.parseJob).toHaveBeenCalledWith("prompt", {
+      excludeLocation: true,
+    });
   });
 
   it("re-evaluates jobs that only reached an intermediate evaluated state", async () => {
@@ -603,6 +610,120 @@ describe("app flow helpers", () => {
     expect(deps.prisma.jobReviewHistory.create).toHaveBeenCalledWith({
       data: expect.not.objectContaining({
         platform: expect.anything(),
+      }),
+    });
+  });
+
+  it("keeps location visible to the LLM when extracted metadata does not contain one", async () => {
+    const deps = createDeps();
+    deps.prisma.jobReviewHistory.findFirst.mockResolvedValue(null);
+    deps.extractJobText.mockResolvedValue({
+      rawText: "raw",
+      title: "Job",
+      company: "Acme",
+      companyLogoUrl: null,
+      companyLinkedinUrl: null,
+      location: null,
+      platform: "linkedin",
+    });
+    deps.formatJobForLLM.mockReturnValue("prompt");
+    deps.parseJob.mockResolvedValue({
+      parsed: {
+        title: "Job",
+        company: "Acme",
+        location: "Berlin, Germany",
+      },
+    });
+    deps.normalizeParsedJob.mockReturnValue({ platform: "linkedin" });
+    deps.scoreJob.mockReturnValue({ totalScore: 80 });
+    deps.evaluatePolicy.mockReturnValue({ allowed: true, reasons: [] });
+
+    const evaluate = createBatchJobEvaluator({
+      disableAiEvaluation: false,
+      scoreThreshold: 60,
+      useAiScoreAdjustment: false,
+      scoringProfile: {} as any,
+      evaluationPage: {} as any,
+      deps,
+    });
+
+    await evaluate("https://example.com/job");
+
+    expect(deps.formatJobForLLM).toHaveBeenCalledWith(
+      expect.objectContaining({ location: null }),
+      { omitLocation: false },
+    );
+    expect(deps.parseJob).toHaveBeenCalledWith("prompt", {
+      excludeLocation: false,
+    });
+  });
+
+  it("records extracted Istanbul location in diagnostics even if the parse layer guessed Europe", async () => {
+    const deps = createDeps();
+    deps.prisma.jobReviewHistory.findFirst.mockResolvedValue(null);
+    deps.extractJobText.mockResolvedValue({
+      rawText: "raw",
+      title: "Backend Developer",
+      company: "Solid-ICT",
+      companyLogoUrl: null,
+      companyLinkedinUrl: "https://www.linkedin.com/company/solidict/",
+      location: "Istanbul, Türkiye",
+      platform: "linkedin",
+      applicationType: "easy_apply",
+    });
+    deps.formatJobForLLM.mockReturnValue("prompt");
+    deps.parseJob.mockResolvedValue({
+      parsed: {
+        title: "Backend Developer",
+        company: "Solid-ICT",
+        location: null,
+        platform: "linkedin",
+        seniority: "Senior",
+        mustHaveSkills: [],
+        niceToHaveSkills: [],
+        technologies: [".NET", "Node.js"],
+        yearsRequired: 5,
+        remoteType: "remote",
+        visaSponsorship: null,
+        workAuthorization: "authorized",
+      },
+    });
+    deps.normalizeParsedJob.mockReturnValue({
+      title: "Backend Developer",
+      company: "Solid-ICT",
+      location: "Istanbul, Türkiye",
+      platform: "linkedin",
+      remoteType: "hybrid",
+      applicationType: "easy_apply",
+    });
+    deps.scoreJob.mockReturnValue({ totalScore: 82 });
+    deps.evaluatePolicy.mockReturnValue({
+      allowed: false,
+      reasons: ["Hybrid roles are only allowed in configured locations."],
+    });
+
+    const evaluate = createBatchJobEvaluator({
+      disableAiEvaluation: false,
+      scoreThreshold: 60,
+      useAiScoreAdjustment: false,
+      scoringProfile: { workplacePolicyBypassLocations: ["Europe"] } as any,
+      evaluationPage: {} as any,
+      deps,
+    });
+
+    const result = await evaluate("https://www.linkedin.com/jobs/view/4395042318/");
+
+    expect(result).toMatchObject({
+      finalDecision: "SKIP",
+      policyAllowed: false,
+      diagnostics: {
+        location: "Istanbul, Türkiye",
+        applicationType: "easy_apply",
+      },
+    });
+    expect(deps.prisma.systemLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        detailsJson: expect.stringContaining('"location":"Istanbul, Türkiye"'),
       }),
     });
   });

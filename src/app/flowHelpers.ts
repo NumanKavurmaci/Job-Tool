@@ -212,8 +212,13 @@ export function createBatchJobEvaluator(args: {
       },
       deps,
     );
-    const llmInput = deps.formatJobForLLM(extracted);
-    const parseResult = await deps.parseJob(llmInput);
+    const hasStructuredLocation = Boolean(extracted.location);
+    const llmInput = deps.formatJobForLLM(extracted, {
+      omitLocation: hasStructuredLocation,
+    });
+    const parseResult = await deps.parseJob(llmInput, {
+      excludeLocation: hasStructuredLocation,
+    });
     const normalized = deps.normalizeParsedJob(parseResult.parsed, extracted);
     const score = args.useAiScoreAdjustment
       ? await deps.scoreJobWithAi({

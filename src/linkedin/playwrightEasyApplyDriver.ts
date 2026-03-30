@@ -300,10 +300,45 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
     return (await badge.count()) > 0;
   }
 
+  private async waitForEasyApplySurfaceToOpen(): Promise<void> {
+    const modal = this.page.locator(".jobs-easy-apply-modal, [role='dialog']").first();
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        await modal.waitFor({ state: "visible", timeout: 8_000 });
+        return;
+      } catch {
+        await this.continuePastSafetyReminder().catch(() => undefined);
+
+        if ((await modal.count().catch(() => 0)) > 0) {
+          return;
+        }
+
+        if (await this.isAlreadyApplied().catch(() => false)) {
+          return;
+        }
+
+        if (await this.isExternalApplyAvailable().catch(() => false)) {
+          return;
+        }
+
+        if (attempt === 0) {
+          const locator = this.page.locator(EASY_APPLY_TRIGGER_SELECTOR).first();
+          if ((await locator.count().catch(() => 0)) > 0) {
+            await this.clickFollowingNewPage(locator);
+          }
+        }
+      }
+    }
+
+    throw new Error("Easy Apply modal did not open after clicking the trigger.");
+  }
+
   async openEasyApply(): Promise<void> {
     const locator = this.page.locator(EASY_APPLY_TRIGGER_SELECTOR).first();
     await this.clickFollowingNewPage(locator);
     await this.continuePastSafetyReminder().catch(() => undefined);
+    await this.waitForEasyApplySurfaceToOpen();
   }
 
   async collectQuestions(): Promise<EasyApplyQuestionView[]> {

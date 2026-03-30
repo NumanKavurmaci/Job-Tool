@@ -14,6 +14,7 @@ import {
   loadMasterProfileForArgs,
 } from "../flowHelpers.js";
 import {
+  ensureBatchJobProcessingResults,
   persistBatchRunAnomalies,
   mapEasyApplyStatusToHistoryStatus,
   persistBatchJobHistory,
@@ -320,6 +321,20 @@ function createBatchEventObserver(args: {
         );
         return;
       case "job_processing_finished":
+        args.deps.logger.info(
+          {
+            jobUrl: event.jobUrl,
+            collectionUrl: event.collectionUrl,
+            pageNumber: event.pageNumber,
+            attemptIndex: event.attemptIndex,
+            finalDecision: event.evaluation.finalDecision,
+            resultStatus: event.result.status,
+            stopReason: event.result.stopReason,
+            stepCount: event.result.steps.length,
+            externalApplyUrl: event.result.externalApplyUrl ?? null,
+          },
+          "Finished application processing for approved job",
+        );
         await persistSystemEvent(
           {
             level: "INFO",
@@ -511,6 +526,18 @@ export async function runEasyApplyDryRunFlow(
   );
 
   if ("jobs" in result) {
+    const normalizedBatch = ensureBatchJobProcessingResults(result);
+    result = normalizedBatch.result;
+    for (const jobUrl of normalizedBatch.synthesizedJobUrls) {
+      deps.logger.error(
+        {
+          jobUrl,
+          collectionUrl: args.url,
+          reason: "approved_job_missing_processing_result",
+        },
+        "Approved batch job lost its processing result; synthesized a failure result",
+      );
+    }
     await persistBatchRunAnomalies(
       {
         runType: "easy-apply-dry-run",
@@ -825,6 +852,18 @@ export async function runEasyApplyBatchFlow(
     },
     deps,
   );
+  const normalizedBatch = ensureBatchJobProcessingResults(result);
+  result = normalizedBatch.result;
+  for (const jobUrl of normalizedBatch.synthesizedJobUrls) {
+    deps.logger.error(
+      {
+        jobUrl,
+        collectionUrl: args.url,
+        reason: "approved_job_missing_processing_result",
+      },
+      "Approved batch job lost its processing result; synthesized a failure result",
+    );
+  }
   await persistBatchRunAnomalies(
     {
       runType: "easy-apply-batch",
