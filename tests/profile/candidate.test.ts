@@ -29,6 +29,7 @@ describe("candidate profile loader", () => {
       preferredLocations: [],
       excludedLocations: [],
       allowedHybridLocations: [],
+      workplacePolicyBypassLocations: [],
       remotePreference: "flexible",
       remoteOnly: false,
       visaRequirement: "unknown",
@@ -76,6 +77,7 @@ describe("candidate profile loader", () => {
         locations: {
           preferred: ["Remote"],
           excluded: ["Istanbul onsite"],
+          workplacePolicyBypass: ["Europe"],
           allowedHybrid: ["Ankara", "Izmir"],
           remotePreference: "remote",
           remoteOnly: true,
@@ -115,6 +117,7 @@ describe("candidate profile loader", () => {
     expect(profile.disallowedRoleKeywords).toEqual(["ios"]);
     expect(profile.remoteOnly).toBe(true);
     expect(profile.allowedHybridLocations).toEqual(["Ankara", "Izmir"]);
+    expect(profile.workplacePolicyBypassLocations).toEqual(["Europe"]);
     expect(profile.experienceOverrides.linux).toBe(0);
     expect(profile.salaryExpectations.eur).toContain("EUR");
     expect(profile.salaryExpectation).toBe("100k+");
@@ -140,6 +143,7 @@ describe("candidate profile loader", () => {
         locations: {
           preferred: [],
           excluded: [],
+          workplacePolicyBypass: [],
           allowedHybrid: [],
           remotePreference: "remote",
           remoteOnly: true,

@@ -12,6 +12,7 @@ const profile = {
   preferredLocations: ["Remote"],
   excludedLocations: ["Istanbul onsite"],
   allowedHybridLocations: ["Ankara", "Izmir", "EskiSehir", "Eskisehir", "Samsun"],
+  workplacePolicyBypassLocations: ["Europe"],
   remotePreference: "remote",
   remoteOnly: true,
   visaRequirement: "required",
@@ -109,7 +110,7 @@ describe("evaluatePolicy", () => {
       {
         title: "Backend Engineer",
         company: "Acme",
-        location: "Berlin, Germany",
+        location: "Austin, Texas, United States",
         remoteType: "hybrid",
         seniority: "mid",
         mustHaveSkills: [],
@@ -128,6 +129,54 @@ describe("evaluatePolicy", () => {
     expect(allowed.allowed).toBe(true);
     expect(blocked.allowed).toBe(false);
     expect(blocked.reasons.join(" ")).toContain("Hybrid roles are only allowed in");
+  });
+
+  it("bypasses workplace policy for Europe-centered onsite and hybrid roles", () => {
+    const onsiteEurope = evaluatePolicy(
+      {
+        title: "Backend Engineer",
+        company: "Acme",
+        location: "Berlin, Germany",
+        remoteType: "onsite",
+        seniority: "mid",
+        mustHaveSkills: [],
+        niceToHaveSkills: [],
+        technologies: [],
+        yearsRequired: 3,
+        platform: "generic",
+        applicationType: "unknown",
+        visaSponsorship: "yes",
+        workAuthorization: "authorized",
+        openQuestionsCount: 0,
+      },
+      profile,
+    );
+    const hybridEurope = evaluatePolicy(
+      {
+        title: "Backend Engineer",
+        company: "Acme",
+        location: "Madrid, Spain",
+        remoteType: "hybrid",
+        seniority: "mid",
+        mustHaveSkills: [],
+        niceToHaveSkills: [],
+        technologies: [],
+        yearsRequired: 3,
+        platform: "generic",
+        applicationType: "unknown",
+        visaSponsorship: "yes",
+        workAuthorization: "authorized",
+        openQuestionsCount: 0,
+      },
+      profile,
+    );
+
+    expect(onsiteEurope.allowed).toBe(true);
+    expect(hybridEurope.allowed).toBe(true);
+    expect(onsiteEurope.reasons).not.toContain("On-site roles are blocked by profile.");
+    expect(
+      hybridEurope.reasons.some((reason) => reason.includes("Hybrid roles are only allowed in")),
+    ).toBe(false);
   });
 
   it("rejects sponsorship mismatches", () => {

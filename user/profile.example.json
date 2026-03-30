@@ -31,6 +31,7 @@
       "Remote"
     ],
     "excluded": [],
+    "workplacePolicyBypass": [],
     "allowedHybrid": [],
     "remotePreference": "remote",
     "remoteOnly": false

@@ -470,7 +470,9 @@ describe("app flow helpers", () => {
       disableAiEvaluation: false,
       scoreThreshold: 60,
       useAiScoreAdjustment: false,
-      scoringProfile: {} as any,
+      scoringProfile: {
+        workplacePolicyBypassLocations: ["Europe"],
+      } as any,
       evaluationPage: {} as any,
       deps,
     });
@@ -483,6 +485,60 @@ describe("app flow helpers", () => {
       score: 90,
       reason: "On-site roles are blocked. Hybrid mismatch.",
       policyAllowed: false,
+    });
+  });
+
+  it("forces apply for Europe-centered jobs even when the score is below threshold", async () => {
+    const deps = createDeps();
+    deps.prisma.jobReviewHistory.findFirst.mockResolvedValue(null);
+    deps.extractJobText.mockResolvedValue({
+      rawText: "raw",
+      title: "Job",
+      company: "Acme",
+      companyLogoUrl: null,
+      companyLinkedinUrl: null,
+      location: "Berlin, Germany",
+      platform: "linkedin",
+      applicationType: "easy_apply",
+    });
+    deps.formatJobForLLM.mockReturnValue("prompt");
+    deps.parseJob.mockResolvedValue({ parsed: { title: "Job" } });
+    deps.normalizeParsedJob.mockReturnValue({
+      title: "Job",
+      company: "Acme",
+      location: "Berlin, Germany",
+      remoteType: "onsite",
+      seniority: "mid",
+      mustHaveSkills: [],
+      niceToHaveSkills: [],
+      technologies: ["TypeScript"],
+      yearsRequired: 3,
+      platform: "linkedin",
+      applicationType: "easy_apply",
+      visaSponsorship: "yes",
+      workAuthorization: "authorized",
+      openQuestionsCount: 0,
+    });
+    deps.scoreJob.mockReturnValue({ totalScore: 12 });
+    deps.evaluatePolicy.mockReturnValue({ allowed: true, reasons: [] });
+
+    const evaluate = createBatchJobEvaluator({
+      disableAiEvaluation: false,
+      scoreThreshold: 60,
+      useAiScoreAdjustment: false,
+      scoringProfile: { workplacePolicyBypassLocations: ["Europe"] } as any,
+      evaluationPage: {} as any,
+      deps,
+    });
+
+    const result = await evaluate("https://example.com/job");
+
+    expect(result).toEqual({
+      shouldApply: true,
+      finalDecision: "APPLY",
+      score: 12,
+      reason: "Configured workplace-policy bypass matched this job location, so the role will be applied.",
+      policyAllowed: true,
     });
   });
 

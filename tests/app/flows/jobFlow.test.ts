@@ -44,7 +44,10 @@ describe("job flow", () => {
       expect(options).toEqual({});
       return fn(page);
     });
-    deps.loadCandidateProfile.mockResolvedValue({ yearsOfExperience: 3 });
+    deps.loadCandidateProfile.mockResolvedValue({
+      yearsOfExperience: 3,
+      workplacePolicyBypassLocations: ["Europe"],
+    });
     deps.extractJobText.mockResolvedValue({
       rawText: "raw body",
       title: "Title",
@@ -174,5 +177,60 @@ describe("job flow", () => {
       }),
       expect.any(Function),
     );
+  });
+
+  it("forces APPLY for Europe-centered jobs when policy passes", async () => {
+    const deps = createDeps();
+    const page = { fake: "page" };
+    deps.withPage.mockImplementation(async (_options: unknown, fn: (page: unknown) => Promise<unknown>) => fn(page));
+    deps.loadCandidateProfile.mockResolvedValue({
+      yearsOfExperience: 3,
+      workplacePolicyBypassLocations: ["Europe"],
+    });
+    deps.extractJobText.mockResolvedValue({
+      rawText: "raw body",
+      title: "Title",
+      company: "Company",
+      companyLogoUrl: null,
+      companyLinkedinUrl: null,
+      location: "Berlin, Germany",
+      platform: "linkedin",
+      applicationType: "easy_apply",
+    });
+    deps.formatJobForLLM.mockReturnValue("prompt");
+    deps.parseJob.mockResolvedValue({
+      parsed: {
+        title: "Title",
+        company: "Company",
+        location: "Berlin, Germany",
+        platform: "linkedin",
+      },
+      provider: "local",
+      model: "test-model",
+    });
+    deps.normalizeParsedJob.mockReturnValue({
+      title: "Title",
+      company: "Company",
+      location: "Berlin, Germany",
+      remoteType: "onsite",
+      platform: "linkedin",
+      applicationType: "easy_apply",
+    });
+    deps.scoreJob.mockReturnValue({
+      totalScore: 5,
+      breakdown: { skill: 1, seniority: 1, location: 0, tech: 1, bonus: 2 },
+    });
+    deps.evaluatePolicy.mockReturnValue({ allowed: true, reasons: [] });
+    deps.decideJob.mockReturnValue({ decision: "SKIP", reason: "Weak fit." });
+    deps.prisma.jobPosting.upsert.mockResolvedValue({ id: "job_1" });
+    deps.prisma.applicationDecision.create.mockResolvedValue({ id: "decision_1" });
+    deps.writeRunReport.mockResolvedValue("artifacts/job-runs/decide.json");
+
+    const result = await runJobFlow("decide", "https://www.linkedin.com/jobs/view/1", deps);
+
+    expect(result.finalDecision).toBe("APPLY");
+    expect(result.finalReasons).toEqual([
+      "Configured workplace-policy bypass matched this job location, so the role was forced to APPLY.",
+    ]);
   });
 });

@@ -6,6 +6,61 @@ export type PolicyResult = {
   reasons: string[];
 };
 
+const EUROPE_LOCATION_PATTERNS = [
+  /\beurope\b/i,
+  /\beuropean union\b/i,
+  /\beu\b/i,
+  /\beea\b/i,
+  /\bem ea\b/i,
+  /\bemea\b/i,
+  /\baustria\b/i,
+  /\bbelgium\b/i,
+  /\bbulgaria\b/i,
+  /\bcroatia\b/i,
+  /\bcyprus\b/i,
+  /\bczech(?:ia| republic)?\b/i,
+  /\bdenmark\b/i,
+  /\bestonia\b/i,
+  /\bfinland\b/i,
+  /\bfrance\b/i,
+  /\bgermany\b/i,
+  /\bgreece\b/i,
+  /\bhungary\b/i,
+  /\bireland\b/i,
+  /\bitaly\b/i,
+  /\blatvia\b/i,
+  /\blithuania\b/i,
+  /\bluxembourg\b/i,
+  /\bmalta\b/i,
+  /\bnetherlands\b/i,
+  /\bpoland\b/i,
+  /\bportugal\b/i,
+  /\bromania\b/i,
+  /\bslovakia\b/i,
+  /\bslovenia\b/i,
+  /\bspain\b/i,
+  /\bsweden\b/i,
+  /\bnorway\b/i,
+  /\bswitzerland\b/i,
+  /\buk\b/i,
+  /\bunited kingdom\b/i,
+  /\bengland\b/i,
+  /\bscotland\b/i,
+  /\bwales\b/i,
+  /\bnorthern ireland\b/i,
+  /\bturkiye\b/i,
+  /\btürkiye\b/i,
+  /\bturkey\b/i,
+];
+
+const EUROPE_REGION_LABELS = new Set([
+  "europe",
+  "eu",
+  "european union",
+  "eea",
+  "emea",
+]);
+
 function includesAny(haystack: string, needles: string[]): string | null {
   const lowerHaystack = haystack.toLowerCase();
 
@@ -94,6 +149,61 @@ function isPureJavaRole(job: NormalizedJob, profile: CandidateProfile): boolean 
   return !hasPreferredStackOverlap(job, profile);
 }
 
+function isEuropeCenteredLocation(location: string | null | undefined): boolean {
+  const normalizedLocation = location?.trim();
+  if (!normalizedLocation) {
+    return false;
+  }
+
+  return EUROPE_LOCATION_PATTERNS.some((pattern) => pattern.test(normalizedLocation));
+}
+
+function matchesConfiguredWorkplacePolicyBypass(
+  location: string | null | undefined,
+  configuredRegions: string[] | undefined,
+): boolean {
+  const normalizedLocation = location?.trim();
+  if (!normalizedLocation) {
+    return false;
+  }
+
+  for (const configuredRegion of configuredRegions ?? []) {
+    const normalizedRegion = configuredRegion.trim().toLowerCase();
+    if (!normalizedRegion) {
+      continue;
+    }
+
+    if (EUROPE_REGION_LABELS.has(normalizedRegion) && isEuropeCenteredLocation(normalizedLocation)) {
+      return true;
+    }
+
+    if (normalizedLocation.toLowerCase().includes(normalizedRegion)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function isEuropeCenteredJob(job: Pick<NormalizedJob, "location">): boolean {
+  const location = job.location?.trim();
+  if (!location) {
+    return false;
+  }
+
+  return isEuropeCenteredLocation(location);
+}
+
+export function shouldBypassWorkplacePolicy(
+  job: Pick<NormalizedJob, "location">,
+  profile: Pick<CandidateProfile, "workplacePolicyBypassLocations">,
+): boolean {
+  return matchesConfiguredWorkplacePolicyBypass(
+    job.location,
+    profile.workplacePolicyBypassLocations,
+  );
+}
+
 export function evaluatePolicy(
   job: NormalizedJob,
   profile: CandidateProfile,
@@ -101,6 +211,7 @@ export function evaluatePolicy(
   const reasons: string[] = [];
   const combinedRole = `${job.title ?? ""} ${job.seniority}`;
   const combinedLocation = `${job.location ?? ""} ${job.remoteType}`;
+  const workplacePolicyBypassed = shouldBypassWorkplacePolicy(job, profile);
 
   if (job.platform === "linkedin" && job.applicationType !== "easy_apply") {
     reasons.push("Only LinkedIn Easy Apply jobs are allowed in this phase.");
@@ -128,11 +239,11 @@ export function evaluatePolicy(
     reasons.push(`Location excluded by profile: ${excludedLocation}.`);
   }
 
-  if (job.remoteType === "onsite") {
+  if (!workplacePolicyBypassed && job.remoteType === "onsite") {
     reasons.push("On-site roles are blocked by profile.");
   }
 
-  if (job.remoteType === "hybrid") {
+  if (!workplacePolicyBypassed && job.remoteType === "hybrid") {
     const allowedHybridLocation = includesAllowedHybridLocation(
       job.location,
       profile.allowedHybridLocations,

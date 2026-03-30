@@ -84,6 +84,7 @@ const CandidateProfileFileSchema = z.object({
       preferred: z.array(z.string()).default([]),
       excluded: z.array(z.string()).default([]),
       allowedHybrid: z.array(z.string()).default([]),
+      workplacePolicyBypass: z.array(z.string()).default([]),
       remotePreference: z
         .enum(["remote", "hybrid", "onsite", "flexible"])
         .default("flexible"),
@@ -93,6 +94,7 @@ const CandidateProfileFileSchema = z.object({
       preferred: [],
       excluded: [],
       allowedHybrid: [],
+      workplacePolicyBypass: [],
       remotePreference: "flexible",
       remoteOnly: false,
     }),
@@ -154,6 +156,7 @@ export type CandidateProfile = {
   preferredLocations: string[];
   excludedLocations: string[];
   allowedHybridLocations: string[];
+  workplacePolicyBypassLocations?: string[];
   remotePreference: "remote" | "hybrid" | "onsite" | "flexible";
   remoteOnly: boolean;
   visaRequirement: "required" | "not-required" | "unknown";
@@ -182,6 +185,7 @@ function toRuntimeProfile(file: CandidateProfileFile): CandidateProfile {
     preferredLocations: file.locations.preferred,
     excludedLocations: file.locations.excluded,
     allowedHybridLocations: file.locations.allowedHybrid,
+    workplacePolicyBypassLocations: file.locations.workplacePolicyBypass,
     remotePreference: file.locations.remotePreference,
     remoteOnly: file.locations.remoteOnly,
     visaRequirement: file.authorization.visaRequirement,

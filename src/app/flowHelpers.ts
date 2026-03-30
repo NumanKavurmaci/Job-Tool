@@ -7,6 +7,7 @@ import {
   shouldRetryPendingApprovedReview,
   shouldSkipDuplicateBatchReview,
 } from "../utils/jobHistory.js";
+import { shouldBypassWorkplacePolicy } from "../policy/policyEngine.js";
 import {
   jobPostingNeedsMetadataRefresh,
   persistJobAnalysisRecord,
@@ -192,9 +193,13 @@ export function createBatchJobEvaluator(args: {
       : deps.scoreJob(normalized, args.scoringProfile);
     const policy = deps.evaluatePolicy(normalized, args.scoringProfile);
     const meetsThreshold = score.totalScore >= args.scoreThreshold;
+    const forceApplyForConfiguredRegion =
+      shouldBypassWorkplacePolicy(normalized, args.scoringProfile) && policy.allowed;
     const finalDecision: "APPLY" | "SKIP" =
-      policy.allowed && meetsThreshold ? "APPLY" : "SKIP";
-    const reason = !policy.allowed
+      forceApplyForConfiguredRegion || (policy.allowed && meetsThreshold) ? "APPLY" : "SKIP";
+    const reason = forceApplyForConfiguredRegion
+      ? "Configured workplace-policy bypass matched this job location, so the role will be applied."
+      : !policy.allowed
       ? policy.reasons.join(" ")
       : meetsThreshold
         ? `Score ${score.totalScore} meets the configured threshold of ${args.scoreThreshold}.`

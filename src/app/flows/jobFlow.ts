@@ -1,5 +1,6 @@
 import { AppError, serializeError } from "../../utils/errors.js";
 import { persistJobAnalysisRecord } from "../../utils/jobPersistence.js";
+import { shouldBypassWorkplacePolicy } from "../../policy/policyEngine.js";
 import { LINKEDIN_BROWSER_SESSION_OPTIONS, PARSE_VERSION } from "../constants.js";
 import type { AppDeps } from "../deps.js";
 import { persistJobHistory, persistRunArtifact, persistSystemEvent } from "../observability.js";
@@ -56,8 +57,17 @@ export async function runJobFlow(
     : deps.scoreJob(normalized, profile);
   const policy = deps.evaluatePolicy(normalized, profile);
   const decision = deps.decideJob(score);
-  const finalDecision = policy.allowed ? decision.decision : "SKIP";
-  const finalReasons = policy.allowed ? [decision.reason] : policy.reasons;
+  const forceApplyForConfiguredRegion =
+    shouldBypassWorkplacePolicy(normalized, profile) && policy.allowed;
+  const finalDecision =
+    forceApplyForConfiguredRegion ? "APPLY" : policy.allowed ? decision.decision : "SKIP";
+  const finalReasons = forceApplyForConfiguredRegion
+    ? [
+        "Configured workplace-policy bypass matched this job location, so the role was forced to APPLY.",
+      ]
+    : policy.allowed
+      ? [decision.reason]
+      : policy.reasons;
 
   deps.logger.info(
     {
