@@ -416,45 +416,50 @@ describe("phase 5 index flows", () => {
       questionsPath: "./questions.json",
     });
 
-    expect(module.parseCliArgs(["easy-apply-dry-run", "https://www.linkedin.com/jobs/view/1"]))
-      .toEqual({
-      mode: "easy-apply-dry-run",
+    expect(
+      module.parseCliArgs([
+        "easy-apply",
+        "https://www.linkedin.com/jobs/view/1",
+        "--dry-run",
+      ]),
+    ).toEqual({
+      mode: "easy-apply",
       url: "https://www.linkedin.com/jobs/view/1",
       resumePath: expect.any(String),
-      count: 1,
-      disableAiEvaluation: false,
-      scoreThreshold: 40,
-      useAiScoreAdjustment: false,
+      dryRun: true,
     });
 
     expect(module.parseCliArgs(["easy-apply-dry-run"])).toEqual({
-      mode: "easy-apply-dry-run",
+      mode: "easy-apply-batch",
       url: "https://www.linkedin.com/jobs/collections/easy-apply",
       resumePath: expect.any(String),
       count: 1,
       disableAiEvaluation: false,
       scoreThreshold: 40,
       useAiScoreAdjustment: false,
+      dryRun: true,
     });
 
-    expect(module.parseCliArgs(["easy-apply-dry-run", "--count", "3"])).toEqual({
-      mode: "easy-apply-dry-run",
+    expect(module.parseCliArgs(["easy-apply", "--dry-run", "--count", "3"])).toEqual({
+      mode: "easy-apply-batch",
       url: "https://www.linkedin.com/jobs/collections/easy-apply",
       resumePath: expect.any(String),
       count: 3,
       disableAiEvaluation: false,
       scoreThreshold: 40,
       useAiScoreAdjustment: false,
+      dryRun: true,
     });
 
     expect(module.parseCliArgs(["easy-apply-dry-run", "2"])).toEqual({
-      mode: "easy-apply-dry-run",
+      mode: "easy-apply-batch",
       url: "https://www.linkedin.com/jobs/collections/easy-apply",
       resumePath: expect.any(String),
       count: 2,
       disableAiEvaluation: false,
       scoreThreshold: 40,
       useAiScoreAdjustment: false,
+      dryRun: true,
     });
 
     expect(
@@ -466,19 +471,21 @@ describe("phase 5 index flows", () => {
         "2",
       ]),
     ).toEqual({
-      mode: "easy-apply-dry-run",
+      mode: "easy-apply-batch",
       url: "https://www.linkedin.com/jobs/collections/easy-apply",
       resumePath: expect.any(String),
       count: 2,
       disableAiEvaluation: true,
       scoreThreshold: 60,
       useAiScoreAdjustment: false,
+      dryRun: true,
     });
 
     expect(module.parseCliArgs(["easy-apply", "https://www.linkedin.com/jobs/view/1"])).toEqual({
       mode: "easy-apply",
       url: "https://www.linkedin.com/jobs/view/1",
       resumePath: expect.any(String),
+      dryRun: false,
     });
 
     expect(module.parseCliArgs(["easy-apply-batch"])).toEqual({
@@ -489,6 +496,7 @@ describe("phase 5 index flows", () => {
       disableAiEvaluation: false,
       scoreThreshold: 40,
       useAiScoreAdjustment: false,
+      dryRun: false,
     });
 
     expect(
@@ -507,6 +515,7 @@ describe("phase 5 index flows", () => {
       disableAiEvaluation: true,
       scoreThreshold: 60,
       useAiScoreAdjustment: false,
+      dryRun: false,
     });
   });
 
@@ -516,14 +525,22 @@ describe("phase 5 index flows", () => {
     expect(() => module.parseCliArgs(["answer-questions", "--resume", "./resume.txt"])).toThrow(
       "--questions is required",
     );
-    expect(() => module.parseCliArgs(["easy-apply"])).toThrow("--url is required for easy-apply.");
-    expect(() =>
+    expect(
       module.parseCliArgs(["easy-apply", "https://www.linkedin.com/jobs/collections/easy-apply"]),
-    ).toThrow("easy-apply requires a single LinkedIn job URL");
+    ).toEqual({
+      mode: "easy-apply-batch",
+      url: "https://www.linkedin.com/jobs/collections/easy-apply",
+      resumePath: expect.any(String),
+      count: 1,
+      disableAiEvaluation: false,
+      scoreThreshold: 40,
+      useAiScoreAdjustment: false,
+      dryRun: false,
+    });
     expect(() =>
       module.parseCliArgs(["easy-apply-batch", "https://www.linkedin.com/jobs/view/1"]),
     ).toThrow("easy-apply-batch requires a LinkedIn collection URL");
-    expect(() => module.parseCliArgs(["easy-apply-dry-run", "--count", "0"])).toThrow(
+    expect(() => module.parseCliArgs(["easy-apply", "--dry-run", "--count", "0"])).toThrow(
       "--count must be a positive integer.",
     );
   });

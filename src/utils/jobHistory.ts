@@ -87,6 +87,22 @@ export async function getLatestJobReview(args: {
   }
 }
 
+export function shouldSkipDuplicateBatchReview(
+  review: Pick<JobReviewHistory, "status">,
+): boolean {
+  return (
+    review.status === "SKIPPED" ||
+    review.status === "SKIPPED_DUE_TO_EASY_APPLY_RUN" ||
+    review.status === "SUBMITTED"
+  );
+}
+
+export function shouldRetryPendingApprovedReview(
+  review: Pick<JobReviewHistory, "status" | "decision">,
+): boolean {
+  return review.decision === "APPLY" && review.status !== "SUBMITTED";
+}
+
 export function buildDuplicateReviewReason(
   review: Pick<JobReviewHistory, "createdAt" | "status" | "decision" | "score">,
 ): string {

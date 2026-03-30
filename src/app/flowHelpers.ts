@@ -1,7 +1,12 @@
 import type { Page } from "@playwright/test";
 import type { CandidateProfile } from "../candidate/types.js";
 import type { InputQuestion } from "../questions/types.js";
-import { buildDuplicateReviewReason, getLatestJobReview } from "../utils/jobHistory.js";
+import {
+  buildDuplicateReviewReason,
+  getLatestJobReview,
+  shouldRetryPendingApprovedReview,
+  shouldSkipDuplicateBatchReview,
+} from "../utils/jobHistory.js";
 import {
   jobPostingNeedsMetadataRefresh,
   persistJobAnalysisRecord,
@@ -58,6 +63,20 @@ export function createBatchJobEvaluator(args: {
     });
   }
 
+  const retryApprovedJobIfStillOpen = async (evaluationPage: Page, url: string) => {
+    const driver = await deps.createEasyApplyDriver(evaluationPage);
+    await driver.ensureAuthenticated(url);
+    await driver.open(url);
+
+    const alreadyApplied = (await driver.isAlreadyApplied?.()) === true;
+    const easyApplyAvailable = await driver.isEasyApplyAvailable();
+
+    return {
+      alreadyApplied,
+      easyApplyAvailable,
+    };
+  };
+
   const evaluateOnPage = async (evaluationPage: Page, url: string) => {
     const latestReview = await getLatestJobReview({
       prisma: deps.prisma,
@@ -65,7 +84,7 @@ export function createBatchJobEvaluator(args: {
       logger: deps.logger,
     });
 
-    if (latestReview) {
+    if (latestReview && shouldSkipDuplicateBatchReview(latestReview)) {
       const existingJobPosting = deps.prisma.jobPosting.findUnique
         ? await deps.prisma.jobPosting.findUnique({
             where: { url },
@@ -115,6 +134,48 @@ export function createBatchJobEvaluator(args: {
         reason,
         policyAllowed: latestReview.policyAllowed ?? true,
       };
+    }
+
+    if (latestReview && shouldRetryPendingApprovedReview(latestReview)) {
+      const pendingState = await retryApprovedJobIfStillOpen(evaluationPage, url);
+
+      if (!pendingState.alreadyApplied && pendingState.easyApplyAvailable) {
+        const reason =
+          "Job was previously approved and Easy Apply is still available, so the application flow will be retried.";
+
+        deps.logger.info(
+          {
+            url,
+            previousStatus: latestReview.status,
+            previousDecision: latestReview.decision,
+            previousScore: latestReview.score,
+          },
+          "Retrying previously approved Easy Apply job",
+        );
+        await persistSystemEvent(
+          {
+            level: "INFO",
+            scope: "linkedin.batch",
+            message: "Retrying previously approved Easy Apply job.",
+            runType: "easy-apply-batch",
+            jobUrl: url,
+            details: {
+              previousStatus: latestReview.status,
+              previousDecision: latestReview.decision,
+              easyApplyAvailable: true,
+            },
+          },
+          deps,
+        );
+
+        return {
+          shouldApply: true,
+          finalDecision: "APPLY" as const,
+          score: latestReview.score ?? 0,
+          reason,
+          policyAllowed: latestReview.policyAllowed ?? true,
+        };
+      }
     }
 
     const extracted = await deps.extractJobText(evaluationPage, url);

@@ -35,7 +35,9 @@ function renderCliSummary(
     return formatBatchTerminalSummary({
       label:
         result.mode === "easy-apply-batch"
-          ? "LinkedIn Easy Apply batch"
+          ? result.dryRun
+            ? "LinkedIn Easy Apply dry run"
+            : "LinkedIn Easy Apply batch"
           : "LinkedIn Easy Apply dry run",
       status: result.easyApply.status,
       requestedCount: result.easyApply.requestedCount,
@@ -85,15 +87,17 @@ export async function main(
   } else if (args.mode === "answer-questions") {
     result = await runAnswerQuestionsFlow(args, deps);
   } else if (args.mode === "easy-apply") {
-    result = await runEasyApplyFlow(args, deps);
+    result = args.dryRun
+      ? await runEasyApplyDryRunFlow(args, deps)
+      : await runEasyApplyFlow(args, deps);
   } else if (args.mode === "easy-apply-batch") {
-    result = await runEasyApplyBatchFlow(args, deps);
-  } else if (args.mode === "easy-apply-dry-run") {
-    result = await runEasyApplyDryRunFlow(args, deps);
-  } else if (args.mode === "external-apply-dry-run") {
-    result = await runExternalApplyDryRunFlow(args, deps);
+    result = args.dryRun
+      ? await runEasyApplyDryRunFlow(args, deps)
+      : await runEasyApplyBatchFlow(args, deps);
   } else if (args.mode === "external-apply") {
-    result = await runExternalApplyFlow(args, deps);
+    result = args.dryRun
+      ? await runExternalApplyDryRunFlow(args, deps)
+      : await runExternalApplyFlow(args, deps);
   } else {
     result = await runJobFlow(args.mode, args.url, deps, {
       useAiScoreAdjustment: args.useAiScoreAdjustment,

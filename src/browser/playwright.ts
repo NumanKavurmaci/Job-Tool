@@ -139,8 +139,19 @@ export async function withPage<T>(
     return await fn(page, runtime.browser as Browser);
   } finally {
     if (options.persistStorageState && options.storageStatePath) {
-      await mkdir(dirname(options.storageStatePath), { recursive: true });
-      await runtime.context.storageState({ path: options.storageStatePath });
+      try {
+        await mkdir(dirname(options.storageStatePath), { recursive: true });
+        await runtime.context.storageState({ path: options.storageStatePath });
+      } catch (error) {
+        logger.warn(
+          {
+            event: "browser.storage_state.persist_failed",
+            storageStatePath: options.storageStatePath,
+            error,
+          },
+          "Failed to persist Playwright storage state",
+        );
+      }
     }
     await runtime.close();
     logger.info(

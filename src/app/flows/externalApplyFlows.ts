@@ -14,7 +14,8 @@ import { fillExternalApplicationPage } from "../../external/fill.js";
 import { persistRunArtifact, persistSystemEvent } from "../observability.js";
 import type { ExternalApplicationPlannedAnswer } from "../../external/types.js";
 
-type ExternalApplyMode = "external-apply-dry-run" | "external-apply";
+type ExternalApplyArgs = Extract<CliArgs, { mode: "external-apply" }>;
+type ExternalApplyRunType = "external-apply-dry-run" | "external-apply";
 
 function truncate(value: string, max = 5000) {
   return value.length <= max ? value : `${value.slice(0, max)}...`;
@@ -65,7 +66,7 @@ async function persistExternalApplyAnswers(args: {
   platform: string;
   answerPlan: ExternalApplicationPlannedAnswer[];
   profile: Awaited<ReturnType<AppDeps["loadCandidateMasterProfile"]>>;
-  runType: ExternalApplyMode;
+  runType: ExternalApplyRunType;
   deps: AppDeps;
 }) {
   if (args.answerPlan.length === 0) {
@@ -123,9 +124,13 @@ async function persistExternalApplyAnswers(args: {
 // ---------------------------------------------------------------------------
 
 interface RunExternalApplyOptions {
-  args: Extract<CliArgs, { mode: ExternalApplyMode }>;
+  args: ExternalApplyArgs;
   deps: AppDeps;
   submit: boolean;
+}
+
+function getExternalApplyRunType(args: ExternalApplyArgs): ExternalApplyRunType {
+  return args.dryRun ? "external-apply-dry-run" : "external-apply";
 }
 
 async function runExternalApplyCore({
@@ -133,6 +138,7 @@ async function runExternalApplyCore({
   deps,
   submit,
 }: RunExternalApplyOptions) {
+  const runType = getExternalApplyRunType(args);
   const candidateProfile = await loadMasterProfileForArgs(args, deps);
   try {
     const result = await deps.withPage(async (page) => {
@@ -234,6 +240,7 @@ async function runExternalApplyCore({
 
       return {
         mode: args.mode,
+        dryRun: args.dryRun,
         sourceUrl: args.url,
         candidateProfile: {
           fullName: candidateProfile.fullName,
@@ -263,7 +270,7 @@ async function runExternalApplyCore({
 
     const reportPath = await persistRunArtifact({
       category: "external-apply-runs",
-      prefix: args.mode,
+      prefix: runType,
       payload: result,
       deps,
     });
@@ -274,7 +281,7 @@ async function runExternalApplyCore({
       platform: result.discovery.platform,
       answerPlan: result.answerPlan,
       profile: candidateProfile,
-      runType: args.mode,
+      runType,
       deps,
     });
 
@@ -285,7 +292,7 @@ async function runExternalApplyCore({
         message: submit
           ? "External application finished."
           : "External application dry run finished.",
-        runType: args.mode,
+        runType,
         jobUrl: args.url,
         details: {
           platform: result.discovery.platform,
@@ -376,14 +383,14 @@ function buildStopReason({
 // ---------------------------------------------------------------------------
 
 export async function runExternalApplyDryRunFlow(
-  args: Extract<CliArgs, { mode: "external-apply-dry-run" }>,
+  args: ExternalApplyArgs,
   deps: AppDeps,
 ) {
   return runExternalApplyCore({ args, deps, submit: false });
 }
 
 export async function runExternalApplyFlow(
-  args: Extract<CliArgs, { mode: "external-apply" }>,
+  args: ExternalApplyArgs,
   deps: AppDeps,
 ) {
   return runExternalApplyCore({ args, deps, submit: true });

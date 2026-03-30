@@ -30,14 +30,15 @@ describe("app cli", () => {
       url: "https://example.com/job",
       useAiScoreAdjustment: true,
     });
-    expect(parseCliArgs(["easy-apply-dry-run", "--ai-score-adjustment"])).toEqual({
-      mode: "easy-apply-dry-run",
+    expect(parseCliArgs(["easy-apply", "--dry-run", "--ai-score-adjustment"])).toEqual({
+      mode: "easy-apply-batch",
       url: "https://www.linkedin.com/jobs/collections/easy-apply",
       resumePath: expect.any(String),
       count: 1,
       disableAiEvaluation: false,
       scoreThreshold: 40,
       useAiScoreAdjustment: true,
+      dryRun: true,
     });
   });
 
@@ -61,8 +62,8 @@ describe("app cli", () => {
     expect(() => parseWithNoDefaultResume(["answer-questions", "--questions", "./q.json"])).toThrow(
       "--resume is required for answer-questions.",
     );
-    expect(() => parseWithNoDefaultResume(["easy-apply-dry-run"])).toThrow(
-      "--resume is required for easy-apply-dry-run when no default CV is available.",
+    expect(() => parseWithNoDefaultResume(["easy-apply", "--dry-run"])).toThrow(
+      "--resume is required for easy-apply --dry-run when no default CV is available.",
     );
     expect(() => parseWithNoDefaultResume(["easy-apply", "https://www.linkedin.com/jobs/view/1"])).toThrow(
       "--resume is required for easy-apply when no default CV is available.",
@@ -74,23 +75,25 @@ describe("app cli", () => {
 
   it("ignores empty positional slots while parsing tail arguments", () => {
     expect(
-      parseCliArgs(["easy-apply-dry-run", undefined as unknown as string, "2"]),
+      parseCliArgs(["easy-apply", "--dry-run", undefined as unknown as string, "2"]),
     ).toEqual({
-      mode: "easy-apply-dry-run",
+      mode: "easy-apply-batch",
       url: "https://www.linkedin.com/jobs/collections/easy-apply",
       resumePath: expect.any(String),
       count: 2,
       disableAiEvaluation: false,
       scoreThreshold: 40,
       useAiScoreAdjustment: false,
+      dryRun: true,
     });
   });
 
   it("parses external application dry-run commands", () => {
-    expect(parseCliArgs(["external-apply-dry-run", "https://tally.so/r/31yWVM"])).toEqual({
-      mode: "external-apply-dry-run",
+    expect(parseCliArgs(["external-apply", "https://tally.so/r/31yWVM", "--dry-run"])).toEqual({
+      mode: "external-apply",
       url: "https://tally.so/r/31yWVM",
       resumePath: expect.any(String),
+      dryRun: true,
     });
   });
 
@@ -99,13 +102,10 @@ describe("app cli", () => {
       "easy-apply-dry-run",
       "https://www.linkedin.com/jobs/collections/top-applicant/?currentJobId=4387565844",
     ])).toEqual({
-      mode: "easy-apply-dry-run",
+      mode: "easy-apply",
       url: "https://www.linkedin.com/jobs/view/4387565844/",
       resumePath: expect.any(String),
-      count: 1,
-      disableAiEvaluation: false,
-      scoreThreshold: 40,
-      useAiScoreAdjustment: false,
+      dryRun: true,
     });
 
     expect(parseCliArgs([
@@ -115,6 +115,7 @@ describe("app cli", () => {
       mode: "easy-apply",
       url: "https://www.linkedin.com/jobs/view/4387565844/",
       resumePath: expect.any(String),
+      dryRun: false,
     });
   });
 });

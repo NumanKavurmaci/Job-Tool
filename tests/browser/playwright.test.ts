@@ -10,6 +10,7 @@ const closeMock = vi.fn();
 const launchMock = vi.fn();
 const launchPersistentContextMock = vi.fn();
 const loggerInfoMock = vi.fn();
+const loggerWarnMock = vi.fn();
 const loggerErrorMock = vi.fn();
 
 vi.mock("@playwright/test", () => ({
@@ -22,6 +23,7 @@ vi.mock("@playwright/test", () => ({
 vi.mock("../../src/utils/logger.js", () => ({
   logger: {
     info: loggerInfoMock,
+    warn: loggerWarnMock,
     error: loggerErrorMock,
   },
 }));
@@ -35,6 +37,7 @@ describe("withPage", () => {
     launchMock.mockReset();
     launchPersistentContextMock.mockReset();
     loggerInfoMock.mockReset();
+    loggerWarnMock.mockReset();
     loggerErrorMock.mockReset();
     delete process.env.PLAYWRIGHT_SLOW_MO_MS;
   });
@@ -188,6 +191,38 @@ describe("withPage", () => {
       }),
     ).rejects.toThrow("boom");
 
+    expect(closeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("warns and still closes cleanly if persisting storage state fails", async () => {
+    const page = { id: "page", url: vi.fn().mockReturnValue("about:blank") };
+    const context = {
+      newPage: newPageMock.mockResolvedValue(page),
+      storageState: storageStateMock.mockRejectedValue(new Error("context closed")),
+    };
+    const browser = {
+      newContext: newContextMock.mockResolvedValue(context),
+      close: closeMock.mockResolvedValue(undefined),
+    };
+    launchMock.mockResolvedValue(browser);
+
+    const { withPage } = await import("../../src/browser/playwright.js");
+    await expect(
+      withPage(
+        {
+          storageStatePath: join(tmpdir(), "job-tool-storage-state.json"),
+          persistStorageState: true,
+        },
+        async () => "done",
+      ),
+    ).resolves.toBe("done");
+
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "browser.storage_state.persist_failed",
+      }),
+      "Failed to persist Playwright storage state",
+    );
     expect(closeMock).toHaveBeenCalledTimes(1);
   });
 

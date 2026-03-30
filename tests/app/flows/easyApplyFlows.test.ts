@@ -145,13 +145,10 @@ describe("easy apply flows", () => {
     const { runEasyApplyDryRunFlow } = await import("../../../src/app/flows/easyApplyFlows.js");
     const result = await runEasyApplyDryRunFlow(
       {
-        mode: "easy-apply-dry-run",
+        mode: "easy-apply",
         url: "https://www.linkedin.com/jobs/view/1",
         resumePath: "./resume.pdf",
-        count: 1,
-        disableAiEvaluation: false,
-        scoreThreshold: 60,
-        useAiScoreAdjustment: false,
+        dryRun: true,
       },
       deps,
     );
@@ -214,13 +211,10 @@ describe("easy apply flows", () => {
     const { runEasyApplyDryRunFlow } = await import("../../../src/app/flows/easyApplyFlows.js");
     await runEasyApplyDryRunFlow(
       {
-        mode: "easy-apply-dry-run",
+        mode: "easy-apply",
         url: "https://www.linkedin.com/jobs/view/1",
         resumePath: "./resume.pdf",
-        count: 1,
-        disableAiEvaluation: false,
-        scoreThreshold: 60,
-        useAiScoreAdjustment: false,
+        dryRun: true,
       },
       deps,
     );
@@ -304,13 +298,14 @@ describe("easy apply flows", () => {
     const { runEasyApplyDryRunFlow } = await import("../../../src/app/flows/easyApplyFlows.js");
     const result = await runEasyApplyDryRunFlow(
       {
-        mode: "easy-apply-dry-run",
+        mode: "easy-apply-batch",
         url: "https://www.linkedin.com/jobs/collections/easy-apply",
         resumePath: "./resume.pdf",
         count: 2,
         disableAiEvaluation: false,
         scoreThreshold: 60,
         useAiScoreAdjustment: false,
+        dryRun: true,
       },
       deps,
     );
@@ -378,13 +373,14 @@ describe("easy apply flows", () => {
     const { runEasyApplyDryRunFlow } = await import("../../../src/app/flows/easyApplyFlows.js");
     await runEasyApplyDryRunFlow(
       {
-        mode: "easy-apply-dry-run",
+        mode: "easy-apply-batch",
         url: "https://www.linkedin.com/jobs/collections/easy-apply",
         resumePath: "./resume.pdf",
         count: 1,
         disableAiEvaluation: false,
         scoreThreshold: 40,
         useAiScoreAdjustment: false,
+        dryRun: true,
       },
       deps,
     );
@@ -416,13 +412,10 @@ describe("easy apply flows", () => {
     await expect(
       runEasyApplyDryRunFlow(
         {
-          mode: "easy-apply-dry-run",
+          mode: "easy-apply",
           url: "https://www.linkedin.com/jobs/view/1",
           resumePath: "./resume.pdf",
-          count: 1,
-          disableAiEvaluation: false,
-          scoreThreshold: 60,
-          useAiScoreAdjustment: false,
+          dryRun: true,
         },
         deps,
       ),
@@ -469,13 +462,10 @@ describe("easy apply flows", () => {
     const { runEasyApplyDryRunFlow } = await import("../../../src/app/flows/easyApplyFlows.js");
     await runEasyApplyDryRunFlow(
       {
-        mode: "easy-apply-dry-run",
+        mode: "easy-apply",
         url: "https://www.linkedin.com/jobs/view/1",
         resumePath: "./resume.pdf",
-        count: 1,
-        disableAiEvaluation: false,
-        scoreThreshold: 60,
-        useAiScoreAdjustment: false,
+        dryRun: true,
       },
       deps,
     );
@@ -520,6 +510,7 @@ describe("easy apply flows", () => {
         mode: "easy-apply",
         url: "https://www.linkedin.com/jobs/view/1",
         resumePath: "./resume.pdf",
+        dryRun: false,
       },
       deps,
     );
@@ -588,6 +579,7 @@ describe("easy apply flows", () => {
         mode: "easy-apply",
         url: "https://www.linkedin.com/jobs/view/1",
         resumePath: "./resume.pdf",
+        dryRun: false,
       },
       deps,
     );
@@ -628,6 +620,7 @@ describe("easy apply flows", () => {
         mode: "easy-apply",
         url: "https://www.linkedin.com/jobs/view/1",
         resumePath: "./resume.pdf",
+        dryRun: false,
       },
       deps,
     );
@@ -694,6 +687,7 @@ describe("easy apply flows", () => {
         disableAiEvaluation: false,
         scoreThreshold: 60,
         useAiScoreAdjustment: false,
+        dryRun: false,
       },
       deps,
     );
@@ -770,6 +764,7 @@ describe("easy apply flows", () => {
         count: 1,
         disableAiEvaluation: false,
         scoreThreshold: 60,
+        dryRun: false,
       },
       deps,
     );
@@ -830,6 +825,7 @@ describe("easy apply flows", () => {
         disableAiEvaluation: true,
         scoreThreshold: 60,
         useAiScoreAdjustment: false,
+        dryRun: false,
       },
       deps,
     );
@@ -860,6 +856,7 @@ describe("easy apply flows", () => {
           disableAiEvaluation: false,
           scoreThreshold: 60,
           useAiScoreAdjustment: false,
+          dryRun: false,
         },
         deps,
       ),

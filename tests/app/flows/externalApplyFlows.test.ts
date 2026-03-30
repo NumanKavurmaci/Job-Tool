@@ -172,9 +172,10 @@ describe("external apply flows", () => {
 
     const result = await runExternalApplyDryRunFlow(
       {
-        mode: "external-apply-dry-run",
+        mode: "external-apply",
         url: "https://example.com/start",
         resumePath: "./user/resume.pdf",
+        dryRun: true,
       },
       deps,
     );
@@ -264,9 +265,10 @@ describe("external apply flows", () => {
 
     const result = await runExternalApplyDryRunFlow(
       {
-        mode: "external-apply-dry-run",
+        mode: "external-apply",
         url: "https://example.com/start",
         resumePath: "./user/resume.pdf",
+        dryRun: true,
       },
       deps,
     );
@@ -346,9 +348,10 @@ describe("external apply flows", () => {
 
     const result = await runExternalApplyDryRunFlow(
       {
-        mode: "external-apply-dry-run",
+        mode: "external-apply",
         url: "https://example.com/start",
         resumePath: "./user/resume.pdf",
+        dryRun: true,
       },
       deps,
     );
@@ -439,6 +442,7 @@ describe("external apply flows", () => {
         mode: "external-apply",
         url: "https://example.com/form",
         resumePath: "./user/resume.pdf",
+        dryRun: false,
       },
       deps,
     );

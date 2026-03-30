@@ -232,13 +232,123 @@ describe("app flow helpers", () => {
       deps,
     });
 
+    deps.extractJobText.mockResolvedValue({
+      rawText: "raw",
+      title: "Job",
+      company: "Acme",
+      companyLogoUrl: null,
+      companyLinkedinUrl: null,
+      location: "Remote",
+      platform: "linkedin",
+    });
+    deps.formatJobForLLM.mockReturnValue("prompt");
+    deps.parseJob.mockResolvedValue({ parsed: { title: "Job" } });
+    deps.normalizeParsedJob.mockReturnValue({ platform: "linkedin" });
+    deps.scoreJob.mockReturnValue({ totalScore: 61 });
+    deps.evaluatePolicy.mockReturnValue({ allowed: true, reasons: [] });
+
     await expect(evaluate("https://example.com/job")).resolves.toEqual({
-      shouldApply: false,
-      finalDecision: "SKIP",
-      score: 0,
-      reason: "Job was already reviewed on 2026-03-29 with status FAILED, no score.",
+      shouldApply: true,
+      finalDecision: "APPLY",
+      score: 61,
+      reason: "Score 61 meets the configured threshold of 60.",
       policyAllowed: true,
     });
+    expect(deps.extractJobText).toHaveBeenCalledWith(
+      { fake: true },
+      "https://example.com/job",
+    );
+  });
+
+  it("re-evaluates jobs that only reached an intermediate evaluated state", async () => {
+    const deps = createDeps();
+    deps.prisma.jobReviewHistory.findFirst.mockResolvedValue({
+      createdAt: new Date("2026-03-29T00:00:00.000Z"),
+      status: "EVALUATED",
+      decision: "APPLY",
+      score: 47,
+      policyAllowed: true,
+    });
+    deps.createEasyApplyDriver.mockResolvedValue({
+      ensureAuthenticated: vi.fn().mockResolvedValue(undefined),
+      open: vi.fn().mockResolvedValue(undefined),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(false),
+      isAlreadyApplied: vi.fn().mockResolvedValue(false),
+    });
+    deps.extractJobText.mockResolvedValue({
+      rawText: "raw",
+      title: "Job",
+      company: "Acme",
+      companyLogoUrl: null,
+      companyLinkedinUrl: null,
+      location: "Remote",
+      platform: "linkedin",
+    });
+    deps.formatJobForLLM.mockReturnValue("prompt");
+    deps.parseJob.mockResolvedValue({ parsed: { title: "Job" } });
+    deps.normalizeParsedJob.mockReturnValue({ platform: "linkedin" });
+    deps.scoreJob.mockReturnValue({ totalScore: 75 });
+    deps.evaluatePolicy.mockReturnValue({ allowed: true, reasons: [] });
+
+    const evaluate = createBatchJobEvaluator({
+      disableAiEvaluation: false,
+      scoreThreshold: 60,
+      useAiScoreAdjustment: false,
+      scoringProfile: {} as any,
+      evaluationPage: { fake: true } as any,
+      deps,
+    });
+
+    await expect(evaluate("https://example.com/job")).resolves.toEqual({
+      shouldApply: true,
+      finalDecision: "APPLY",
+      score: 75,
+      reason: "Score 75 meets the configured threshold of 60.",
+      policyAllowed: true,
+    });
+  });
+
+  it("retries previously approved jobs when easy apply is still active", async () => {
+    const deps = createDeps();
+    deps.prisma.jobReviewHistory.findFirst.mockResolvedValue({
+      createdAt: new Date("2026-03-30T00:00:00.000Z"),
+      status: "EVALUATED",
+      decision: "APPLY",
+      score: 60,
+      policyAllowed: true,
+    });
+    deps.createEasyApplyDriver.mockResolvedValue({
+      ensureAuthenticated: vi.fn().mockResolvedValue(undefined),
+      open: vi.fn().mockResolvedValue(undefined),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      isAlreadyApplied: vi.fn().mockResolvedValue(false),
+    });
+
+    const evaluate = createBatchJobEvaluator({
+      disableAiEvaluation: false,
+      scoreThreshold: 60,
+      useAiScoreAdjustment: false,
+      scoringProfile: {} as any,
+      evaluationPage: { fake: true } as any,
+      deps,
+    });
+
+    await expect(evaluate("https://example.com/job")).resolves.toEqual({
+      shouldApply: true,
+      finalDecision: "APPLY",
+      score: 60,
+      reason:
+        "Job was previously approved and Easy Apply is still available, so the application flow will be retried.",
+      policyAllowed: true,
+    });
+    expect(deps.extractJobText).not.toHaveBeenCalled();
+    expect(deps.logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: "https://example.com/job",
+        previousStatus: "EVALUATED",
+      }),
+      "Retrying previously approved Easy Apply job",
+    );
   });
 
   it("evaluates a job on the provided evaluation page with optional AI score adjustment", async () => {

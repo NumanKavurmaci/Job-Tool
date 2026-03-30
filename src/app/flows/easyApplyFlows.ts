@@ -26,6 +26,10 @@ import type {
   EasyApplyStepReport,
 } from "../../linkedin/easyApply.js";
 
+type EasyApplyArgs = Extract<CliArgs, { mode: "easy-apply" }>;
+type EasyApplyBatchArgs = Extract<CliArgs, { mode: "easy-apply-batch" }>;
+type EasyApplyRunType = "easy-apply" | "easy-apply-dry-run" | "easy-apply-batch";
+
 const DETECTED_ALREADY_APPLIED_REASON =
   "Detected LinkedIn applied badge; application was already submitted outside the bot.";
 
@@ -37,6 +41,12 @@ function isAlreadyAppliedBatchJob(job: {
   evaluation: { alreadyApplied?: boolean };
 }): boolean {
   return job.evaluation.alreadyApplied === true;
+}
+
+function isBatchDryRunArgs(
+  args: EasyApplyArgs | EasyApplyBatchArgs,
+): args is EasyApplyBatchArgs {
+  return args.mode === "easy-apply-batch";
 }
 
 function collectAnsweredQuestions(steps: EasyApplyStepReport[]): EasyApplyAnsweredQuestion[] {
@@ -78,7 +88,7 @@ async function createCandidateProfileSnapshotForSurvey(args: {
 async function persistEasyApplySurveyAnswers(args: {
   results: Array<{ url: string; steps: EasyApplyStepReport[] }>;
   profile: Awaited<ReturnType<AppDeps["loadCandidateMasterProfile"]>>;
-  runType: "easy-apply" | "easy-apply-dry-run" | "easy-apply-batch";
+  runType: EasyApplyRunType;
   deps: AppDeps;
 }) {
   const payloads = args.results
@@ -132,7 +142,7 @@ async function persistEasyApplySurveyAnswers(args: {
 
 async function persistDetectedAppliedJob(args: {
   url: string;
-  source: "easy-apply" | "easy-apply-dry-run" | "easy-apply-batch";
+  source: EasyApplyRunType;
   deps: AppDeps;
   page: Parameters<AppDeps["extractJobText"]>[0];
 }) {
@@ -218,10 +228,20 @@ async function persistDetectedAppliedJob(args: {
   );
 }
 
+function getEasyApplyRunType(args: EasyApplyArgs | EasyApplyBatchArgs): EasyApplyRunType {
+  if (args.dryRun) {
+    return "easy-apply-dry-run";
+  }
+
+  return args.mode === "easy-apply-batch" ? "easy-apply-batch" : "easy-apply";
+}
+
 export async function runEasyApplyDryRunFlow(
-  args: Extract<CliArgs, { mode: "easy-apply-dry-run" }>,
+  args: EasyApplyArgs | EasyApplyBatchArgs,
   deps: AppDeps,
 ) {
+  const runType = getEasyApplyRunType(args);
+  const isBatchRun = isBatchDryRunArgs(args);
   const profile = await loadMasterProfileForArgs(args, deps);
   const scoringProfile = await deps.loadCandidateProfile();
   const resolveCandidateAnswer = createCandidateAnswerResolver(profile, deps);
@@ -233,13 +253,15 @@ export async function runEasyApplyDryRunFlow(
       LINKEDIN_BROWSER_SESSION_OPTIONS,
       async (page) => {
         const driver = await deps.createEasyApplyDriver(page);
-        const evaluationPage = args.disableAiEvaluation
-          ? undefined
+        const evaluationPage = isBatchRun
+          ? args.disableAiEvaluation
+            ? undefined
+            : await page.context().newPage()
           : await page.context().newPage();
         const evaluateJob = createBatchJobEvaluator({
-          disableAiEvaluation: args.disableAiEvaluation,
-          scoreThreshold: args.scoreThreshold,
-          useAiScoreAdjustment: args.useAiScoreAdjustment,
+          disableAiEvaluation: isBatchRun ? args.disableAiEvaluation : true,
+          scoreThreshold: isBatchRun ? args.scoreThreshold : 0,
+          useAiScoreAdjustment: isBatchRun ? args.useAiScoreAdjustment : false,
           scoringProfile,
           ...(evaluationPage ? { evaluationPage } : {}),
           deps,
@@ -253,7 +275,7 @@ export async function runEasyApplyDryRunFlow(
         };
 
         try {
-          if (args.count > 1 || isLinkedInCollectionUrl(args.url)) {
+          if (isBatchRun) {
             const batchResult = await deps.runEasyApplyBatchDryRun({
               ...sharedInput,
               targetCount: args.count,
@@ -266,7 +288,7 @@ export async function runEasyApplyDryRunFlow(
 
               await persistDetectedAppliedJob({
                 url: job.url,
-                source: args.mode,
+                source: runType,
                 deps,
                 page: evaluationPage ?? page,
               });
@@ -279,7 +301,7 @@ export async function runEasyApplyDryRunFlow(
           if (isAlreadyAppliedSingleRun(singleResult)) {
             await persistDetectedAppliedJob({
               url: args.url,
-              source: args.mode,
+              source: runType,
               deps,
               page,
             });
@@ -314,7 +336,7 @@ export async function runEasyApplyDryRunFlow(
       level: "INFO",
       scope: "linkedin.easy_apply",
       message: "LinkedIn Easy Apply dry run finished.",
-      runType: args.mode,
+      runType,
       jobUrl: args.url,
       details:
         "jobs" in result
@@ -343,9 +365,9 @@ export async function runEasyApplyDryRunFlow(
           skippedCount: result.skippedCount,
           requestedCount: result.requestedCount,
           pagesVisited: result.pagesVisited,
-          disableAiEvaluation: args.disableAiEvaluation,
-          scoreThreshold: args.scoreThreshold,
-          useAiScoreAdjustment: args.useAiScoreAdjustment,
+          disableAiEvaluation: isBatchRun ? args.disableAiEvaluation : true,
+          scoreThreshold: isBatchRun ? args.scoreThreshold : 0,
+          useAiScoreAdjustment: isBatchRun ? args.useAiScoreAdjustment : false,
           stopReason: result.stopReason,
         }
       : {
@@ -363,7 +385,7 @@ export async function runEasyApplyDryRunFlow(
     await persistBatchJobHistory(
       {
         source: "easy-apply-dry-run",
-        threshold: args.scoreThreshold,
+        threshold: isBatchRun ? args.scoreThreshold : 0,
         jobs: result.jobs,
       },
       deps,
@@ -373,10 +395,11 @@ export async function runEasyApplyDryRunFlow(
       prefix: "easy-apply-dry-run",
       payload: {
         mode: args.mode,
+        dryRun: true,
         url: args.url,
-        disableAiEvaluation: args.disableAiEvaluation,
-        scoreThreshold: args.scoreThreshold,
-        useAiScoreAdjustment: args.useAiScoreAdjustment,
+        disableAiEvaluation: isBatchRun ? args.disableAiEvaluation : true,
+        scoreThreshold: isBatchRun ? args.scoreThreshold : 0,
+        useAiScoreAdjustment: isBatchRun ? args.useAiScoreAdjustment : false,
         result,
       },
       deps,
@@ -385,6 +408,7 @@ export async function runEasyApplyDryRunFlow(
 
   const response = {
     mode: args.mode,
+    dryRun: true,
     profile,
     easyApply: result,
     ...(reportPath ? { reportPath } : {}),
@@ -394,14 +418,14 @@ export async function runEasyApplyDryRunFlow(
     const preparedAnswerSets = await persistEasyApplySurveyAnswers({
       results: [{ url: result.url, steps: result.steps }],
       profile,
-      runType: args.mode,
+      runType,
       deps,
     });
     if (!isAlreadyAppliedSingleRun(result)) {
       await persistJobHistory(
         {
           jobUrl: args.url,
-          source: args.mode,
+          source: runType,
           status: mapEasyApplyStatusToHistoryStatus(result.status),
           reasons: [result.stopReason],
           summary: result.stopReason,
@@ -430,7 +454,7 @@ export async function runEasyApplyDryRunFlow(
       .filter((job): job is typeof job & { result: EasyApplyRunResult } => job.result != null)
       .map((job) => ({ url: job.url, steps: job.result.steps })),
     profile,
-    runType: args.mode,
+    runType,
     deps,
   });
 
@@ -441,9 +465,10 @@ export async function runEasyApplyDryRunFlow(
 }
 
 export async function runEasyApplyFlow(
-  args: Extract<CliArgs, { mode: "easy-apply" }>,
+  args: EasyApplyArgs,
   deps: AppDeps,
 ) {
+  const runType = getEasyApplyRunType(args);
   const profile = await loadMasterProfileForArgs(args, deps);
   const resolveCandidateAnswer = createCandidateAnswerResolver(profile, deps);
 
@@ -462,9 +487,9 @@ export async function runEasyApplyFlow(
         });
 
         if (isAlreadyAppliedSingleRun(singleResult)) {
-          await persistDetectedAppliedJob({
-            url: args.url,
-            source: args.mode,
+            await persistDetectedAppliedJob({
+              url: args.url,
+            source: runType,
             deps,
             page,
           });
@@ -496,7 +521,7 @@ export async function runEasyApplyFlow(
       level: "INFO",
       scope: "linkedin.easy_apply",
       message: "LinkedIn Easy Apply finished.",
-      runType: args.mode,
+      runType,
       jobUrl: args.url,
       details: {
         status: result.status,
@@ -510,7 +535,7 @@ export async function runEasyApplyFlow(
     await persistJobHistory(
       {
         jobUrl: args.url,
-        source: args.mode,
+        source: runType,
         status: mapEasyApplyStatusToHistoryStatus(result.status),
         reasons: [result.stopReason],
         summary: result.stopReason,
@@ -542,6 +567,7 @@ export async function runEasyApplyFlow(
     prefix: args.mode,
     payload: {
       mode: args.mode,
+      dryRun: false,
       url: args.url,
       result,
     },
@@ -551,12 +577,13 @@ export async function runEasyApplyFlow(
   const preparedAnswerSets = await persistEasyApplySurveyAnswers({
     results: [{ url: result.url, steps: result.steps }],
     profile,
-    runType: args.mode,
+    runType,
     deps,
   });
 
   return {
     mode: args.mode,
+    dryRun: false,
     profile,
     easyApply: result,
     ...(preparedAnswerSets.length > 0 ? { preparedAnswerSets } : {}),
@@ -565,9 +592,10 @@ export async function runEasyApplyFlow(
 }
 
 export async function runEasyApplyBatchFlow(
-  args: Extract<CliArgs, { mode: "easy-apply-batch" }>,
+  args: EasyApplyBatchArgs,
   deps: AppDeps,
 ) {
+  const runType = getEasyApplyRunType(args);
   const profile = await loadMasterProfileForArgs(args, deps);
   const scoringProfile = await deps.loadCandidateProfile();
   const resolveCandidateAnswer = createCandidateAnswerResolver(profile, deps);
@@ -608,7 +636,7 @@ export async function runEasyApplyBatchFlow(
 
             await persistDetectedAppliedJob({
               url: job.url,
-              source: args.mode,
+              source: runType,
               deps,
               page: evaluationPage ?? page,
             });
@@ -643,7 +671,7 @@ export async function runEasyApplyBatchFlow(
       level: "INFO",
       scope: "linkedin.batch",
       message: "LinkedIn Easy Apply batch finished.",
-      runType: args.mode,
+      runType,
       jobUrl: args.url,
       details: {
         status: result.status,
@@ -681,11 +709,12 @@ export async function runEasyApplyBatchFlow(
   );
 
   reportPath = await persistRunArtifact({
-    category: "batch-runs",
-    prefix: "easy-apply-batch",
-    payload: {
-      mode: args.mode,
-      url: args.url,
+      category: "batch-runs",
+      prefix: "easy-apply-batch",
+      payload: {
+        mode: args.mode,
+        dryRun: false,
+        url: args.url,
       disableAiEvaluation: args.disableAiEvaluation,
       scoreThreshold: args.scoreThreshold,
       useAiScoreAdjustment: args.useAiScoreAdjustment,
@@ -699,12 +728,13 @@ export async function runEasyApplyBatchFlow(
       .filter((job): job is typeof job & { result: EasyApplyRunResult } => job.result != null)
       .map((job) => ({ url: job.url, steps: job.result.steps })),
     profile,
-    runType: args.mode,
+    runType,
     deps,
   });
 
   return {
     mode: args.mode,
+    dryRun: false,
     profile,
     easyApply: result,
     ...(preparedAnswerSets.length > 0 ? { preparedAnswerSets } : {}),

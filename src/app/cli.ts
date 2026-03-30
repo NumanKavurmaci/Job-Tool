@@ -8,9 +8,8 @@ import {
 
 export type CliArgs =
   | { mode: "score" | "decide"; url: string; useAiScoreAdjustment: boolean }
-  | { mode: "easy-apply"; url: string; resumePath: string }
-  | { mode: "external-apply-dry-run"; url: string; resumePath: string }
-  | { mode: "external-apply"; url: string; resumePath: string }
+  | { mode: "easy-apply"; url: string; resumePath: string; dryRun?: boolean }
+  | { mode: "external-apply"; url: string; resumePath: string; dryRun?: boolean }
   | {
       mode: "easy-apply-batch";
       url: string;
@@ -19,15 +18,7 @@ export type CliArgs =
       disableAiEvaluation: boolean;
       scoreThreshold: number;
       useAiScoreAdjustment: boolean;
-    }
-  | {
-      mode: "easy-apply-dry-run";
-      url: string;
-      resumePath: string;
-      count: number;
-      disableAiEvaluation: boolean;
-      scoreThreshold: number;
-      useAiScoreAdjustment: boolean;
+      dryRun?: boolean;
     }
   | {
       mode: "build-profile";
@@ -44,6 +35,12 @@ export type CliArgs =
 export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
   const [first] = args;
   const tail = args.slice(1);
+  const normalizedFirst =
+    first === "easy-apply-dry-run"
+      ? "easy-apply"
+      : first === "external-apply-dry-run"
+        ? "external-apply"
+        : first;
   const valueFlags = new Set([
     "--resume",
     "--linkedin",
@@ -90,11 +87,15 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
     return parsed;
   };
   const hasFlag = (name: string): boolean => tail.includes(name);
+  const dryRun =
+    hasFlag("--dry-run") ||
+    first === "easy-apply-dry-run" ||
+    first === "external-apply-dry-run";
   const useAiScoreAdjustment = hasFlag("--ai-score-adjustment");
 
   if (!first) {
     throw new Error(
-      'Usage: npm run dev -- <job-url> | npm run dev -- score "<job-url>" | npm run dev -- decide "<job-url>" | npm run dev -- build-profile --resume "./cv.pdf" --linkedin "https://linkedin.com/in/..." | npm run dev -- answer-questions --resume "./cv.pdf" --linkedin "https://linkedin.com/in/..." --questions "./questions.json" | npm run dev -- easy-apply-dry-run "<linkedin-job-or-collection-url>" --count 3 | npm run dev -- external-apply-dry-run "<external-application-url>"',
+      'Usage: npm run dev -- <job-url> | npm run dev -- score "<job-url>" | npm run dev -- decide "<job-url>" | npm run dev -- build-profile --resume "./cv.pdf" --linkedin "https://linkedin.com/in/..." | npm run dev -- answer-questions --resume "./cv.pdf" --linkedin "https://linkedin.com/in/..." --questions "./questions.json" | npm run dev -- easy-apply "<linkedin-job-or-collection-url>" --dry-run --count 3 | npm run dev -- external-apply "<external-application-url>" --dry-run',
     );
   }
 
@@ -129,7 +130,7 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
     };
   }
 
-  if (first === "easy-apply-dry-run") {
+  if (normalizedFirst === "easy-apply" && (dryRun || hasFlag("--count") || isLinkedInCollectionUrl(getPositionalTailArgs()[0] ?? DEFAULT_LINKEDIN_EASY_APPLY_URL) || first === "easy-apply-dry-run")) {
     const resumePath = getFlag("--resume") ?? DEFAULT_RESUME_PATH;
     const positionalArgs = getPositionalTailArgs();
     const countFromFlag = getIntegerFlag("--count");
@@ -149,50 +150,61 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
 
     if (!resumePath) {
       throw new Error(
-        "--resume is required for easy-apply-dry-run when no default CV is available.",
+        `--resume is required for easy-apply${dryRun ? " --dry-run" : ""} when no default CV is available.`,
       );
     }
 
+    if (isLinkedInCollectionUrl(normalizedUrl) || count > 1) {
+      return {
+        mode: "easy-apply-batch",
+        url: normalizedUrl,
+        resumePath,
+        count,
+        disableAiEvaluation,
+        scoreThreshold,
+        useAiScoreAdjustment,
+        dryRun,
+      };
+    }
+
     return {
-      mode: "easy-apply-dry-run",
+      mode: "easy-apply",
       url: normalizedUrl,
       resumePath,
-      count,
-      disableAiEvaluation,
-      scoreThreshold,
-      useAiScoreAdjustment,
+      dryRun,
     };
   }
 
-  if (first === "external-apply-dry-run") {
+  if (normalizedFirst === "external-apply") {
     const resumePath = getFlag("--resume") ?? DEFAULT_RESUME_PATH;
     const positionalArgs = getPositionalTailArgs();
     const url = positionalArgs[0];
 
     if (!resumePath) {
       throw new Error(
-        "--resume is required for external-apply-dry-run when no default CV is available.",
+        `--resume is required for external-apply${dryRun ? " --dry-run" : ""} when no default CV is available.`,
       );
     }
     if (!url) {
-      throw new Error("--url is required for external-apply-dry-run.");
+      throw new Error("--url is required for external-apply.");
     }
 
     return {
-      mode: "external-apply-dry-run",
+      mode: "external-apply",
       url,
       resumePath,
+      dryRun,
     };
   }
 
-  if (first === "easy-apply") {
+  if (normalizedFirst === "easy-apply") {
     const resumePath = getFlag("--resume") ?? DEFAULT_RESUME_PATH;
     const positionalArgs = getPositionalTailArgs();
     const url = positionalArgs[0];
     const normalizedUrl = url ? resolveLinkedInSingleJobUrl(url) : url;
     if (!resumePath) {
       throw new Error(
-        "--resume is required for easy-apply when no default CV is available.",
+        `--resume is required for easy-apply${dryRun ? " --dry-run" : ""} when no default CV is available.`,
       );
     }
     if (!normalizedUrl) {
@@ -203,10 +215,10 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
         "easy-apply requires a single LinkedIn job URL, not a collection URL.",
       );
     }
-    return { mode: "easy-apply", url: normalizedUrl, resumePath };
+    return { mode: "easy-apply", url: normalizedUrl, resumePath, dryRun };
   }
 
-  if (first === "easy-apply-batch") {
+  if (normalizedFirst === "easy-apply-batch") {
     const resumePath = getFlag("--resume") ?? DEFAULT_RESUME_PATH;
     const positionalArgs = getPositionalTailArgs();
     const countFromFlag = getIntegerFlag("--count");
@@ -242,6 +254,7 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
       disableAiEvaluation,
       scoreThreshold,
       useAiScoreAdjustment,
+      dryRun,
     };
   }
 

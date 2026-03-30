@@ -3,6 +3,8 @@ import {
   buildDuplicateReviewReason,
   getLatestJobReview,
   recordJobReviewHistory,
+  shouldRetryPendingApprovedReview,
+  shouldSkipDuplicateBatchReview,
 } from "../../src/utils/jobHistory.js";
 
 describe("jobHistory", () => {
@@ -122,5 +124,32 @@ describe("jobHistory", () => {
     expect(reason).toBe(
       "Job was already reviewed on 2026-03-29 with status SKIPPED, score 47, decision SKIP.",
     );
+  });
+
+  it("only treats terminal review states as duplicate batch skips", () => {
+    expect(shouldSkipDuplicateBatchReview({ status: "SKIPPED" } as never)).toBe(true);
+    expect(shouldSkipDuplicateBatchReview({ status: "SKIPPED_DUE_TO_EASY_APPLY_RUN" } as never)).toBe(true);
+    expect(shouldSkipDuplicateBatchReview({ status: "SUBMITTED" } as never)).toBe(true);
+    expect(shouldSkipDuplicateBatchReview({ status: "EVALUATED" } as never)).toBe(false);
+    expect(shouldSkipDuplicateBatchReview({ status: "READY_TO_SUBMIT" } as never)).toBe(false);
+    expect(shouldSkipDuplicateBatchReview({ status: "FAILED" } as never)).toBe(false);
+  });
+
+  it("retries previously approved reviews until they are actually submitted", () => {
+    expect(
+      shouldRetryPendingApprovedReview({ status: "EVALUATED", decision: "APPLY" } as never),
+    ).toBe(true);
+    expect(
+      shouldRetryPendingApprovedReview({ status: "READY_TO_SUBMIT", decision: "APPLY" } as never),
+    ).toBe(true);
+    expect(
+      shouldRetryPendingApprovedReview({ status: "FAILED", decision: "APPLY" } as never),
+    ).toBe(true);
+    expect(
+      shouldRetryPendingApprovedReview({ status: "SUBMITTED", decision: "APPLY" } as never),
+    ).toBe(false);
+    expect(
+      shouldRetryPendingApprovedReview({ status: "SKIPPED", decision: "SKIP" } as never),
+    ).toBe(false);
   });
 });
