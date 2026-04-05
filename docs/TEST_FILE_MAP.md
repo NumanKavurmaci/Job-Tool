@@ -11,10 +11,10 @@ This file maps all test files to the behavior they protect.
 
 - [tests/app/cli.test.ts](../tests/app/cli.test.ts): CLI parsing and command-shape regression coverage.
 - [tests/app/deps.test.ts](../tests/app/deps.test.ts): Dependency-container wiring and lazy driver creation behavior.
-- [tests/app/flowHelpers.test.ts](../tests/app/flowHelpers.test.ts): Shared flow helper behavior for profile loading, scoring, and answer resolution.
+- [tests/app/flowHelpers.test.ts](../tests/app/flowHelpers.test.ts): Shared flow helper behavior for profile loading, scoring, answer resolution, duplicate handling, and mode-aware LinkedIn batch policy decisions (`easy-apply-batch` vs `apply-batch`).
 - [tests/app/observability.test.ts](../tests/app/observability.test.ts): Artifact writing and DB observability persistence helpers.
 - [tests/app/main.test.ts](../tests/app/main.test.ts): Main orchestration test suite for CLI parsing, flows, persistence, and error wrapping.
-- [tests/app/flows/easyApplyFlows.test.ts](../tests/app/flows/easyApplyFlows.test.ts): Regression coverage for the LinkedIn flow wrappers and shared orchestration entrypoints; the file name still reflects older terminology.
+- [tests/app/flows/easyApplyFlows.test.ts](../tests/app/flows/easyApplyFlows.test.ts): Regression coverage for the LinkedIn flow wrappers and shared orchestration entrypoints, including external handoff behavior and the `easy-apply` vs `apply` split; the file name still reflects older terminology.
 - [tests/app/flows/externalApplyFlows.test.ts](../tests/app/flows/externalApplyFlows.test.ts): External application precursor-link routing, persistence, and dry-run/live flow behavior.
 - [tests/app/flows/jobFlow.test.ts](../tests/app/flows/jobFlow.test.ts): `score`/`decide` flow orchestration and persistence behavior.
 - [tests/app/flows/profileFlows.test.ts](../tests/app/flows/profileFlows.test.ts): Profile-building and reusable answer-set generation flows.
@@ -64,11 +64,12 @@ This file maps all test files to the behavior they protect.
 
 ## `tests/external/`
 
-- [tests/external/discovery.test.ts](../tests/external/discovery.test.ts): External discovery, precursor-link, and answer-planning behavior.
+- [tests/external/discovery.test.ts](../tests/external/discovery.test.ts): External discovery, precursor-link, embedded iframe surface detection, delayed-mount retries, false-positive precursor guards, and answer-planning behavior.
 - [tests/external/fill.test.ts](../tests/external/fill.test.ts): External form filling, dropdown interaction, and progression behavior.
 
 ## `tests/fixtures/`
 
+- [tests/fixtures/external.ts](../tests/fixtures/external.ts): Realistic external-application HTML fixtures, including bridge pages and embedded application hosts.
 - [tests/fixtures/linkedin.ts](../tests/fixtures/linkedin.ts): Realistic LinkedIn HTML fixtures reused by tests.
 
 ## `tests/linkedin/`
@@ -103,7 +104,7 @@ This file maps all test files to the behavior they protect.
 
 ## `tests/policy/`
 
-- [tests/policy/policyEngine.test.ts](../tests/policy/policyEngine.test.ts): Policy acceptance/rejection rules.
+- [tests/policy/policyEngine.test.ts](../tests/policy/policyEngine.test.ts): Policy acceptance/rejection rules, including the critical LinkedIn mode split where `apply` may allow external LinkedIn jobs but `easy-apply` may not.
 
 ## `tests/profile/`
 

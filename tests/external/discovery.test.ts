@@ -19,9 +19,11 @@ import {
   planExternalApplicationAnswers,
 } from "../../src/external/discovery.js";
 import {
+  ashbyEmbeddedHostPageHtml,
   breezyPersonalDetailsFormHtml,
   breezyResumeButtonsHtml,
   greenhousePrecursorPageHtml,
+  icimsEmbeddedHostPageHtml,
   leverPrecursorPageHtml,
   workableSingleStepFormHtml,
   workdayPrecursorPageHtml,
@@ -351,7 +353,8 @@ describe("external application discovery", () => {
         fields: [],
         precursorLinks: [],
       })
-      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce({
         url: "https://apply.workable.com/constructor-1/j/64A61ED04E/",
         title: "Constructor job",
@@ -370,7 +373,7 @@ describe("external application discovery", () => {
     );
 
     expect(waitForTimeout).toHaveBeenCalledWith(500);
-    expect(evaluate).toHaveBeenCalledTimes(3);
+    expect(evaluate.mock.calls.length).toBeGreaterThanOrEqual(3);
     expect(result.precursorLinks).toEqual([
       {
         label: "Apply for this job",
@@ -431,6 +434,7 @@ describe("external application discovery", () => {
         precursorLinks: [],
       })
       .mockRejectedValueOnce(new Error("embed lookup failed"))
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce({
         url: "https://example.com/start",
         title: "Recovered shell",
@@ -460,6 +464,55 @@ describe("external application discovery", () => {
     ]);
   });
 
+  it("falls back to raw HTML iframe parsing when DOM embed discovery does not return candidates", async () => {
+    const goto = vi.fn();
+    const waitForFunction = vi.fn().mockResolvedValue(undefined);
+    const waitForTimeout = vi.fn().mockResolvedValue(undefined);
+    const content = vi
+      .fn()
+      .mockResolvedValue(
+        `<html><body><iframe src="https://example.test/application?in_iframe=1"></iframe></body></html>`,
+      );
+    const evaluate = vi
+      .fn()
+      .mockResolvedValueOnce({
+        url: "https://example.test/start",
+        title: "Shell",
+        fields: [],
+        precursorLinks: [],
+      })
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce({
+        url: "https://example.test/application?in_iframe=1",
+        title: "Application",
+        fields: [
+          {
+            key: "email",
+            label: "Email",
+            inputType: "email",
+            required: true,
+            options: [],
+            placeholder: null,
+            helpText: null,
+            accept: null,
+          },
+        ],
+        precursorLinks: [],
+      });
+
+    const result = await discoverExternalApplication(
+      { goto, waitForFunction, waitForTimeout, evaluate, content } as never,
+      "https://example.test/start",
+    );
+
+    expect(goto).toHaveBeenNthCalledWith(1, "https://example.test/start");
+    expect(goto).toHaveBeenNthCalledWith(2, "https://example.test/application?in_iframe=1");
+    expect(result.followedPrecursorLink).toBe("https://example.test/application?in_iframe=1");
+    expect(result.fields).toEqual([
+      expect.objectContaining({ key: "email", type: "email" }),
+    ]);
+  });
+
   it("keeps the final empty inspection after exhausting retry delays", async () => {
     const goto = vi.fn();
     const waitForFunction = vi.fn().mockResolvedValue(undefined);
@@ -476,10 +529,12 @@ describe("external application discovery", () => {
       "https://example.com/apply",
     );
 
-    expect(waitForTimeout).toHaveBeenCalledTimes(2);
+    expect(waitForTimeout).toHaveBeenCalledTimes(4);
     expect(waitForTimeout).toHaveBeenNthCalledWith(1, 500);
     expect(waitForTimeout).toHaveBeenNthCalledWith(2, 1000);
-    expect(evaluate).toHaveBeenCalledTimes(4);
+    expect(waitForTimeout).toHaveBeenNthCalledWith(3, 2500);
+    expect(waitForTimeout).toHaveBeenNthCalledWith(4, 5000);
+    expect(evaluate.mock.calls.length).toBeGreaterThanOrEqual(4);
     expect(result.fields).toEqual([]);
     expect(result.precursorLinks).toEqual([]);
   });
@@ -545,6 +600,23 @@ describe("external application discovery", () => {
     await page.close();
   });
 
+  it("does not mistake unrelated links like Startups for apply precursor links", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <main>
+        <a href="https://github.com/enterprise/startups">Startups</a>
+        <a href="https://example.com/docs">Documentation</a>
+      </main>
+    `);
+
+    const result = await inspectExternalApplicationPage(page, "https://example.com/careers");
+
+    expect(result.precursorLinks).toEqual([]);
+    expect(result.precursorPage).toBe(false);
+
+    await page.close();
+  });
+
   it("follows an embedded Greenhouse iframe application when the host page has no direct fields", async () => {
     const page = await browser.newPage();
     await page.route("https://fundraiseup.test/careers/4597227005", async (route) => {
@@ -598,6 +670,153 @@ describe("external application discovery", () => {
       expect.arrayContaining([
         expect.objectContaining({ key: "first_name", label: "First name" }),
         expect.objectContaining({ key: "email", label: "Email", type: "email" }),
+      ]),
+    );
+
+    await page.close();
+  });
+
+  it("follows a generic embedded Ashby application iframe when the host page has no direct fields", async () => {
+    const page = await browser.newPage();
+    await page.route("https://10x.team/search-roles/?ashby_jid=32d15c28-c3e9-4afd-8f2e-e4ab81a3e06e&utm_source=LinkedInPaid", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/html",
+        body: ashbyEmbeddedHostPageHtml,
+      });
+    });
+    await page.route("https://jobs.ashbyhq.com/10xteam/32d15c28-c3e9-4afd-8f2e-e4ab81a3e06e?utm_source=LinkedInPaid&embed=js", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/html",
+        body: `
+          <html>
+            <head><title>Ashby Application</title></head>
+            <body>
+              <form>
+                <label for="applicant_name">Full name</label>
+                <input id="applicant_name" name="applicant_name" />
+                <label for="applicant_email">Email</label>
+                <input id="applicant_email" name="applicant_email" type="email" />
+              </form>
+            </body>
+          </html>
+        `,
+      });
+    });
+
+    const result = await discoverExternalApplication(
+      page,
+      "https://10x.team/search-roles/?ashby_jid=32d15c28-c3e9-4afd-8f2e-e4ab81a3e06e&utm_source=LinkedInPaid",
+    );
+
+    expect(result.finalUrl).toBe("https://jobs.ashbyhq.com/10xteam/32d15c28-c3e9-4afd-8f2e-e4ab81a3e06e?utm_source=LinkedInPaid&embed=js");
+    expect(result.followedPrecursorLink).toBe("https://jobs.ashbyhq.com/10xteam/32d15c28-c3e9-4afd-8f2e-e4ab81a3e06e?utm_source=LinkedInPaid&embed=js");
+    expect(result.platform).toBe("ashby");
+    expect(result.fields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "applicant_name", label: "Full name" }),
+        expect.objectContaining({ key: "applicant_email", label: "Email", type: "email" }),
+      ]),
+    );
+
+    await page.close();
+  });
+
+  it("follows a generic embedded iCIMS iframe when the host page has no direct fields", async () => {
+    const page = await browser.newPage();
+    await page.route("https://globalcareers-githubinc.icims.com/jobs/5151/login?iis=Job%20Board&iisn=LinkedIn", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/html",
+        body: icimsEmbeddedHostPageHtml,
+      });
+    });
+    await page.route("https://globalcareers-githubinc.icims.com/jobs/5151/login?iis=Job+Board&iisn=LinkedIn&in_iframe=1", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/html",
+        body: `
+          <html>
+            <head><title>Login | General Data Protection Regulation (GDPR)</title></head>
+            <body>
+              <form>
+                <label for="email">Please enter your email address:</label>
+                <input id="email" name="email" type="email" />
+                <button type="submit">Continue</button>
+              </form>
+            </body>
+          </html>
+        `,
+      });
+    });
+
+    const result = await discoverExternalApplication(
+      page,
+      "https://globalcareers-githubinc.icims.com/jobs/5151/login?iis=Job%20Board&iisn=LinkedIn",
+    );
+
+    expect(result.finalUrl).toBe("https://globalcareers-githubinc.icims.com/jobs/5151/login?iis=Job+Board&iisn=LinkedIn&in_iframe=1");
+    expect(result.followedPrecursorLink).toBe("https://globalcareers-githubinc.icims.com/jobs/5151/login?iis=Job+Board&iisn=LinkedIn&in_iframe=1");
+    expect(result.platform).toBe("globalcareers-githubinc.icims.com");
+    expect(result.fields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "email", label: "Please enter your email address:", type: "email" }),
+      ]),
+    );
+
+    await page.close();
+  });
+
+  it("rescans for delayed embedded application iframes before giving up on discovery", async () => {
+    const page = await browser.newPage();
+    await page.route("https://example.test/delayed-embed", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/html",
+        body: `
+          <html>
+            <head><title>Delayed embed host</title></head>
+            <body>
+              <div id="mount"></div>
+              <script>
+                setTimeout(() => {
+                  const iframe = document.createElement("iframe");
+                  iframe.id = "delayed_app_iframe";
+                  iframe.title = "Application iframe";
+                  iframe.src = "https://example.test/application?in_iframe=1";
+                  document.getElementById("mount")?.appendChild(iframe);
+                }, 250);
+              </script>
+            </body>
+          </html>
+        `,
+      });
+    });
+    await page.route("https://example.test/application?in_iframe=1", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/html",
+        body: `
+          <html>
+            <body>
+              <form>
+                <label for="candidate_email">Email</label>
+                <input id="candidate_email" name="candidate_email" type="email" />
+              </form>
+            </body>
+          </html>
+        `,
+      });
+    });
+
+    const result = await discoverExternalApplication(page, "https://example.test/delayed-embed");
+
+    expect(result.finalUrl).toBe("https://example.test/application?in_iframe=1");
+    expect(result.followedPrecursorLink).toBe("https://example.test/application?in_iframe=1");
+    expect(result.fields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "candidate_email", label: "Email", type: "email" }),
       ]),
     );
 

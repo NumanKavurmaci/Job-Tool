@@ -35,6 +35,32 @@ export const greenhousePrecursorPageHtml = `
 </main>
 `.trim();
 
+export const ashbyEmbeddedHostPageHtml = `
+<main>
+  <div id="ashby_embed">
+    <iframe
+      id="ashby_embed_iframe"
+      src="https://jobs.ashbyhq.com/10xteam/32d15c28-c3e9-4afd-8f2e-e4ab81a3e06e?utm_source=LinkedInPaid&embed=js"
+      title="Ashby Job Board"
+      width="100%"
+      height="2200"
+      frameborder="0"
+      scrolling="no"
+    ></iframe>
+  </div>
+</main>
+`.trim();
+
+export const icimsEmbeddedHostPageHtml = `
+<main>
+  <iframe
+    id="icims_content_iframe"
+    src="https://globalcareers-githubinc.icims.com/jobs/5151/login?iis=Job+Board&iisn=LinkedIn&in_iframe=1"
+    title="iCIMS Content iFrame"
+  ></iframe>
+</main>
+`.trim();
+
 export const workdayPrecursorPageHtml = `
 <main>
   <section>

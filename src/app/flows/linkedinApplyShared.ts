@@ -781,6 +781,8 @@ async function runLinkedInDryRunFlow(
           disableAiEvaluation: isBatchRun ? args.disableAiEvaluation : true,
           scoreThreshold: isBatchRun ? args.scoreThreshold : 0,
           useAiScoreAdjustment: isBatchRun ? args.useAiScoreAdjustment : false,
+          allowExternalLinkedInApply:
+            args.mode === "apply" || args.mode === "apply-batch",
           scoringProfile,
           ...(evaluationPage ? { evaluationPage } : {}),
           deps,
@@ -1278,6 +1280,7 @@ async function runLinkedInBatchFlow(
           disableAiEvaluation: args.disableAiEvaluation,
           scoreThreshold: args.scoreThreshold,
           useAiScoreAdjustment: args.useAiScoreAdjustment,
+          allowExternalLinkedInApply: args.mode === "apply-batch",
           scoringProfile,
           ...(evaluationPage ? { evaluationPage } : {}),
           deps,

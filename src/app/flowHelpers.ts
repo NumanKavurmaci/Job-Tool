@@ -48,6 +48,7 @@ export function createBatchJobEvaluator(args: {
   disableAiEvaluation: boolean;
   scoreThreshold: number;
   useAiScoreAdjustment: boolean;
+  allowExternalLinkedInApply?: boolean;
   scoringProfile: Awaited<ReturnType<AppDeps["loadCandidateProfile"]>>;
   evaluationPage?: Page;
   deps: AppDeps;
@@ -228,7 +229,13 @@ export function createBatchJobEvaluator(args: {
           logger: deps.logger,
         })
       : deps.scoreJob(normalized, args.scoringProfile);
-    const policy = deps.evaluatePolicy(normalized, args.scoringProfile);
+    const policy = deps.evaluatePolicy(
+      normalized,
+      args.scoringProfile,
+      args.allowExternalLinkedInApply != null
+        ? { allowExternalLinkedInApply: args.allowExternalLinkedInApply }
+        : undefined,
+    );
     const meetsThreshold = score.totalScore >= args.scoreThreshold;
     const forceApplyForConfiguredRegion =
       shouldBypassWorkplacePolicy(normalized, args.scoringProfile) && policy.allowed;

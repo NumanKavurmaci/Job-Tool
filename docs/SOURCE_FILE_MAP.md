@@ -104,7 +104,7 @@ This file maps all `src/` files to their purpose.
 
 ## `src/external/`
 
-- [src/external/discovery.ts](../src/external/discovery.ts): External application page discovery, field extraction, precursor-link following, and answer planning.
+- [src/external/discovery.ts](../src/external/discovery.ts): External application page discovery, bridge-page resolution, embedded iframe surface detection, delayed retry logic, and answer planning.
 - [src/external/fill.ts](../src/external/fill.ts): External form field filling, primary-action detection, and step advancement.
 - [src/external/types.ts](../src/external/types.ts): Shared external application discovery/planning types.
 

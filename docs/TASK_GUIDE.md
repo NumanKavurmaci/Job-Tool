@@ -33,6 +33,17 @@ Open in this order:
 - [src/external/semantics.ts](../src/external/semantics.ts)
 - [src/external/fill.ts](../src/external/fill.ts)
 
+Focus areas inside this corridor:
+- precursor and bridge-page resolution
+- embedded application surfaces inside iframes
+- delayed SPA/embed mounts that need rediscovery retries
+- progression detection after `Next` or `Submit`
+
+Open these tests right after the source files:
+- [tests/external/discovery.test.ts](../tests/external/discovery.test.ts)
+- [tests/external/fill.test.ts](../tests/external/fill.test.ts)
+- [tests/app/flows/externalApplyFlows.test.ts](../tests/app/flows/externalApplyFlows.test.ts)
+
 ### Change answer resolution
 
 Open in this order:
@@ -66,6 +77,18 @@ Open in this order:
 - [src/utils/jobHistory.ts](../src/utils/jobHistory.ts)
 - [src/utils/jobPersistence.ts](../src/utils/jobPersistence.ts)
 - [src/utils/runReports.ts](../src/utils/runReports.ts)
+
+### Debug why an external page says "No fields discovered"
+
+Open in this order:
+- [src/external/discovery.ts](../src/external/discovery.ts)
+- [tests/external/discovery.test.ts](../tests/external/discovery.test.ts)
+
+Check these patterns before assuming the site is unsupported:
+- precursor CTA was not followed
+- apply surface lives inside an iframe
+- apply iframe is server-rendered in raw HTML but not yet visible in DOM
+- apply surface is delayed by JS mount and needs retry time
 
 ## Reading Strategy For AI
 

@@ -107,10 +107,16 @@ It is intentionally task-oriented instead of exhaustive prose.
 - `looksSyntheticFieldLabel(field)`
   Guards against trap-like or synthetic labels that should be left for manual review.
 
+Important helper clusters in this file:
+- precursor and bridge-page resolution
+  Finds `Apply`, `Continue`, and similar CTA links without following unrelated navigation links.
+- embedded application surface detection
+  Detects application iframes from live DOM and from raw HTML when the iframe source is server-rendered before the DOM is stable.
+- delayed mount retry loop
+  Re-inspects empty shells after short waits so JS-mounted apply surfaces have time to appear.
+
 ### [src/external/semantics.ts](../src/external/semantics.ts)
 
-- `inferSemanticKey(field)`
-  Cheap one-off semantic key inference helper.
 - `analyzeFieldSemantics(field)`
   Central semantic classifier for external fields.
 - `annotateSemanticFields(fields)`
@@ -207,6 +213,9 @@ Important helper clusters in this file:
 
 - "Why did an external application field fail?"
   Open [src/external/discovery.ts](../src/external/discovery.ts), [src/external/semantics.ts](../src/external/semantics.ts), then [src/external/fill.ts](../src/external/fill.ts).
+
+- "Why did an external page show 0 fields?"
+  Open [src/external/discovery.ts](../src/external/discovery.ts) first, then [tests/external/discovery.test.ts](../tests/external/discovery.test.ts). Focus on precursor CTA detection, iframe surface detection, raw HTML iframe fallback, and delayed-mount retries.
 
 - "Why did a site say the value is invalid?"
   Open [src/external/fill.ts](../src/external/fill.ts) and [src/questions/strategies/aiCorrection.ts](../src/questions/strategies/aiCorrection.ts).

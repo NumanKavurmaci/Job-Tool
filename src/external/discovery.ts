@@ -15,6 +15,7 @@ import {
 
 const EXTERNAL_DISCOVERY_EVALUATE_SCRIPT = `(() => {
   const doc = globalThis.document;
+  const applyTextPattern = /\\b(apply|continue|start|next|begin)\\b/i;
   const cleanText = (value) => (value ?? "").replace(/\\s+/g, " ").trim();
   const removeNestedInputs = (element) => {
     const clone = element?.cloneNode?.(true);
@@ -232,7 +233,7 @@ const EXTERNAL_DISCOVERY_EVALUATE_SCRIPT = `(() => {
       const href = tagName === "a" ? cleanText(element?.href) : cleanText(element?.dataset?.href);
       return { label: text, href };
     })
-    .filter((candidate) => candidate.label && /apply|continue|start|next|begin/i.test(candidate.label) && Boolean(candidate.href));
+    .filter((candidate) => candidate.label && applyTextPattern.test(candidate.label) && Boolean(candidate.href));
   const leverPrecursorLinks = Array.from(
     doc?.querySelectorAll?.(
       "a[data-qa='show-page-apply'], a.postings-btn.template-btn-submit, a[href*='jobs.lever.co'][href$='/apply']",
@@ -272,13 +273,60 @@ const EXTERNAL_PAGE_TEXT_EVALUATE_SCRIPT = `(() => {
 
 const EXTERNAL_EMBEDDED_APPLICATION_EVALUATE_SCRIPT = `(() => {
   const cleanText = (value) => String(value ?? "").replace(/\\s+/g, " ").trim();
-  const iframes = Array.from(globalThis.document?.querySelectorAll?.("iframe") ?? []);
-  const embeddedApplicationHref =
-    iframes
-      .map((iframe) => cleanText(iframe?.getAttribute?.("src")))
-      .find((href) => /greenhouse\\.io\\/embed\\/job_app/i.test(href)) ||
-    "";
-  return embeddedApplicationHref || null;
+  const currentUrl = cleanText(globalThis.location?.href);
+  const scoreIframe = (iframe) => {
+    const src = cleanText(iframe?.getAttribute?.("src"));
+    const title = cleanText(iframe?.getAttribute?.("title")).toLowerCase();
+    const id = cleanText(iframe?.getAttribute?.("id")).toLowerCase();
+    const className = cleanText(iframe?.getAttribute?.("class")).toLowerCase();
+    if (!src) {
+      return null;
+    }
+
+    const lowerSrc = src.toLowerCase();
+    if (
+      /googletagmanager|google\\.com|youtube|vimeo|doubleclick|cookie|consent|intercom|hotjar|analytics|tracking|recaptcha|captcha/.test(lowerSrc)
+    ) {
+      return null;
+    }
+
+    let score = 0;
+    if (/greenhouse\\.io\\/embed\\/job_app/.test(lowerSrc)) {
+      score += 100;
+    }
+    if (/ashbyhq\\.com\\/.+\\/[0-9a-f-]{20,}/.test(lowerSrc)) {
+      score += 90;
+    }
+    if (/in_iframe=1/.test(lowerSrc)) {
+      score += 80;
+    }
+    if (/apply|application|job_app|embed=js|candidate/.test(lowerSrc)) {
+      score += 40;
+    }
+    if (/job board|job application|application|careers/i.test(title)) {
+      score += 30;
+    }
+    if (/apply|career|job|embed/.test(id) || /apply|career|job|embed/.test(className)) {
+      score += 15;
+    }
+    if (currentUrl && lowerSrc.replace(/&amp;/g, "&").includes(currentUrl.toLowerCase().split("?")[0] ?? "")) {
+      score += 10;
+    }
+
+    return score > 0
+      ? {
+          href: src,
+          title: cleanText(iframe?.getAttribute?.("title")),
+          id: cleanText(iframe?.getAttribute?.("id")),
+          score,
+        }
+      : null;
+  };
+
+  return Array.from(globalThis.document?.querySelectorAll?.("iframe") ?? [])
+    .map(scoreIframe)
+    .filter(Boolean)
+    .sort((left, right) => right.score - left.score);
 })()`;
 
 function inferPlatform(url: string): string {
@@ -367,6 +415,7 @@ async function waitForExternalDiscoverySignals(page: Page): Promise<void> {
     ".postings-btn.template-btn-submit",
     ".section-wrapper.page-full-width",
     ".section.page-centered[data-qa='job-description']",
+    "iframe",
   ].join(", ");
 
   await page
@@ -389,8 +438,8 @@ async function waitForExternalDiscoverySignals(page: Page): Promise<void> {
 
           return (
             dataUi === "apply-button" ||
-            /apply|continue|start|next|begin/.test(text) ||
-            /apply|continue|start|next|begin/.test(ariaLabel)
+            /\\b(apply|continue|start|next|begin)\\b/.test(text) ||
+            /\\b(apply|continue|start|next|begin)\\b/.test(ariaLabel)
           );
         });
       }`,
@@ -398,6 +447,52 @@ async function waitForExternalDiscoverySignals(page: Page): Promise<void> {
       { timeout: 5_000 },
     )
     .catch(() => undefined);
+}
+
+async function inspectEmbeddedApplicationCandidates(page: Page): Promise<Array<{ href: string; score: number }>> {
+  let domCandidates: Array<{ href: string; score: number }> = [];
+  try {
+    const embedValue = await page.evaluate(EXTERNAL_EMBEDDED_APPLICATION_EVALUATE_SCRIPT) as Array<{
+      href?: string;
+      score?: number;
+    }> | null;
+    domCandidates = Array.isArray(embedValue)
+      ? embedValue
+          .map((candidate) => ({
+            href: typeof candidate?.href === "string" ? candidate.href.trim() : "",
+            score: typeof candidate?.score === "number" ? candidate.score : 0,
+          }))
+          .filter((candidate) => candidate.href.length > 0)
+      : [];
+  } catch {
+    // Fall through to raw HTML parsing below when DOM evaluation is unavailable or incomplete.
+  }
+
+  if (domCandidates.length > 0) {
+    return domCandidates;
+  }
+
+  if (typeof (page as Page & { content?: unknown }).content !== "function") {
+    return [];
+  }
+
+  try {
+    const html = await page.content();
+    const matches = [...html.matchAll(/<iframe[^>]+src=["']([^"']+)["']/gi)];
+    return matches
+      .map((match) => match[1]?.replace(/&amp;/g, "&").trim() ?? "")
+      .filter((href) =>
+        /greenhouse\.io\/embed\/job_app|ashbyhq\.com\/.+\/[0-9a-f-]{20,}|in_iframe=1|apply|application|job_app|embed=js/i.test(
+          href,
+        ),
+      )
+      .map((href) => ({
+        href,
+        score: /in_iframe=1/i.test(href) ? 85 : 50,
+      }));
+  } catch {
+    return [];
+  }
 }
 
 // Re-inspects the current page without changing navigation, mainly after Next/Submit actions.
@@ -489,22 +584,16 @@ async function inspectExternalApplicationPageWithRetry(
     return inspection;
   }
 
-  let embeddedApplicationHref: string | null = null;
-  try {
-    const embedValue = await page.evaluate(EXTERNAL_EMBEDDED_APPLICATION_EVALUATE_SCRIPT);
-    embeddedApplicationHref =
-      typeof embedValue === "string" && embedValue.trim() ? embedValue.trim() : null;
-  } catch {
-    embeddedApplicationHref = null;
-  }
-  if (embeddedApplicationHref) {
-    await page.goto(embeddedApplicationHref);
+  let embeddedApplicationCandidates = await inspectEmbeddedApplicationCandidates(page);
+
+  for (const candidate of embeddedApplicationCandidates) {
+    await page.goto(candidate.href);
     await waitForExternalDiscoverySignals(page);
     inspection = await inspectExternalApplicationPage(page, sourceUrl);
     if (inspection.fields.length > 0 || inspection.precursorLinks.length > 0) {
       return {
         ...inspection,
-        followedPrecursorLink: embeddedApplicationHref,
+        followedPrecursorLink: candidate.href,
       };
     }
   }
@@ -518,8 +607,20 @@ async function inspectExternalApplicationPageWithRetry(
     return inspection;
   }
 
-  for (const delayMs of [500, 1000]) {
+  for (const delayMs of [500, 1000, 2500, 5000]) {
     await page.waitForTimeout(delayMs);
+    embeddedApplicationCandidates = await inspectEmbeddedApplicationCandidates(page);
+    for (const candidate of embeddedApplicationCandidates) {
+      await page.goto(candidate.href);
+      await waitForExternalDiscoverySignals(page);
+      inspection = await inspectExternalApplicationPage(page, sourceUrl);
+      if (inspection.fields.length > 0 || inspection.precursorLinks.length > 0) {
+        return {
+          ...inspection,
+          followedPrecursorLink: candidate.href,
+        };
+      }
+    }
     inspection = await inspectExternalApplicationPage(page, sourceUrl);
     if (inspection.fields.length > 0 || inspection.precursorLinks.length > 0) {
       return inspection;
@@ -545,6 +646,7 @@ export async function followExternalApplicationLink(
   href: string,
 ): Promise<ExternalApplicationDiscovery> {
   await page.goto(href);
+  await waitForExternalDiscoverySignals(page);
   const discovered = await inspectExternalApplicationPageWithRetry(page, sourceUrl);
   return {
     ...discovered,

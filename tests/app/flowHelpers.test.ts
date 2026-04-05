@@ -4,6 +4,7 @@ import {
   createCandidateAnswerResolver,
   loadMasterProfileForArgs,
 } from "../../src/app/flowHelpers.js";
+import { evaluatePolicy as evaluateJobPolicy } from "../../src/policy/policyEngine.js";
 
 function createDeps() {
   const scoreJob = vi.fn();
@@ -55,6 +56,21 @@ function createDeps() {
     runEasyApplyDryRun: vi.fn(),
     runEasyApplyBatchDryRun: vi.fn(),
     createEasyApplyDriver: vi.fn(),
+  } as any;
+}
+
+function createScoringProfile() {
+  return {
+    excludedRoles: ["Senior", "Lead", "Staff"],
+    disallowedRoleKeywords: ["ios", "android", "mechanical", "researcher"],
+    preferredTechStack: ["TypeScript", "Node.js"],
+    aspirationalTechStack: ["React", "Next.js"],
+    preferredRoleOverlapSignals: ["frontend", "front-end", "full stack", "fullstack"],
+    excludedLocations: ["Istanbul onsite"],
+    allowedHybridLocations: ["Ankara", "Izmir", "EskiSehir", "Eskisehir", "Samsun"],
+    workplacePolicyBypassLocations: ["Europe"],
+    visaRequirement: "required",
+    workAuthorizationStatus: "authorized",
   } as any;
 }
 
@@ -428,6 +444,122 @@ describe("app flow helpers", () => {
         message: "Batch job evaluation completed.",
         jobUrl: "https://example.com/job",
         detailsJson: expect.stringContaining("\"applicationType\":null"),
+      }),
+    });
+  });
+
+  it("allows linkedin external jobs during apply-batch style evaluation", async () => {
+    const deps = createDeps();
+    deps.prisma.jobReviewHistory.findFirst.mockResolvedValue(null);
+    deps.extractJobText.mockResolvedValue({
+      rawText: "raw",
+      title: "Control Plane Engineer",
+      company: "ClickHouse",
+      companyLogoUrl: null,
+      companyLinkedinUrl: "https://www.linkedin.com/company/clickhouse/",
+      location: "Remote",
+      platform: "linkedin",
+      applicationType: "external",
+    });
+    deps.formatJobForLLM.mockReturnValue("prompt");
+    deps.parseJob.mockResolvedValue({ parsed: { title: "Control Plane Engineer" } });
+    deps.normalizeParsedJob.mockReturnValue({
+      title: "Control Plane Engineer",
+      company: "ClickHouse",
+      location: "Remote",
+      remoteType: "remote",
+      seniority: "mid",
+      mustHaveSkills: ["TypeScript"],
+      niceToHaveSkills: [],
+      technologies: ["TypeScript", "Node.js"],
+      yearsRequired: 4,
+      platform: "linkedin",
+      applicationType: "external",
+      visaSponsorship: "yes",
+      workAuthorization: "authorized",
+      openQuestionsCount: 0,
+    });
+    deps.scoreJob.mockReturnValue({ totalScore: 50 });
+    deps.evaluatePolicy.mockImplementation((job: any, profile: any, options?: any) =>
+      evaluateJobPolicy(job, profile, options),
+    );
+
+    const evaluate = createBatchJobEvaluator({
+      disableAiEvaluation: false,
+      scoreThreshold: 40,
+      useAiScoreAdjustment: false,
+      allowExternalLinkedInApply: true,
+      scoringProfile: createScoringProfile(),
+      evaluationPage: { fake: true } as any,
+      deps,
+    });
+
+    await expect(evaluate("https://www.linkedin.com/jobs/view/4263540414")).resolves.toMatchObject({
+      shouldApply: true,
+      finalDecision: "APPLY",
+      score: 50,
+      policyAllowed: true,
+      reason: "Score 50 meets the configured threshold of 40.",
+      diagnostics: expect.objectContaining({
+        applicationType: "external",
+      }),
+    });
+  });
+
+  it("keeps linkedin external jobs blocked during easy-apply-batch style evaluation", async () => {
+    const deps = createDeps();
+    deps.prisma.jobReviewHistory.findFirst.mockResolvedValue(null);
+    deps.extractJobText.mockResolvedValue({
+      rawText: "raw",
+      title: "Control Plane Engineer",
+      company: "ClickHouse",
+      companyLogoUrl: null,
+      companyLinkedinUrl: "https://www.linkedin.com/company/clickhouse/",
+      location: "Remote",
+      platform: "linkedin",
+      applicationType: "external",
+    });
+    deps.formatJobForLLM.mockReturnValue("prompt");
+    deps.parseJob.mockResolvedValue({ parsed: { title: "Control Plane Engineer" } });
+    deps.normalizeParsedJob.mockReturnValue({
+      title: "Control Plane Engineer",
+      company: "ClickHouse",
+      location: "Remote",
+      remoteType: "remote",
+      seniority: "mid",
+      mustHaveSkills: ["TypeScript"],
+      niceToHaveSkills: [],
+      technologies: ["TypeScript", "Node.js"],
+      yearsRequired: 4,
+      platform: "linkedin",
+      applicationType: "external",
+      visaSponsorship: "yes",
+      workAuthorization: "authorized",
+      openQuestionsCount: 0,
+    });
+    deps.scoreJob.mockReturnValue({ totalScore: 50 });
+    deps.evaluatePolicy.mockImplementation((job: any, profile: any, options?: any) =>
+      evaluateJobPolicy(job, profile, options),
+    );
+
+    const evaluate = createBatchJobEvaluator({
+      disableAiEvaluation: false,
+      scoreThreshold: 40,
+      useAiScoreAdjustment: false,
+      allowExternalLinkedInApply: false,
+      scoringProfile: createScoringProfile(),
+      evaluationPage: { fake: true } as any,
+      deps,
+    });
+
+    await expect(evaluate("https://www.linkedin.com/jobs/view/4263540414")).resolves.toMatchObject({
+      shouldApply: false,
+      finalDecision: "SKIP",
+      score: 50,
+      policyAllowed: false,
+      reason: "Only LinkedIn Easy Apply jobs are allowed in this phase.",
+      diagnostics: expect.objectContaining({
+        applicationType: "external",
       }),
     });
   });

@@ -6,6 +6,10 @@ export type PolicyResult = {
   reasons: string[];
 };
 
+export type PolicyEvaluationOptions = {
+  allowExternalLinkedInApply?: boolean;
+};
+
 const EUROPE_LOCATION_PATTERNS = [
   /\beurope\b/i,
   /\beuropean union\b/i,
@@ -265,8 +269,13 @@ function buildCombinedLocation(job: Pick<NormalizedJob, "location" | "remoteType
 
 function collectPlatformReasons(
   job: Pick<NormalizedJob, "platform" | "applicationType">,
+  options?: PolicyEvaluationOptions,
 ): string[] {
-  if (job.platform === "linkedin" && job.applicationType !== "easy_apply") {
+  if (
+    job.platform === "linkedin" &&
+    job.applicationType !== "easy_apply" &&
+    !options?.allowExternalLinkedInApply
+  ) {
     return ["Only LinkedIn Easy Apply jobs are allowed in this phase."];
   }
 
@@ -386,9 +395,10 @@ function collectQualityReasons(
 export function collectPolicyReasons(
   job: NormalizedJob,
   profile: CandidateProfile,
+  options?: PolicyEvaluationOptions,
 ): string[] {
   return [
-    ...collectPlatformReasons(job),
+    ...collectPlatformReasons(job, options),
     ...collectRoleReasons(job, profile),
     ...collectLocationReasons(job, profile),
     ...collectAuthorizationReasons(job, profile),
@@ -399,8 +409,9 @@ export function collectPolicyReasons(
 export function evaluatePolicy(
   job: NormalizedJob,
   profile: CandidateProfile,
+  options?: PolicyEvaluationOptions,
 ): PolicyResult {
-  const reasons = collectPolicyReasons(job, profile);
+  const reasons = collectPolicyReasons(job, profile, options);
   return {
     allowed: reasons.length === 0,
     reasons,

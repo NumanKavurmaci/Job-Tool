@@ -415,6 +415,22 @@ describe("evaluatePolicy", () => {
     expect(result.reasons).toContain("Only LinkedIn Easy Apply jobs are allowed in this phase.");
   });
 
+  it("allows linkedin external jobs when the apply mode explicitly permits external handoff", () => {
+    const result = evaluatePolicy(
+      makeJob({
+        platform: "linkedin",
+        applicationType: "external",
+      }),
+      profile,
+      { allowExternalLinkedInApply: true },
+    );
+
+    expect(result.allowed).toBe(true);
+    expect(result.reasons).not.toContain(
+      "Only LinkedIn Easy Apply jobs are allowed in this phase.",
+    );
+  });
+
   it("rejects disallowed role families from profile negatives", () => {
     const result = evaluatePolicy(
       makeJob({
