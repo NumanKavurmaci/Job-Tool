@@ -30,11 +30,23 @@ export type ExternalApplicationDiscovery = {
   pageTitle: string;
   platform: string;
   fields: ExternalApplicationField[];
+  precursorPage: boolean;
+  precursorSignals: string[];
   precursorLinks: {
     label: string;
     href: string;
   }[];
   followedPrecursorLink: string | null;
+};
+
+export type ExternalAiCorrectionAttempt = {
+  fieldKey: string;
+  fieldLabel: string;
+  validationFeedback: string;
+  previousAnswer: string;
+  correctedAnswer: string | null;
+  outcome: "not_attempted" | "same_answer" | "retry_succeeded" | "retry_failed" | "repair_failed";
+  finalFeedback?: string | null;
 };
 
 export type ExternalApplicationPlannedAnswer = {

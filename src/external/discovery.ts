@@ -12,6 +12,24 @@ import type {
 const EXTERNAL_DISCOVERY_EVALUATE_SCRIPT = `(() => {
   const doc = globalThis.document;
   const cleanText = (value) => (value ?? "").replace(/\\s+/g, " ").trim();
+  const dedupePrecursorLinks = (links) => {
+    const seen = new Set();
+    return links.filter((candidate) => {
+      const key = cleanText(candidate?.href) || cleanText(candidate?.label);
+      if (!key || seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+  };
+  const hasSelector = (selector) => {
+    try {
+      return (doc?.querySelector?.(selector) ?? null) != null;
+    } catch {
+      return false;
+    }
+  };
   const findContextualLabel = (start) => {
     let current = start;
     while (current) {
@@ -118,7 +136,7 @@ const EXTERNAL_DISCOVERY_EVALUATE_SCRIPT = `(() => {
     .map((element, index) => describeField(element, index))
     .filter((field, index, all) => all.findIndex((candidate) => candidate.key === field.key) === index);
 
-  const precursorLinks = Array.from(doc?.querySelectorAll?.("a[href], button") ?? [])
+  const genericPrecursorLinks = Array.from(doc?.querySelectorAll?.("a[href], button") ?? [])
     .map((element) => {
       const text = cleanText(element?.textContent) || cleanText(element?.getAttribute?.("aria-label"));
       const tagName = String(element?.tagName ?? "").toLowerCase();
@@ -126,11 +144,35 @@ const EXTERNAL_DISCOVERY_EVALUATE_SCRIPT = `(() => {
       return { label: text, href };
     })
     .filter((candidate) => candidate.label && /apply|continue|start|next|begin/i.test(candidate.label) && Boolean(candidate.href));
+  const leverPrecursorLinks = Array.from(
+    doc?.querySelectorAll?.(
+      "a[data-qa='show-page-apply'], a.postings-btn.template-btn-submit, a[href*='jobs.lever.co'][href$='/apply']",
+    ) ?? [],
+  )
+    .map((element) => ({
+      label: cleanText(element?.textContent) || cleanText(element?.getAttribute?.("aria-label")) || "Apply",
+      href: cleanText(element?.href),
+    }))
+    .filter((candidate) => Boolean(candidate.href));
+  const precursorLinks = dedupePrecursorLinks([
+    ...leverPrecursorLinks,
+    ...genericPrecursorLinks,
+  ]);
+  const precursorSignals = [
+    hasSelector(".section-wrapper.page-full-width") ? "container:section-wrapper.page-full-width" : null,
+    hasSelector(".section.page-centered[data-qa='job-description']") ? "container:lever-job-description" : null,
+    hasSelector("a[data-qa='show-page-apply']") ? "cta:data-qa=show-page-apply" : null,
+    hasSelector("a.postings-btn.template-btn-submit") ? "cta:postings-btn.template-btn-submit" : null,
+    hasSelector("a[href*='jobs.lever.co'][href$='/apply']") ? "cta:lever-apply-link" : null,
+  ].filter(Boolean);
+  const precursorPage = uniqueFields.length === 0 && (precursorSignals.length > 0 || precursorLinks.length > 0);
 
   return {
     url: globalThis.location?.href ?? "",
     title: doc?.title ?? "",
     fields: uniqueFields,
+    precursorPage,
+    precursorSignals,
     precursorLinks,
   };
 })()`;
@@ -203,7 +245,58 @@ export async function discoverExternalApplication(
   sourceUrl: string,
 ): Promise<ExternalApplicationDiscovery> {
   await page.goto(sourceUrl);
-  return inspectExternalApplicationPage(page, sourceUrl);
+  await waitForExternalDiscoverySignals(page);
+  return inspectExternalApplicationPageWithRetry(page, sourceUrl);
+}
+
+async function waitForExternalDiscoverySignals(page: Page): Promise<void> {
+  if (typeof (page as Page & { waitForFunction?: unknown }).waitForFunction !== "function") {
+    return;
+  }
+
+  const discoverySignal = [
+    "input",
+    "textarea",
+    "select",
+    "a[href]",
+    "button",
+    "[data-ui='apply-button']",
+    "[data-qa='apply-button']",
+    "[data-qa='show-page-apply']",
+    ".postings-btn.template-btn-submit",
+    ".section-wrapper.page-full-width",
+    ".section.page-centered[data-qa='job-description']",
+  ].join(", ");
+
+  await page
+    .waitForFunction(
+      `selector => {
+        const cleanText = value =>
+          String(value ?? "")
+            .replace(/\\s+/g, " ")
+            .trim()
+            .toLowerCase();
+        const elements = Array.from(document.querySelectorAll(selector));
+        return elements.some(element => {
+          const tagName = String(element?.tagName ?? "").toLowerCase();
+          const text = cleanText(element?.textContent);
+          const ariaLabel = cleanText(element?.getAttribute?.("aria-label"));
+          const dataUi = cleanText(element?.getAttribute?.("data-ui"));
+          if (tagName === "input" || tagName === "textarea" || tagName === "select") {
+            return true;
+          }
+
+          return (
+            dataUi === "apply-button" ||
+            /apply|continue|start|next|begin/.test(text) ||
+            /apply|continue|start|next|begin/.test(ariaLabel)
+          );
+        });
+      }`,
+      discoverySignal,
+      { timeout: 5_000 },
+    )
+    .catch(() => undefined);
 }
 
 export async function inspectExternalApplicationPage(
@@ -214,6 +307,8 @@ export async function inspectExternalApplicationPage(
   const inspected = (await page.evaluate(EXTERNAL_DISCOVERY_EVALUATE_SCRIPT)) as {
     url: string;
     title: string;
+    precursorPage?: boolean;
+    precursorSignals?: string[];
     fields: Array<{
       key: string;
       label: string;
@@ -245,9 +340,36 @@ export async function inspectExternalApplicationPage(
     pageTitle: inspected.title,
     platform: inferPlatform(inspected.url),
     fields,
+    precursorPage: inspected.precursorPage === true,
+    precursorSignals: inspected.precursorSignals ?? [],
     precursorLinks: inspected.precursorLinks,
     followedPrecursorLink: null,
   };
+}
+
+async function inspectExternalApplicationPageWithRetry(
+  page: Page,
+  sourceUrl: string,
+): Promise<ExternalApplicationDiscovery> {
+  let inspection = await inspectExternalApplicationPage(page, sourceUrl);
+  if (inspection.fields.length > 0 || inspection.precursorLinks.length > 0) {
+    return inspection;
+  }
+
+  const waitForTimeout = (page as Page & { waitForTimeout?: unknown }).waitForTimeout;
+  if (typeof waitForTimeout !== "function") {
+    return inspection;
+  }
+
+  for (const delayMs of [500, 1000]) {
+    await page.waitForTimeout(delayMs);
+    inspection = await inspectExternalApplicationPage(page, sourceUrl);
+    if (inspection.fields.length > 0 || inspection.precursorLinks.length > 0) {
+      return inspection;
+    }
+  }
+
+  return inspection;
 }
 
 export async function extractExternalPageText(page: Page): Promise<string> {
@@ -263,7 +385,7 @@ export async function followExternalApplicationLink(
   href: string,
 ): Promise<ExternalApplicationDiscovery> {
   await page.goto(href);
-  const discovered = await inspectExternalApplicationPage(page, sourceUrl);
+  const discovered = await inspectExternalApplicationPageWithRetry(page, sourceUrl);
   return {
     ...discovered,
     followedPrecursorLink: href,

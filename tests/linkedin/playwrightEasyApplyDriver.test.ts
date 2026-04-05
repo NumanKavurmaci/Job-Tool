@@ -1,6 +1,7 @@
 import { chromium, type Browser } from "@playwright/test";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  linkedInExternalApplyHeaderHtml,
   linkedInApplicationSentModalHtml,
   linkedInPreReviewModalHtml,
   linkedInReviewModalHtml,
@@ -248,5 +249,191 @@ describe("PlaywrightLinkedInEasyApplyDriver", () => {
       buttonLabels: ["Review"],
     });
     expect(blankPopup.isClosed()).toBe(true);
+  });
+
+  it("confirms the external application completion prompt by clicking Yes", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <main>
+        <div>
+          <p>Did you finish applying?</p>
+          <p>You'll find this job under <strong>In progress</strong>.</p>
+          <a href="#">Yes</a>
+          <button type="button">No</button>
+        </div>
+      </main>
+    `);
+
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page);
+    const confirmed = await driver.confirmExternalApplicationFinished();
+
+    expect(confirmed).toBe(true);
+    await page.close();
+  });
+
+  it("detects external apply from the off-linkedin response signal plus header apply CTA", async () => {
+    const page = await browser.newPage();
+    await page.setContent(linkedInExternalApplyHeaderHtml);
+
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page);
+
+    await expect(driver.isExternalApplyAvailable()).resolves.toBe(true);
+    await expect(driver.getExternalApplyUrl()).resolves.toBe(
+      "https://www.linkedin.com/safety/go/?url=https%3A%2F%2Fjobs%2Elever%2Eco%2Fcommencis%2Fa3be10ef-53ab-4842-b114-ae9f60b43e99&urlhash=kEke&isSdui=true",
+    );
+
+    await page.close();
+  });
+
+  it("marks linkedin numeric text inputs as decimal fields and captures inline validation text", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <div
+        data-test-modal=""
+        role="dialog"
+        tabindex="-1"
+        class="artdeco-modal artdeco-modal--layer-default jobs-easy-apply-modal"
+      >
+        <div class="fb-dash-form-element">
+          <div class="artdeco-text-input">
+            <div class="artdeco-text-input--container">
+              <label for="salary-field-numeric">Net ücret beklentiniz nedir?</label>
+              <input
+                id="salary-field-numeric"
+                class="fb-dash-form-element__error-field artdeco-text-input--input"
+                aria-describedby="salary-field-numeric-error"
+                type="text"
+                inputmode="text"
+                required
+              />
+            </div>
+          </div>
+          <div id="salary-field-numeric-error">
+            <div class="artdeco-inline-feedback artdeco-inline-feedback--error" role="alert">
+              <span class="artdeco-inline-feedback__message">0.0 değerinden büyük bir decimal sayısı girin</span>
+            </div>
+          </div>
+        </div>
+        <footer role="presentation">
+          <button aria-label="Review your application" data-live-test-easy-apply-review-button="" type="button">
+            <span class="artdeco-button__text">Review</span>
+          </button>
+        </footer>
+      </div>
+    `);
+
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page);
+    const questions = await driver.collectQuestions();
+    const diagnostics = await driver.collectReviewDiagnostics();
+
+    expect(questions).toHaveLength(1);
+    expect(questions[0]).toMatchObject({
+      label: "Net ücret beklentiniz nedir?",
+      expectsDecimal: true,
+      validationMessage: "0.0 değerinden büyük bir decimal sayısı girin",
+    });
+    expect(diagnostics.validationMessages).toContain("0.0 değerinden büyük bir decimal sayısı girin");
+    expect(diagnostics.blockingFields[0]).toMatchObject({
+      label: "Net ücret beklentiniz nedir?",
+      validationMessage: "0.0 değerinden büyük bir decimal sayısı girin",
+      required: true,
+    });
+
+    await page.close();
+  });
+
+  it("refuses to fill non-numeric answers into linkedin decimal fields", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <div
+        data-test-modal=""
+        role="dialog"
+        tabindex="-1"
+        class="artdeco-modal artdeco-modal--layer-default jobs-easy-apply-modal"
+      >
+        <div class="fb-dash-form-element">
+          <label for="salary-field-numeric">Net ücret beklentiniz nedir?</label>
+          <input id="salary-field-numeric" type="text" inputmode="text" />
+        </div>
+      </div>
+    `);
+
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page);
+    const [question] = await driver.collectQuestions();
+    const result = await driver.fillAnswer(question, {
+      questionType: "salary",
+      strategy: "generated",
+      answer: "negotiable",
+      confidence: 0.7,
+      confidenceLabel: "medium",
+      source: "llm",
+    });
+
+    expect(result).toEqual({
+      filled: false,
+      details: "Expected a numeric answer greater than 0 for this LinkedIn field.",
+    });
+    expect(await page.locator("#salary-field-numeric").inputValue()).toBe("");
+
+    await page.close();
+  });
+
+  it("returns LinkedIn inline validation after filling a numeric field", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <div
+        data-test-modal=""
+        role="dialog"
+        tabindex="-1"
+        class="artdeco-modal artdeco-modal--layer-default jobs-easy-apply-modal"
+      >
+        <div class="fb-dash-form-element">
+          <div class="artdeco-text-input">
+            <div class="artdeco-text-input--container">
+              <label for="salary-field-numeric">Net ücret beklentiniz nedir?</label>
+              <input
+                id="salary-field-numeric"
+                type="text"
+                inputmode="text"
+                aria-describedby="salary-field-numeric-error"
+              />
+            </div>
+          </div>
+          <div id="salary-field-numeric-error">
+            <div class="artdeco-inline-feedback artdeco-inline-feedback--error" role="alert">
+              <span class="artdeco-inline-feedback__message"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <script>
+        const input = document.getElementById("salary-field-numeric");
+        const message = document.querySelector(".artdeco-inline-feedback__message");
+        input.addEventListener("blur", () => {
+          if (input.value === "1") {
+            message.textContent = "0.0 değerinden büyük bir decimal sayısı girin";
+            input.setAttribute("aria-invalid", "true");
+          }
+        });
+      </script>
+    `);
+
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page);
+    const [question] = await driver.collectQuestions();
+    const result = await driver.fillAnswer(question, {
+      questionType: "salary",
+      strategy: "generated",
+      answer: "1",
+      confidence: 0.7,
+      confidenceLabel: "medium",
+      source: "llm",
+    });
+
+    expect(result).toEqual({
+      filled: false,
+      details: "0.0 değerinden büyük bir decimal sayısı girin",
+    });
+
+    await page.close();
   });
 });

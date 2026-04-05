@@ -593,6 +593,31 @@ describe("phase 5 index flows", () => {
     );
   });
 
+  it("runs the LinkedIn apply flow separately from easy apply", async () => {
+    const { module, mocks, deps } = await loadIndexModule();
+    mocks.loadCandidateMasterProfileMock.mockResolvedValue({
+      fullName: "Jane Doe",
+      linkedinUrl: "https://linkedin.com/in/jane",
+      sourceMetadata: { resumePath: "./resume.txt" },
+    });
+    mocks.createEasyApplyDriverMock.mockReturnValue({ driver: true });
+    mockWithPageSuccess(mocks.withPageMock);
+    mocks.runEasyApplyMock.mockResolvedValue({
+      status: "submitted",
+      steps: [],
+      stopReason: "Application submitted successfully.",
+      url: "https://www.linkedin.com/jobs/view/1",
+    });
+
+    const result = await module.main(
+      ["apply", "https://www.linkedin.com/jobs/view/1", "--resume", "./resume.txt"],
+      deps,
+    );
+
+    expect(result.easyApply.status).toBe("submitted");
+    expect(mocks.runEasyApplyMock).toHaveBeenCalled();
+  });
+
   it("wraps real easy apply flow failures with a linkedin phase error", async () => {
     const { module, mocks, deps } = await loadIndexModule();
     mocks.loadCandidateMasterProfileMock.mockResolvedValue({
@@ -661,7 +686,7 @@ describe("phase 5 index flows", () => {
       skippedCount: 2,
       pagesVisited: 2,
       jobs: [],
-      stopReason: "Processed 2 LinkedIn Easy Apply job(s).",
+      stopReason: "Processed 2 LinkedIn apply job(s).",
     });
 
     const result = await module.main(
@@ -696,6 +721,62 @@ describe("phase 5 index flows", () => {
       }),
       "LinkedIn Easy Apply batch finished",
     );
+  });
+
+  it("runs the LinkedIn apply batch flow separately from easy apply batch", async () => {
+    const { module, mocks, deps } = await loadIndexModule();
+    mocks.loadCandidateMasterProfileMock.mockResolvedValue({
+      fullName: "Jane Doe",
+      linkedinUrl: "https://linkedin.com/in/jane",
+      sourceMetadata: { resumePath: "./resume.txt" },
+    });
+    mocks.loadCandidateProfileMock.mockResolvedValue({
+      yearsOfExperience: 3,
+      preferredRoles: [],
+      preferredTechStack: [],
+      excludedRoles: [],
+      preferredLocations: [],
+      excludedLocations: [],
+      remotePreference: "remote",
+      remoteOnly: true,
+      visaRequirement: "not-required",
+      languages: [],
+      salaryExpectation: null,
+      salaryExpectations: { usd: null, eur: null, try: null },
+      gpa: null,
+      linkedinUrl: null,
+      workAuthorizationStatus: "authorized",
+      requiresSponsorship: false,
+      willingToRelocate: false,
+      disability: {
+        hasVisualDisability: false,
+        disabilityPercentage: null,
+        requiresAccommodation: null,
+        accommodationNotes: null,
+        disclosurePreference: "manual-review",
+      },
+    });
+    mocks.createEasyApplyDriverMock.mockReturnValue({ driver: true });
+    mockWithPageSuccess(mocks.withPageMock);
+    mocks.runEasyApplyBatchDryRunMock.mockResolvedValue({
+      status: "completed",
+      collectionUrl: "https://www.linkedin.com/jobs/collections/easy-apply",
+      requestedCount: 2,
+      attemptedCount: 1,
+      evaluatedCount: 2,
+      skippedCount: 1,
+      pagesVisited: 1,
+      jobs: [],
+      stopReason: "Processed 1 LinkedIn Apply job(s).",
+    });
+
+    const result = await module.main(
+      ["apply-dry-run", "--count", "2", "--resume", "./resume.txt"],
+      deps,
+    );
+
+    expect(result.easyApply.status).toBe("completed");
+    expect(mocks.runEasyApplyBatchDryRunMock).toHaveBeenCalled();
   });
 
   it("wraps real easy apply batch failures with a linkedin phase error", async () => {
@@ -1021,18 +1102,24 @@ describe("phase 5 index flows", () => {
     const batchArgs = mocks.runEasyApplyBatchDryRunMock.mock.calls[0]?.[0];
     const evaluation = await batchArgs.evaluateJob("https://www.linkedin.com/jobs/view/1");
 
-    expect(evaluation).toEqual({
-      shouldApply: true,
-      finalDecision: "APPLY",
-      score: 81,
-      reason: "Score 81 meets the configured threshold of 40.",
-      policyAllowed: true,
-    });
+    expect(evaluation).toEqual(
+      expect.objectContaining({
+        shouldApply: true,
+        finalDecision: "APPLY",
+        score: 81,
+        reason: "Score 81 meets the configured threshold of 40.",
+        policyAllowed: true,
+      }),
+    );
     expect(deps.extractJobText).toHaveBeenCalled();
     expect(deps.formatJobForLLM).toHaveBeenCalledWith(
       expect.objectContaining({ title: "Backend Engineer" }),
+      expect.objectContaining({ omitLocation: true }),
     );
-    expect(deps.parseJob).toHaveBeenCalledWith("Formatted prompt");
+    expect(deps.parseJob).toHaveBeenCalledWith(
+      "Formatted prompt",
+      expect.objectContaining({ excludeLocation: true }),
+    );
     expect(deps.scoreJob).toHaveBeenCalled();
     expect(deps.evaluatePolicy).toHaveBeenCalled();
     expect(mocks.infoMock).toHaveBeenCalledWith(
@@ -1227,7 +1314,7 @@ describe("phase 5 index flows", () => {
       skippedCount: 1,
       pagesVisited: 1,
       jobs: [],
-      stopReason: "Only found and processed 0 matching LinkedIn Easy Apply job(s) before pagination ended.",
+      stopReason: "Only found and processed 0 matching LinkedIn apply job(s) before pagination ended.",
     });
     deps.extractJobText = vi.fn().mockResolvedValue({
       rawText: "Job body",
@@ -1292,13 +1379,15 @@ describe("phase 5 index flows", () => {
     const batchArgs = mocks.runEasyApplyBatchDryRunMock.mock.calls[0]?.[0];
     const evaluation = await batchArgs.evaluateJob("https://www.linkedin.com/jobs/view/1");
 
-    expect(evaluation).toEqual({
-      shouldApply: false,
-      finalDecision: "SKIP",
-      score: 74,
-      reason: "Score 74 is below the configured threshold of 80.",
-      policyAllowed: true,
-    });
+    expect(evaluation).toEqual(
+      expect.objectContaining({
+        shouldApply: false,
+        finalDecision: "SKIP",
+        score: 74,
+        reason: "Score 74 is below the configured threshold of 80.",
+        policyAllowed: true,
+      }),
+    );
   });
 
   it("skips AI evaluation entirely when disabled for batch runs", async () => {
@@ -1356,13 +1445,15 @@ describe("phase 5 index flows", () => {
     const batchArgs = mocks.runEasyApplyBatchDryRunMock.mock.calls[0]?.[0];
     const evaluation = await batchArgs.evaluateJob("https://www.linkedin.com/jobs/view/1");
 
-    expect(evaluation).toEqual({
-      shouldApply: true,
-      finalDecision: "APPLY",
-      score: 0,
-      reason: "AI evaluation disabled for this batch run.",
-      policyAllowed: true,
-    });
+    expect(evaluation).toEqual(
+      expect.objectContaining({
+        shouldApply: true,
+        finalDecision: "APPLY",
+        score: 0,
+        reason: "AI evaluation disabled for this batch run.",
+        policyAllowed: true,
+      }),
+    );
     expect(mocks.extractJobTextMock).not.toHaveBeenCalled();
   });
 
@@ -1521,7 +1612,10 @@ describe("phase 5 index flows", () => {
     const result = await module.main(["https://jobs.example.com/1"], deps);
 
     expect(mocks.getConfiguredProviderInfoMock).toHaveBeenCalledTimes(1);
-    expect(mocks.parseJobMock).toHaveBeenCalledWith("Formatted prompt");
+    expect(mocks.parseJobMock).toHaveBeenCalledWith(
+      "Formatted prompt",
+      expect.objectContaining({ excludeLocation: true }),
+    );
     expect(result.finalDecision).toBe("APPLY");
     expect(result.reportPath).toBe("artifacts/batch-runs/report.json");
     expect(result.jobPosting.id).toBe("job_1");
@@ -1670,7 +1764,7 @@ describe("phase 5 index flows", () => {
           evaluation: await input.evaluateJob("https://www.linkedin.com/jobs/view/1"),
         },
       ],
-      stopReason: "Only found and processed 0 matching LinkedIn Easy Apply job(s) before pagination ended.",
+      stopReason: "Only found and processed 0 matching LinkedIn apply job(s) before pagination ended.",
     }));
 
     const result = await module.main(

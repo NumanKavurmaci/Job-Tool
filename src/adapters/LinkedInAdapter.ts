@@ -36,6 +36,9 @@ const LINKEDIN_SUBMIT_SELECTORS = [
 ];
 const LINKEDIN_SIGNED_IN_SELECTORS = [
   "nav[aria-label='Primary Navigation']",
+  "[data-testid='primary-nav']",
+  "[data-testid='typeahead-input']",
+  "nav[componentkey='primaryNavLinksComponentRef']",
   ".global-nav",
   ".jobs-search-results-list",
   ".jobs-unified-top-card",
@@ -589,7 +592,14 @@ export async function isLinkedInSignInWall(page: Page): Promise<boolean> {
   }
 
   const bodyText = (await page.locator("body").innerText().catch(() => "")).toLowerCase();
-  return bodyText.includes("sign in") && bodyText.includes("linkedin");
+  const signInWallPhrases = [
+    "sign in to continue",
+    "sign in or join",
+    "new to linkedin?",
+    "join now",
+    "forgot password",
+  ];
+  return signInWallPhrases.some((phrase) => bodyText.includes(phrase));
 }
 
 async function hasAnyLocator(page: Page, selectors: string[]): Promise<boolean> {

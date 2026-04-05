@@ -1,9 +1,35 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+const { repairAnswerFromSiteFeedbackMock } = vi.hoisted(() => ({
+  repairAnswerFromSiteFeedbackMock: vi.fn(),
+}));
+vi.mock("../../src/questions/strategies/aiCorrection.js", () => ({
+  repairAnswerFromSiteFeedback: repairAnswerFromSiteFeedbackMock,
+}));
 import {
+  collectExternalSiteFeedback,
   advanceExternalApplicationPage,
   fillExternalApplicationPage,
   getExternalPrimaryAction,
 } from "../../src/external/fill.js";
+
+const candidateProfile = {
+  fullName: "Jane Doe",
+  location: "Berlin",
+  currentTitle: "Backend Engineer",
+  yearsOfExperienceTotal: 4,
+  skills: ["TypeScript"],
+  languages: ["English"],
+  linkedinUrl: "https://linkedin.com/in/jane",
+  portfolioUrl: null,
+  gpa: null,
+  salaryExpectations: { usd: "85000", eur: null, try: null },
+  resumeText: "Backend engineer.",
+} as any;
+
+beforeEach(() => {
+  repairAnswerFromSiteFeedbackMock.mockReset();
+  repairAnswerFromSiteFeedbackMock.mockResolvedValue(null);
+});
 
 function createLocatorRecorder() {
   const actions: Array<{ type: string; selector: string; value?: string }> = [];
@@ -16,6 +42,12 @@ function createLocatorRecorder() {
   };
 
   const page = {
+    async evaluate(callback: unknown) {
+      if (typeof callback === "function") {
+        return [];
+      }
+      return undefined;
+    },
     locator(selector: string) {
       return {
         first() {
@@ -129,11 +161,13 @@ describe("external fill", () => {
           confidenceLabel: "high",
         },
       ],
+      candidateProfile,
     });
 
     expect(result.primaryAction).toBe("next");
     expect(result.advanced).toBe(true);
     expect(result.blockingRequiredFields).toEqual([]);
+    expect(result.siteFeedback.messages).toEqual([]);
     expect(actions).toEqual(
       expect.arrayContaining([
         { type: "fill", selector: `[id="first-name"]`, value: "Jane" },
@@ -191,6 +225,7 @@ describe("external fill", () => {
           confidenceLabel: "medium",
         },
       ],
+      candidateProfile,
     });
 
     expect(result.fieldResults[0]).toEqual(
@@ -244,6 +279,7 @@ describe("external fill", () => {
           confidenceLabel: "high",
         },
       ],
+      candidateProfile,
     });
 
     expect(result.fieldResults[0]).toEqual(
@@ -290,10 +326,431 @@ describe("external fill", () => {
         ],
       },
       answerPlan: [],
+      candidateProfile,
     });
 
     expect(result.advanced).toBe(false);
     expect(result.blockingRequiredFields).toEqual(["Salary"]);
+    expect(result.siteFeedback.messages).toEqual([]);
+  });
+
+  it("collects visible site feedback from the external application page", async () => {
+    const page = {
+      evaluate: vi.fn(async (callback: unknown) => {
+        if (typeof callback === "function") {
+          return [
+            {
+              severity: "error",
+              message: "Salary must be a number",
+              source: "external.apply",
+            },
+            {
+              severity: "warning",
+              message: "Please review your uploaded resume",
+              source: "external.apply",
+            },
+          ];
+        }
+        return [];
+      }),
+    };
+
+    const result = await collectExternalSiteFeedback(page as never);
+
+    expect(result.errors).toEqual(["Salary must be a number"]);
+    expect(result.warnings).toEqual(["Please review your uploaded resume"]);
+    expect(result.messages).toHaveLength(2);
+  });
+
+  it("retries a failed external field with an AI-corrected value", async () => {
+    repairAnswerFromSiteFeedbackMock.mockResolvedValueOnce({
+      questionType: "salary",
+      strategy: "generated",
+      answer: "85000",
+      confidence: 0.8,
+      confidenceLabel: "high",
+      source: "llm",
+    });
+
+    const actions: Array<{ type: string; selector: string; value?: string }> = [];
+    let callbackPass = 0;
+    const page = {
+      async evaluate(callback: unknown) {
+        if (typeof callback === "function") {
+          callbackPass += 1;
+          if (callbackPass === 1) {
+            return "";
+          }
+          if (callbackPass === 2) {
+            return [{ severity: "error", message: "Salary must be a number", source: "external.apply" }];
+          }
+          return [];
+        }
+        return undefined;
+      },
+      locator(selector: string) {
+        return {
+          first() {
+            return this;
+          },
+          async count() {
+            return selector === `[id="salary"]` || selector === `button:has-text("Next")` ? 1 : 0;
+          },
+          async click() {
+            actions.push({ type: "click", selector });
+          },
+          async fill(value: string) {
+            actions.push({ type: "fill", selector, value });
+          },
+          async blur() {
+            actions.push({ type: "blur", selector });
+          },
+          async press() {
+            return undefined;
+          },
+          async setInputFiles() {
+            return undefined;
+          },
+        };
+      },
+      waitForTimeout: vi.fn(async () => undefined),
+    };
+
+    const result = await fillExternalApplicationPage({
+      page: page as never,
+      discovery: {
+        sourceUrl: "https://example.com/form",
+        finalUrl: "https://example.com/form",
+        pageTitle: "Form",
+        platform: "generic",
+        precursorLinks: [],
+        followedPrecursorLink: null,
+        fields: [
+          {
+            key: "salary",
+            label: "Salary",
+            type: "number",
+            required: true,
+            options: [],
+            placeholder: null,
+            helpText: null,
+            accept: null,
+          },
+        ],
+      },
+      answerPlan: [
+        {
+          fieldKey: "salary",
+          fieldLabel: "Salary",
+          fieldType: "number",
+          question: { label: "Salary", inputType: "text" },
+          answer: "negotiable",
+          source: "llm",
+          confidenceLabel: "medium",
+        },
+      ],
+      candidateProfile,
+    });
+
+    expect(repairAnswerFromSiteFeedbackMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        validationFeedback: "Salary must be a number",
+      }),
+    );
+    expect(result.fieldResults[0]).toEqual(
+      expect.objectContaining({
+        status: "filled",
+        details: "Filled the field after AI corrected the value using site feedback.",
+      }),
+    );
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        { type: "fill", selector: `[id="salary"]`, value: "negotiable" },
+        { type: "fill", selector: `[id="salary"]`, value: "85000" },
+      ]),
+    );
+  });
+
+  it("does not retry external correction when AI returns the same answer", async () => {
+    repairAnswerFromSiteFeedbackMock.mockResolvedValueOnce({
+      questionType: "salary",
+      strategy: "generated",
+      answer: "negotiable",
+      confidence: 0.8,
+      confidenceLabel: "high",
+      source: "llm",
+    });
+
+    const actions: Array<{ type: string; selector: string; value?: string }> = [];
+    let callbackPass = 0;
+    const page = {
+      async evaluate(callback: unknown) {
+        if (typeof callback === "function") {
+          callbackPass += 1;
+          if (callbackPass === 1) {
+            return "";
+          }
+          return [{ severity: "error", message: "Salary must be a number", source: "external.apply" }];
+        }
+        return undefined;
+      },
+      locator(selector: string) {
+        return {
+          first() {
+            return this;
+          },
+          async count() {
+            return selector === `[id="salary"]` ? 1 : 0;
+          },
+          async click() {
+            actions.push({ type: "click", selector });
+          },
+          async fill(value: string) {
+            actions.push({ type: "fill", selector, value });
+          },
+          async blur() {
+            actions.push({ type: "blur", selector });
+          },
+          async press() {
+            return undefined;
+          },
+          async setInputFiles() {
+            return undefined;
+          },
+        };
+      },
+      waitForTimeout: vi.fn(async () => undefined),
+    };
+
+    const result = await fillExternalApplicationPage({
+      page: page as never,
+      discovery: {
+        sourceUrl: "https://example.com/form",
+        finalUrl: "https://example.com/form",
+        pageTitle: "Form",
+        platform: "generic",
+        precursorLinks: [],
+        followedPrecursorLink: null,
+        fields: [
+          {
+            key: "salary",
+            label: "Salary",
+            type: "number",
+            required: true,
+            options: [],
+            placeholder: null,
+            helpText: null,
+            accept: null,
+          },
+        ],
+      },
+      answerPlan: [
+        {
+          fieldKey: "salary",
+          fieldLabel: "Salary",
+          fieldType: "number",
+          question: { label: "Salary", inputType: "text" },
+          answer: "negotiable",
+          source: "llm",
+          confidenceLabel: "medium",
+        },
+      ],
+      candidateProfile,
+    });
+
+    expect(result.fieldResults[0]).toEqual(
+      expect.objectContaining({
+        status: "failed",
+        details: "Salary must be a number",
+      }),
+    );
+    expect(actions.filter((action) => action.type === "fill")).toHaveLength(1);
+  });
+
+  it("returns the second error when corrected external value is still rejected", async () => {
+    repairAnswerFromSiteFeedbackMock.mockResolvedValueOnce({
+      questionType: "salary",
+      strategy: "generated",
+      answer: "85000",
+      confidence: 0.8,
+      confidenceLabel: "high",
+      source: "llm",
+    });
+
+    const actions: Array<{ type: string; selector: string; value?: string }> = [];
+    let callbackPass = 0;
+    const page = {
+      async evaluate(callback: unknown) {
+        if (typeof callback === "function") {
+          callbackPass += 1;
+          if (callbackPass === 1) {
+            return "";
+          }
+          if (callbackPass === 2) {
+            return [{ severity: "error", message: "Salary must be a number", source: "external.apply" }];
+          }
+          return [{ severity: "error", message: "Salary exceeds the maximum", source: "external.apply" }];
+        }
+        return undefined;
+      },
+      locator(selector: string) {
+        return {
+          first() {
+            return this;
+          },
+          async count() {
+            return selector === `[id="salary"]` ? 1 : 0;
+          },
+          async click() {
+            actions.push({ type: "click", selector });
+          },
+          async fill(value: string) {
+            actions.push({ type: "fill", selector, value });
+          },
+          async blur() {
+            actions.push({ type: "blur", selector });
+          },
+          async press() {
+            return undefined;
+          },
+          async setInputFiles() {
+            return undefined;
+          },
+        };
+      },
+      waitForTimeout: vi.fn(async () => undefined),
+    };
+
+    const result = await fillExternalApplicationPage({
+      page: page as never,
+      discovery: {
+        sourceUrl: "https://example.com/form",
+        finalUrl: "https://example.com/form",
+        pageTitle: "Form",
+        platform: "generic",
+        precursorLinks: [],
+        followedPrecursorLink: null,
+        fields: [
+          {
+            key: "salary",
+            label: "Salary",
+            type: "number",
+            required: true,
+            options: [],
+            placeholder: null,
+            helpText: null,
+            accept: null,
+          },
+        ],
+      },
+      answerPlan: [
+        {
+          fieldKey: "salary",
+          fieldLabel: "Salary",
+          fieldType: "number",
+          question: { label: "Salary", inputType: "text" },
+          answer: "negotiable",
+          source: "llm",
+          confidenceLabel: "medium",
+        },
+      ],
+      candidateProfile,
+    });
+
+    expect(result.fieldResults[0]).toEqual(
+      expect.objectContaining({
+        status: "failed",
+        details: "Salary exceeds the maximum",
+      }),
+    );
+    expect(actions.filter((action) => action.type === "fill")).toHaveLength(2);
+  });
+
+  it("continues without retrying when external AI repair throws", async () => {
+    repairAnswerFromSiteFeedbackMock.mockRejectedValueOnce(new Error("llm down"));
+
+    let callbackPass = 0;
+    const page = {
+      async evaluate(callback: unknown) {
+        if (typeof callback === "function") {
+          callbackPass += 1;
+          if (callbackPass === 1) {
+            return "";
+          }
+          return [{ severity: "error", message: "Salary must be a number", source: "external.apply" }];
+        }
+        return undefined;
+      },
+      locator(selector: string) {
+        return {
+          first() {
+            return this;
+          },
+          async count() {
+            return selector === `[id="salary"]` ? 1 : 0;
+          },
+          async click() {
+            return undefined;
+          },
+          async fill() {
+            return undefined;
+          },
+          async blur() {
+            return undefined;
+          },
+          async press() {
+            return undefined;
+          },
+          async setInputFiles() {
+            return undefined;
+          },
+        };
+      },
+      waitForTimeout: vi.fn(async () => undefined),
+    };
+
+    const result = await fillExternalApplicationPage({
+      page: page as never,
+      discovery: {
+        sourceUrl: "https://example.com/form",
+        finalUrl: "https://example.com/form",
+        pageTitle: "Form",
+        platform: "generic",
+        precursorLinks: [],
+        followedPrecursorLink: null,
+        fields: [
+          {
+            key: "salary",
+            label: "Salary",
+            type: "number",
+            required: true,
+            options: [],
+            placeholder: null,
+            helpText: null,
+            accept: null,
+          },
+        ],
+      },
+      answerPlan: [
+        {
+          fieldKey: "salary",
+          fieldLabel: "Salary",
+          fieldType: "number",
+          question: { label: "Salary", inputType: "text" },
+          answer: "negotiable",
+          source: "llm",
+          confidenceLabel: "medium",
+        },
+      ],
+      candidateProfile,
+    });
+
+    expect(result.fieldResults[0]).toEqual(
+      expect.objectContaining({
+        status: "failed",
+        details: "Salary must be a number",
+      }),
+    );
   });
 
   it("detects submit and next primary actions", async () => {

@@ -14,7 +14,7 @@ This file maps all test files to the behavior they protect.
 - [tests/app/flowHelpers.test.ts](../tests/app/flowHelpers.test.ts): Shared flow helper behavior for profile loading, scoring, and answer resolution.
 - [tests/app/observability.test.ts](../tests/app/observability.test.ts): Artifact writing and DB observability persistence helpers.
 - [tests/app/main.test.ts](../tests/app/main.test.ts): Main orchestration test suite for CLI parsing, flows, persistence, and error wrapping.
-- [tests/app/flows/easyApplyFlows.test.ts](../tests/app/flows/easyApplyFlows.test.ts): LinkedIn Easy Apply orchestration, persistence, and dry-run/live flow behavior.
+- [tests/app/flows/easyApplyFlows.test.ts](../tests/app/flows/easyApplyFlows.test.ts): Regression coverage for the LinkedIn flow wrappers and shared orchestration entrypoints; the file name still reflects older terminology.
 - [tests/app/flows/externalApplyFlows.test.ts](../tests/app/flows/externalApplyFlows.test.ts): External application precursor-link routing, persistence, and dry-run/live flow behavior.
 - [tests/app/flows/jobFlow.test.ts](../tests/app/flows/jobFlow.test.ts): `score`/`decide` flow orchestration and persistence behavior.
 - [tests/app/flows/profileFlows.test.ts](../tests/app/flows/profileFlows.test.ts): Profile-building and reusable answer-set generation flows.
@@ -111,6 +111,7 @@ This file maps all test files to the behavior they protect.
 
 ## `tests/questions/`
 
+- [tests/questions/aiCorrection.test.ts](../tests/questions/aiCorrection.test.ts): AI repair behavior for rejected answers, including normalization, confidence bounds, and prompt content.
 - [tests/questions/aiFallback.test.ts](../tests/questions/aiFallback.test.ts): AI fallback answer behavior.
 - [tests/questions/classifyQuestion.test.ts](../tests/questions/classifyQuestion.test.ts): Question classifier behavior.
 - [tests/questions/generated.test.ts](../tests/questions/generated.test.ts): Generated-answer and cover-letter strategy behavior.

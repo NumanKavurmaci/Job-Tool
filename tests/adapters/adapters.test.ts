@@ -215,6 +215,33 @@ describe("LinkedInAdapter", () => {
     expect(result.applicationType).toBe("easy_apply");
   });
 
+  it("treats the modern signed-in LinkedIn jobs shell as authenticated", async () => {
+    const { LinkedInAdapter } = await import("../../src/adapters/LinkedInAdapter.js");
+    const page = createMockPage({
+      currentUrl: "https://www.linkedin.com/jobs/view/4375510524/",
+      title: "Senior Web Frontend Engineer | Commencis | LinkedIn",
+      selectors: {
+        "[data-testid='primary-nav']": { text: "Primary nav" },
+        "[data-testid='typeahead-input']": { text: "" },
+        ".job-details-jobs-unified-top-card__job-title": { text: "Senior Web Frontend Engineer" },
+        ".job-details-jobs-unified-top-card__company-name": { text: "Commencis" },
+        ".job-details-jobs-unified-top-card__bullet": { text: "Remote" },
+        "button.jobs-apply-button": { text: "Easy Apply" },
+        ".jobs-description-content__text": { text: "Build frontend experiences." },
+        body: {
+          text: "Home\nMy Network\nJobs\nMessaging\nSenior Web Frontend Engineer\nCommencis\nRemote\nEasy Apply",
+        },
+      },
+    });
+
+    const result = await new LinkedInAdapter().extract(page as never, page.url());
+
+    expect(result.platform).toBe("linkedin");
+    expect(result.title).toBe("Senior Web Frontend Engineer");
+    expect(result.company).toBe("Commencis");
+    expect(result.applicationType).toBe("easy_apply");
+  });
+
   it("accepts alternate linkedin login field selectors", async () => {
     vi.doMock("../../src/config/env.js", () => ({
       env: {

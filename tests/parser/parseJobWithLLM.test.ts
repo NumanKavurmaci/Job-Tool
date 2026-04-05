@@ -36,7 +36,7 @@ describe("parseJobWithLLM", () => {
     const { parseJobWithLLM } = await import("../../src/parser/parseJobWithLLM.js");
     const result = await parseJobWithLLM("Formatted job text");
 
-    expect(parseJobMock).toHaveBeenCalledWith("Formatted job text");
+    expect(parseJobMock).toHaveBeenCalledWith("Formatted job text", undefined);
     expect(result.title).toBe("Backend Engineer");
   });
 });

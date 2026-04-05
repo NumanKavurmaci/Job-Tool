@@ -160,6 +160,23 @@ export const linkedInExternalApplyFixture = {
   ].join("\n"),
 };
 
+export const linkedInExternalApplyHeaderHtml = `
+<div data-testid="primary-nav"></div>
+<main>
+  <div>
+    <p>Senior Web Frontend Engineer</p>
+    <p>Commencis</p>
+    <p>Promoted by hirer · Responses managed off LinkedIn</p>
+    <a
+      href="https://www.linkedin.com/safety/go/?url=https%3A%2F%2Fjobs%2Elever%2Eco%2Fcommencis%2Fa3be10ef-53ab-4842-b114-ae9f60b43e99&urlhash=kEke&isSdui=true"
+      target="_blank"
+    >
+      Apply
+    </a>
+  </div>
+</main>
+`.trim();
+
 export const linkedInPreReviewModalHtml = `
 <div data-test-modal="" role="dialog" tabindex="-1" class="artdeco-modal artdeco-modal--layer-default jobs-easy-apply-modal" size="large" aria-labelledby="jobs-apply-header">
   <div class="artdeco-modal__header ember-view">

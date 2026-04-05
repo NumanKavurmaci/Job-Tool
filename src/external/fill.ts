@@ -1,10 +1,18 @@
 import { existsSync } from "node:fs";
 import type { Page } from "@playwright/test";
+import type { CandidateProfile } from "../candidate/types.js";
 import type {
+  ExternalAiCorrectionAttempt,
   ExternalApplicationDiscovery,
   ExternalApplicationField,
   ExternalApplicationPlannedAnswer,
 } from "./types.js";
+import {
+  createEmptySiteFeedbackSnapshot,
+  mergeSiteFeedbackSnapshots,
+  type SiteFeedbackSnapshot,
+} from "../browser/siteFeedback.js";
+import { repairAnswerFromSiteFeedback } from "../questions/strategies/aiCorrection.js";
 
 export type ExternalFillStatus = "filled" | "skipped" | "failed";
 export type ExternalPrimaryAction = "next" | "submit" | "unknown";
@@ -22,6 +30,8 @@ export type ExternalFillResult = {
   primaryAction: ExternalPrimaryAction;
   advanced: boolean;
   blockingRequiredFields: string[];
+  siteFeedback: SiteFeedbackSnapshot;
+  aiCorrectionAttempts: ExternalAiCorrectionAttempt[];
 };
 
 function escapeAttributeValue(value: string): string {
@@ -117,10 +127,17 @@ async function clickVisibleOption(page: Page, answer: string): Promise<boolean> 
   return true;
 }
 
+// Fills a single external field and optionally retries once with an AI-corrected value.
 async function fillSingleField(
   page: Page,
   field: ExternalApplicationField,
   plan: ExternalApplicationPlannedAnswer | undefined,
+  candidateProfile: CandidateProfile,
+  pageContext?: {
+    title?: string | null;
+    text?: string | null;
+    sourceUrl?: string | null;
+  },
 ): Promise<ExternalFieldFillResult> {
   const answer = normalizeAnswerValue(plan?.answer ?? null);
   if (!answer) {
@@ -194,6 +211,66 @@ async function fillSingleField(
     await locator.fill(fillValue);
     await locator.blur().catch(() => undefined);
 
+    const siteFeedback = await collectExternalSiteFeedback(page);
+    if (siteFeedback.errors.length > 0) {
+      const corrected = await repairAnswerFromSiteFeedback({
+        question: plan?.question ?? {
+          label: field.label,
+          inputType: field.type,
+          ...(field.options.length > 0 ? { options: field.options } : {}),
+          ...(field.helpText ? { helpText: field.helpText } : {}),
+          ...(field.placeholder ? { placeholder: field.placeholder } : {}),
+        },
+        candidateProfile,
+        previousAnswer: {
+          questionType: "general_short_text",
+          strategy: "generated",
+          answer,
+          confidence: 0.5,
+          confidenceLabel: "medium",
+          source: plan?.source === "candidate-profile" ? "candidate-profile" : "llm",
+        },
+        validationFeedback: siteFeedback.errors[0]!,
+        ...(pageContext ? { pageContext } : {}),
+      }).catch(() => null);
+
+      if (
+        corrected &&
+        typeof corrected.answer === "string" &&
+        corrected.answer.trim() &&
+        corrected.answer.trim() !== fillValue.trim()
+      ) {
+        await locator.fill(corrected.answer.trim());
+        await locator.blur().catch(() => undefined);
+        const correctedFeedback = await collectExternalSiteFeedback(page);
+        if (correctedFeedback.errors.length === 0) {
+          return {
+            fieldKey: field.key,
+            fieldLabel: field.label,
+            required: field.required,
+            status: "filled",
+            details: "Filled the field after AI corrected the value using site feedback.",
+          };
+        }
+
+        return {
+          fieldKey: field.key,
+          fieldLabel: field.label,
+          required: field.required,
+          status: "failed",
+          details: correctedFeedback.errors[0]!,
+        };
+      }
+
+      return {
+        fieldKey: field.key,
+        fieldLabel: field.label,
+        required: field.required,
+        status: "failed",
+        details: siteFeedback.errors[0]!,
+      };
+    }
+
     return {
       fieldKey: field.key,
       fieldLabel: field.label,
@@ -210,6 +287,178 @@ async function fillSingleField(
       details: error instanceof Error ? error.message : String(error),
     };
   }
+}
+
+async function fillSingleFieldWithDiagnostics(
+  page: Page,
+  field: ExternalApplicationField,
+  plan: ExternalApplicationPlannedAnswer | undefined,
+  candidateProfile: CandidateProfile,
+  pageContext?: {
+    title?: string | null;
+    text?: string | null;
+    sourceUrl?: string | null;
+  },
+): Promise<{
+  result: ExternalFieldFillResult;
+  aiCorrectionAttempt?: ExternalAiCorrectionAttempt;
+}> {
+  const answer = normalizeAnswerValue(plan?.answer ?? null);
+  const result = await fillSingleField(page, field, plan, candidateProfile, pageContext);
+  if (!answer) {
+    return { result };
+  }
+
+  const validationFeedback = result.status === "failed" ? result.details : null;
+  if (!validationFeedback) {
+    return {
+      result,
+      ...(result.details.includes("AI corrected")
+        ? {
+            aiCorrectionAttempt: {
+              fieldKey: field.key,
+              fieldLabel: field.label,
+              validationFeedback: "Site feedback triggered a correction retry.",
+              previousAnswer: answer,
+              correctedAnswer: null,
+              outcome: "retry_succeeded" as const,
+            },
+          }
+        : {}),
+    };
+  }
+
+  const corrected = await repairAnswerFromSiteFeedback({
+    question: plan?.question ?? {
+      label: field.label,
+      inputType: field.type,
+      ...(field.options.length > 0 ? { options: field.options } : {}),
+      ...(field.helpText ? { helpText: field.helpText } : {}),
+      ...(field.placeholder ? { placeholder: field.placeholder } : {}),
+    },
+    candidateProfile,
+    previousAnswer: {
+      questionType: "general_short_text",
+      strategy: "generated",
+      answer,
+      confidence: 0.5,
+      confidenceLabel: "medium",
+      source: plan?.source === "candidate-profile" ? "candidate-profile" : "llm",
+    },
+    validationFeedback,
+    ...(pageContext ? { pageContext } : {}),
+  }).catch(() => null);
+
+  if (!corrected) {
+    return {
+      result,
+      aiCorrectionAttempt: {
+        fieldKey: field.key,
+        fieldLabel: field.label,
+        validationFeedback,
+        previousAnswer: answer,
+        correctedAnswer: null,
+        outcome: "repair_failed",
+      },
+    };
+  }
+
+  const correctedAnswer =
+    typeof corrected.answer === "string"
+      ? corrected.answer.trim()
+      : corrected.answer == null
+        ? null
+        : String(corrected.answer).trim();
+
+  if (!correctedAnswer || correctedAnswer === answer.trim()) {
+    return {
+      result,
+      aiCorrectionAttempt: {
+        fieldKey: field.key,
+        fieldLabel: field.label,
+        validationFeedback,
+        previousAnswer: answer,
+        correctedAnswer,
+        outcome: "same_answer",
+        finalFeedback: validationFeedback,
+      },
+    };
+  }
+
+  return {
+    result,
+    aiCorrectionAttempt: {
+      fieldKey: field.key,
+      fieldLabel: field.label,
+      validationFeedback,
+      previousAnswer: answer,
+      correctedAnswer,
+      outcome: result.details.includes("AI corrected") ? "retry_succeeded" : "retry_failed",
+      ...(result.details.includes("AI corrected") ? {} : { finalFeedback: result.details }),
+    },
+  };
+}
+
+// Pulls visible validation and notice messages from an external application page.
+export async function collectExternalSiteFeedback(page: Page): Promise<SiteFeedbackSnapshot> {
+  if (typeof (page as Page & { evaluate?: unknown }).evaluate !== "function") {
+    return createEmptySiteFeedbackSnapshot();
+  }
+
+  const messages = await page.evaluate(() => {
+    const normalize = (value: unknown) => String(value ?? "").replace(/\s+/g, " ").trim();
+    const nodes = Array.from(
+      (globalThis as { document?: { querySelectorAll?: (selector: string) => Iterable<unknown> } }).document?.querySelectorAll?.([
+        "[role='alert']",
+        "[aria-live='assertive']",
+        "[aria-live='polite']",
+        ".error",
+        ".errors",
+        ".field-error",
+        ".invalid-feedback",
+        ".warning",
+        ".notice",
+        ".success",
+        ".artdeco-inline-feedback",
+        ".artdeco-inline-feedback__message",
+      ].join(", ")) ?? [],
+    );
+    const results: Array<{ severity: "error" | "warning" | "info"; message: string; source: string }> = [];
+    const seen = new Set<string>();
+    for (const node of nodes) {
+      const element = node as {
+        textContent?: string | null;
+        getAttribute?: (name: string) => string | null;
+      };
+      const message = normalize(element.textContent);
+      if (!message || seen.has(message)) {
+        continue;
+      }
+      seen.add(message);
+      const className = normalize(element.getAttribute?.("class")).toLowerCase();
+      const ariaLive = normalize(element.getAttribute?.("aria-live")).toLowerCase();
+      const severity =
+        className.includes("error") || className.includes("invalid") || ariaLive === "assertive"
+          ? "error"
+          : className.includes("warning")
+            ? "warning"
+            : "info";
+      results.push({
+        severity,
+        message,
+        source: "external.apply",
+      });
+    }
+    return results;
+  }).catch(() => []);
+
+  return {
+    ...createEmptySiteFeedbackSnapshot(),
+    messages,
+    errors: messages.filter((message) => message.severity === "error").map((message) => message.message),
+    warnings: messages.filter((message) => message.severity === "warning").map((message) => message.message),
+    infos: messages.filter((message) => message.severity === "info").map((message) => message.message),
+  };
 }
 
 export async function getExternalPrimaryAction(page: Page): Promise<ExternalPrimaryAction> {
@@ -256,19 +505,36 @@ export async function fillExternalApplicationPage(args: {
   page: Page;
   discovery: ExternalApplicationDiscovery;
   answerPlan: ExternalApplicationPlannedAnswer[];
+  candidateProfile: CandidateProfile;
   submit?: boolean;
 }): Promise<ExternalFillResult> {
+  // Captures page text once so AI correction retries can reuse the same page context consistently.
   const fieldResults: ExternalFieldFillResult[] = [];
+  const aiCorrectionAttempts: ExternalAiCorrectionAttempt[] = [];
+  const pageText = await args.page.evaluate(() =>
+    String((globalThis as { document?: { body?: { innerText?: string } } }).document?.body?.innerText ?? "")
+      .replace(/\s+/g, " ")
+      .trim(),
+  ).catch(() => "");
 
   for (const field of args.discovery.fields) {
     const plan = args.answerPlan.find((candidate) => candidate.fieldKey === field.key);
-    fieldResults.push(await fillSingleField(args.page, field, plan));
+    const filled = await fillSingleFieldWithDiagnostics(args.page, field, plan, args.candidateProfile, {
+      title: args.discovery.pageTitle,
+      text: pageText,
+      sourceUrl: args.discovery.finalUrl,
+    });
+    fieldResults.push(filled.result);
+    if (filled.aiCorrectionAttempt) {
+      aiCorrectionAttempts.push(filled.aiCorrectionAttempt);
+    }
   }
 
   const blockingRequiredFields = fieldResults
     .filter((result) => result.required && result.status !== "filled")
     .map((result) => result.fieldLabel);
   const primaryAction = await getExternalPrimaryAction(args.page);
+  const preAdvanceFeedback = await collectExternalSiteFeedback(args.page);
   let advanced = false;
 
   if (blockingRequiredFields.length === 0 && primaryAction === "next") {
@@ -277,10 +543,16 @@ export async function fillExternalApplicationPage(args: {
     advanced = await advanceExternalApplicationPage(args.page, "submit");
   }
 
+  const postAdvanceFeedback = advanced
+    ? await collectExternalSiteFeedback(args.page)
+    : createEmptySiteFeedbackSnapshot();
+
   return {
     fieldResults,
     primaryAction,
     advanced,
     blockingRequiredFields,
+    siteFeedback: mergeSiteFeedbackSnapshots(preAdvanceFeedback, postAdvanceFeedback),
+    aiCorrectionAttempts,
   };
 }

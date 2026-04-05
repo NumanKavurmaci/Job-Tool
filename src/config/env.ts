@@ -50,7 +50,7 @@ export function createEnv() {
   const LOCAL_LLM_TIMEOUT_MS = optionalPositiveInteger("LOCAL_LLM_TIMEOUT_MS", 120_000);
   const LINKEDIN_MANUAL_AUTH_WINDOW_MS = optionalPositiveInteger(
     "LINKEDIN_MANUAL_AUTH_WINDOW_MS",
-    14_400_000,
+    120_000,
   );
   const LINKEDIN_USERNAME = optional("LINKEDIN_USERNAME");
   const LINKEDIN_PASSWORD = optional("LINKEDIN_PASSWORD");

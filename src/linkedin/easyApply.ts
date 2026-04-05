@@ -1,7 +1,13 @@
 import type { CandidateProfile } from "../candidate/types.js";
 import type { InputQuestion } from "../questions/types.js";
 import type { ResolvedAnswer } from "../answers/types.js";
-import { getErrorMessage } from "../utils/errors.js";
+import {
+  getErrorMessage,
+  serializeError,
+  type SerializableError,
+} from "../utils/errors.js";
+import type { SiteFeedbackSnapshot } from "../browser/siteFeedback.js";
+import { repairAnswerFromSiteFeedback } from "../questions/strategies/aiCorrection.js";
 
 export type EasyApplyPrimaryAction = "next" | "review" | "submit" | "unknown";
 
@@ -19,6 +25,13 @@ export interface EasyApplyAnsweredQuestion {
   resolved: ResolvedAnswer;
   filled: boolean;
   details?: string;
+  aiCorrectionAttempt?: {
+    validationFeedback: string;
+    previousAnswer: unknown;
+    correctedAnswer: unknown;
+    outcome: "same_answer" | "retry_succeeded" | "retry_failed" | "repair_failed";
+    finalFeedback?: string | null;
+  };
 }
 
 export interface EasyApplyStepReport {
@@ -26,6 +39,7 @@ export interface EasyApplyStepReport {
   questions: EasyApplyAnsweredQuestion[];
   action: EasyApplyPrimaryAction;
   stateSnapshot?: EasyApplyStepStateSnapshot;
+  siteFeedback?: SiteFeedbackSnapshot;
 }
 
 export interface EasyApplyStepStateSnapshot {
@@ -52,6 +66,23 @@ export interface EasyApplyReviewDiagnostics {
   }>;
 }
 
+export interface EasyApplyExternalApplicationHandoff {
+  sourceUrl: string;
+  externalApplyUrl: string;
+  canonicalUrl: string;
+  runType: "dry-run" | "submit";
+  status: "completed" | "failed";
+  finalStage?: string;
+  stopReason?: string;
+  platform?: string;
+  reportPath?: string;
+}
+
+export interface EasyApplyExternalDetection {
+  source: "explicit_company_website_cta" | "header_apply_fallback";
+  signals: string[];
+}
+
 export interface EasyApplyRunResult {
   status:
     | "submitted"
@@ -64,8 +95,17 @@ export interface EasyApplyRunResult {
   stopReason: string;
   url: string;
   externalApplyUrl?: string;
+  externalDetection?: EasyApplyExternalDetection;
+  externalApplication?: EasyApplyExternalApplicationHandoff;
   reviewDiagnostics?: EasyApplyReviewDiagnostics;
+  siteFeedback?: SiteFeedbackSnapshot;
   alreadyApplied?: boolean;
+  error?: SerializableError;
+  recovery?: {
+    attempted: boolean;
+    succeeded: boolean;
+    message: string;
+  };
 }
 
 export interface EasyApplyJobEvaluation {
@@ -75,6 +115,7 @@ export interface EasyApplyJobEvaluation {
   reason: string;
   policyAllowed: boolean;
   alreadyApplied?: boolean;
+  error?: SerializableError;
   diagnostics?: {
     title?: string | null;
     company?: string | null;
@@ -116,6 +157,7 @@ export interface EasyApplyDriver {
   isEasyApplyAvailable(): Promise<boolean>;
   isExternalApplyAvailable?(): Promise<boolean>;
   getExternalApplyUrl?(): Promise<string | null>;
+  getExternalApplyDetection?(): Promise<EasyApplyExternalDetection | null>;
   isAlreadyApplied?(): Promise<boolean>;
   openEasyApply(): Promise<void>;
   collectQuestions(): Promise<EasyApplyQuestionView[]>;
@@ -124,6 +166,7 @@ export interface EasyApplyDriver {
   goToNextResultsPage(): Promise<boolean>;
   collectStepState?(): Promise<EasyApplyStepStateSnapshot>;
   collectReviewDiagnostics?(): Promise<EasyApplyReviewDiagnostics>;
+  collectSiteFeedback?(): Promise<SiteFeedbackSnapshot>;
   fillAnswer(
     question: EasyApplyQuestionView,
     resolved: ResolvedAnswer,
@@ -131,6 +174,7 @@ export interface EasyApplyDriver {
   getPrimaryAction(): Promise<EasyApplyPrimaryAction>;
   advance(action: "next" | "review" | "submit"): Promise<void>;
   dismissCompletionModal?(): Promise<boolean>;
+  confirmExternalApplicationFinished?(): Promise<boolean>;
 }
 
 interface EasyApplyRunInput {
@@ -196,6 +240,24 @@ export type EasyApplyBatchEvent =
       result: EasyApplyRunResult;
     }
   | {
+      type: "job_processing_failed";
+      collectionUrl: string;
+      jobUrl: string;
+      pageNumber: number;
+      attemptIndex: number;
+      evaluation: EasyApplyJobEvaluation;
+      error: SerializableError;
+    }
+  | {
+      type: "job_processing_recovered";
+      collectionUrl: string;
+      jobUrl: string;
+      pageNumber: number;
+      attemptIndex: number;
+      recovered: boolean;
+      message: string;
+    }
+  | {
       type: "page_advanced";
       collectionUrl: string;
       pageNumber: number;
@@ -210,16 +272,95 @@ interface StepExecutionResult {
   report: EasyApplyStepReport;
   hasRequiredManualReview: boolean;
   stepSignature: string;
+  siteFeedback?: SiteFeedbackSnapshot;
 }
 
 type SubmitMode = "dry-run" | "submit";
 
-function buildJobProcessingFailure(url: string, error: unknown): EasyApplyRunResult {
+export function resolveLinkedInExternalApplyUrl(
+  value: string | null | undefined,
+): string | null {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  if (!/^https?:\/\//i.test(normalized)) {
+    return normalized;
+  }
+
+  try {
+    const parsed = new URL(normalized);
+    const wrappedTarget = parsed.searchParams.get("url");
+    return wrappedTarget ? wrappedTarget : parsed.toString();
+  } catch {
+    return normalized;
+  }
+}
+
+function formatErrorForJobProcessing(error: unknown): {
+  summary: string;
+  serialized: SerializableError;
+} {
+  const serialized = serializeError(error);
+  const chain: SerializableError[] = [];
+  let current: SerializableError | undefined = serialized;
+  while (current) {
+    chain.push(current);
+    current = current.cause;
+  }
+
+  const head = chain[0] ?? serialized;
+  const parts = [
+    head.phase ? `phase=${head.phase}` : null,
+    head.code ? `code=${head.code}` : null,
+    head.message ? `message=${head.message}` : null,
+  ].filter(Boolean);
+
+  const detailParts = Object.entries(head.details ?? {})
+    .filter(([, value]) =>
+      typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+    )
+    .slice(0, 6)
+    .map(([key, value]) => `${key}=${String(value)}`);
+  if (detailParts.length > 0) {
+    parts.push(`details(${detailParts.join(", ")})`);
+  }
+
+  if (chain.length > 1) {
+    const causeSummary = chain
+      .slice(1)
+      .map((entry) => {
+        const causeParts = [
+          entry.phase ? `phase=${entry.phase}` : null,
+          entry.code ? `code=${entry.code}` : null,
+          entry.message,
+        ].filter(Boolean);
+        return causeParts.join(" ");
+      })
+      .join(" | cause: ");
+    parts.push(`cause: ${causeSummary}`);
+  }
+
+  return {
+    summary: parts.join("; "),
+    serialized,
+  };
+}
+
+function buildJobProcessingFailure(
+  url: string,
+  error: unknown,
+  recovery?: EasyApplyRunResult["recovery"],
+): EasyApplyRunResult {
+  const formatted = formatErrorForJobProcessing(error);
   return {
     status: "stopped_unknown_action",
     steps: [],
-    stopReason: `Job processing failed: ${getErrorMessage(error)}`,
+    stopReason: `Job processing failed: ${formatted.summary || getErrorMessage(error)}`,
     url,
+    error: formatted.serialized,
+    ...(recovery ? { recovery } : {}),
   };
 }
 
@@ -233,6 +374,21 @@ function buildAlreadyAppliedBatchResult(url: string): EasyApplyBatchJobResult {
       reason: "Job already has a LinkedIn applied badge.",
       policyAllowed: true,
       alreadyApplied: true,
+    },
+  };
+}
+
+function buildEvaluationFailureResult(url: string, error: unknown): EasyApplyBatchJobResult {
+  const formatted = formatErrorForJobProcessing(error);
+  return {
+    url,
+    evaluation: {
+      shouldApply: false,
+      finalDecision: "SKIP",
+      score: 0,
+      reason: `Job evaluation failed: ${formatted.summary || getErrorMessage(error)}`,
+      policyAllowed: false,
+      error: formatted.serialized,
     },
   };
 }
@@ -265,6 +421,29 @@ async function processApprovedBatchJob(
     },
     submitMode,
   );
+}
+
+async function recoverBatchAfterJobFailure(
+  input: EasyApplyBatchRunInput,
+  failedJobUrl: string,
+): Promise<NonNullable<EasyApplyRunResult["recovery"]>> {
+  try {
+    await input.driver.ensureAuthenticated(input.url);
+    await input.driver.openCollection(input.url);
+    return {
+      attempted: true,
+      succeeded: true,
+      message: `Recovered batch context after failure on ${failedJobUrl} by reopening the LinkedIn collection.`,
+    };
+  } catch (recoveryError) {
+    const recoveryMessage = getErrorMessage(recoveryError);
+    return {
+      attempted: true,
+      succeeded: false,
+      message:
+        `Failed to recover batch context after failure on ${failedJobUrl}: ${recoveryMessage}`,
+    };
+  }
 }
 
 function createSkippedAnswer(
@@ -350,8 +529,13 @@ async function stopIfApplyUnavailable(
 
   const externalApplyAvailable =
     (await driver.isExternalApplyAvailable?.()) === true;
+  const externalDetection = externalApplyAvailable
+    ? ((await driver.getExternalApplyDetection?.()) ?? undefined)
+    : undefined;
   const externalApplyUrl = externalApplyAvailable
-    ? ((await driver.getExternalApplyUrl?.()) ?? undefined)
+    ? (resolveLinkedInExternalApplyUrl(
+        (await driver.getExternalApplyUrl?.()) ?? undefined,
+      ) ?? undefined)
     : undefined;
 
   if ((await driver.isAlreadyApplied?.()) === true) {
@@ -372,6 +556,7 @@ async function stopIfApplyUnavailable(
         "This LinkedIn job redirects to an external application page.",
       url,
       ...(externalApplyUrl ? { externalApplyUrl } : {}),
+      ...(externalDetection ? { externalDetection } : {}),
     };
   }
 
@@ -430,24 +615,78 @@ async function prepareQuestionAnswer(args: {
     };
   }
 
-  const filled = isManualReviewAnswer(resolved)
+  // Keep the originally resolved answer unless the site rejects it and AI produces a better retry value.
+  let finalResolved = resolved;
+  let aiCorrectionAttempt: EasyApplyAnsweredQuestion["aiCorrectionAttempt"];
+  let filled = isManualReviewAnswer(resolved)
     ? {
         filled: false,
         details: "Skipped because it is marked for manual review.",
       }
     : await input.driver.fillAnswer(question, resolved);
 
+  if (!filled.filled && filled.details && !isManualReviewAnswer(resolved)) {
+    const validationFeedback = filled.details;
+    const corrected = await repairAnswerFromSiteFeedback({
+      question,
+      candidateProfile: input.candidateProfile,
+      previousAnswer: resolved,
+      validationFeedback,
+    }).catch(() => null);
+
+    if (!corrected) {
+      aiCorrectionAttempt = {
+        validationFeedback,
+        previousAnswer: resolved.answer,
+        correctedAnswer: null,
+        outcome: "repair_failed",
+      };
+    }
+
+    if (
+      corrected &&
+      corrected.answer != null &&
+      JSON.stringify(corrected.answer) !== JSON.stringify(resolved.answer)
+    ) {
+      const correctedFill = await input.driver.fillAnswer(question, corrected);
+      finalResolved = corrected;
+      filled = correctedFill.filled
+        ? {
+            filled: true,
+            details: "Filled successfully after AI corrected the value using site feedback.",
+          }
+        : correctedFill;
+      aiCorrectionAttempt = {
+        validationFeedback,
+        previousAnswer: resolved.answer,
+        correctedAnswer: corrected.answer,
+        outcome: correctedFill.filled ? "retry_succeeded" : "retry_failed",
+        ...(correctedFill.filled ? {} : { finalFeedback: correctedFill.details ?? null }),
+      };
+    } else if (corrected) {
+      aiCorrectionAttempt = {
+        validationFeedback,
+        previousAnswer: resolved.answer,
+        correctedAnswer: corrected.answer,
+        outcome: "same_answer",
+        finalFeedback: validationFeedback,
+      };
+    }
+  }
+
   return {
     answeredQuestion: {
       question,
-      resolved,
+      resolved: finalResolved,
       filled: filled.filled,
       ...(filled.details ? { details: filled.details } : {}),
+      ...(aiCorrectionAttempt ? { aiCorrectionAttempt } : {}),
     },
     hasRequiredManualReview: question.required && !filled.filled,
   };
 }
 
+// Executes one Easy Apply step end-to-end: collect visible questions, answer them, and snapshot the surface state.
 async function executeStep(args: {
   input: EasyApplyRunInput;
   stepIndex: number;
@@ -466,6 +705,7 @@ async function executeStep(args: {
       hasRequiredManualReview || prepared.hasRequiredManualReview;
   }
 
+  const siteFeedback = await args.input.driver.collectSiteFeedback?.();
   const stateSnapshot = await args.input.driver.collectStepState?.();
   const action = stateSnapshot?.primaryAction ?? await args.input.driver.getPrimaryAction();
   const stepSignature = JSON.stringify({
@@ -484,12 +724,15 @@ async function executeStep(args: {
       questions: answeredQuestions,
       action,
       ...(stateSnapshot ? { stateSnapshot } : {}),
+      ...(siteFeedback && siteFeedback.messages.length > 0 ? { siteFeedback } : {}),
     },
     hasRequiredManualReview,
     stepSignature,
+    ...(siteFeedback && siteFeedback.messages.length > 0 ? { siteFeedback } : {}),
   };
 }
 
+// Main provider-agnostic Easy Apply loop shared by dry-run and live submission modes.
 async function runEasyApplyInternal(
   input: EasyApplyRunInput,
   submitMode: SubmitMode,
@@ -511,10 +754,14 @@ async function runEasyApplyInternal(
 
   const steps: EasyApplyStepReport[] = [];
   let lastStepSignature: string | null = null;
+  let latestSiteFeedback: SiteFeedbackSnapshot | undefined;
 
   for (let stepIndex = 0; stepIndex < maxSteps; stepIndex += 1) {
     const step = await executeStep({ input, stepIndex });
     steps.push(step.report);
+    if (step.siteFeedback && step.siteFeedback.messages.length > 0) {
+      latestSiteFeedback = step.siteFeedback;
+    }
 
     if (step.report.action === "submit") {
       if (submitMode === "dry-run") {
@@ -524,6 +771,7 @@ async function runEasyApplyInternal(
           stopReason:
             "Reached the final submit step. Dry run stops before submission.",
           url: input.url,
+          ...(latestSiteFeedback ? { siteFeedback: latestSiteFeedback } : {}),
         };
       }
 
@@ -534,6 +782,7 @@ async function runEasyApplyInternal(
           stopReason:
             "A required Easy Apply question needs manual review before submitting.",
           url: input.url,
+          ...(latestSiteFeedback ? { siteFeedback: latestSiteFeedback } : {}),
         };
       }
 
@@ -545,6 +794,7 @@ async function runEasyApplyInternal(
         steps,
         stopReason: "Application submitted successfully.",
         url: input.url,
+        ...(latestSiteFeedback ? { siteFeedback: latestSiteFeedback } : {}),
       };
     }
 
@@ -562,6 +812,7 @@ async function runEasyApplyInternal(
             : "Review step repeated without advancing.",
           url: input.url,
           ...(reviewDiagnostics ? { reviewDiagnostics } : {}),
+          ...(latestSiteFeedback ? { siteFeedback: latestSiteFeedback } : {}),
         };
       }
 
@@ -576,6 +827,7 @@ async function runEasyApplyInternal(
         steps,
         stopReason: "A required Easy Apply question needs manual review.",
         url: input.url,
+        ...(latestSiteFeedback ? { siteFeedback: latestSiteFeedback } : {}),
       };
     }
 
@@ -590,6 +842,7 @@ async function runEasyApplyInternal(
       steps,
       stopReason: "Could not determine the next Easy Apply action.",
       url: input.url,
+      ...(latestSiteFeedback ? { siteFeedback: latestSiteFeedback } : {}),
     };
   }
 
@@ -598,6 +851,7 @@ async function runEasyApplyInternal(
     steps,
     stopReason: `Exceeded the Easy Apply step limit of ${maxSteps}.`,
     url: input.url,
+    ...(latestSiteFeedback ? { siteFeedback: latestSiteFeedback } : {}),
   };
 }
 
@@ -617,6 +871,7 @@ export async function runEasyApplyBatchInternal(
   let pagesVisited = 0;
   let skippedCount = 0;
   let attemptedCount = 0;
+  let interruptedReason: string | null = null;
 
   await input.driver.ensureAuthenticated(input.url);
   await input.driver.openCollection(input.url);
@@ -659,7 +914,22 @@ export async function runEasyApplyBatchInternal(
         continue;
       }
 
-      const evaluation = await input.evaluateJob(url);
+      let evaluation: EasyApplyJobEvaluation;
+      try {
+        evaluation = await input.evaluateJob(url);
+      } catch (error) {
+        skippedCount += 1;
+        const failedEvaluation = buildEvaluationFailureResult(url, error);
+        jobs.push(failedEvaluation);
+        await input.observeBatchEvent?.({
+          type: "job_evaluated",
+          collectionUrl: input.url,
+          jobUrl: url,
+          pageNumber: pagesVisited,
+          evaluation: failedEvaluation.evaluation,
+        });
+        continue;
+      }
       await input.observeBatchEvent?.({
         type: "job_evaluated",
         collectionUrl: input.url,
@@ -688,7 +958,30 @@ export async function runEasyApplyBatchInternal(
         });
         entry.result = await processApprovedBatchJob(input, url, submitMode);
       } catch (error) {
-        entry.result = buildJobProcessingFailure(url, error);
+        const serializedError = serializeError(error);
+        await input.observeBatchEvent?.({
+          type: "job_processing_failed",
+          collectionUrl: input.url,
+          jobUrl: url,
+          pageNumber: pagesVisited,
+          attemptIndex: attemptedCount + 1,
+          evaluation,
+          error: serializedError,
+        });
+        const recovery = await recoverBatchAfterJobFailure(input, url);
+        await input.observeBatchEvent?.({
+          type: "job_processing_recovered",
+          collectionUrl: input.url,
+          jobUrl: url,
+          pageNumber: pagesVisited,
+          attemptIndex: attemptedCount + 1,
+          recovered: recovery.succeeded,
+          message: recovery.message,
+        });
+        entry.result = buildJobProcessingFailure(url, error, recovery);
+        if (!(recovery?.succeeded ?? false)) {
+          interruptedReason = recovery?.message ?? "Batch recovery failed after job processing error.";
+        }
       }
       await input.observeBatchEvent?.({
         type: "job_processing_finished",
@@ -701,11 +994,17 @@ export async function runEasyApplyBatchInternal(
       });
 
       attemptedCount += 1;
+      if (interruptedReason) {
+        break;
+      }
       if (attemptedCount >= requestedCount) {
         break;
       }
     }
 
+    if (interruptedReason) {
+      break;
+    }
     if (attemptedCount >= requestedCount) {
       break;
     }
@@ -739,10 +1038,20 @@ export async function runEasyApplyBatchInternal(
   }
 
   const status = attemptedCount >= requestedCount ? "completed" : "partial";
+  const approvedJobs = jobs.filter((job) => job.evaluation.shouldApply);
+  const incompleteApprovedJobs = approvedJobs.filter((job) =>
+    job.result != null &&
+    job.result.status !== "submitted" &&
+    job.result.status !== "ready_to_submit"
+  );
   const stopReason =
-    status === "completed"
-      ? `Processed ${attemptedCount} LinkedIn Easy Apply job(s).`
-      : `Only found and processed ${attemptedCount} matching LinkedIn Easy Apply job(s) before pagination ended.`;
+    interruptedReason
+      ? interruptedReason
+      : status === "completed"
+      ? `Processed ${attemptedCount} LinkedIn apply job(s).`
+      : incompleteApprovedJobs.length > 0
+        ? `Processed ${attemptedCount} approved LinkedIn apply job(s), but ${incompleteApprovedJobs.length} attempt(s) stopped before completion.`
+        : `Only found and processed ${attemptedCount} matching LinkedIn apply job(s) before pagination ended.`;
 
   return {
     status,

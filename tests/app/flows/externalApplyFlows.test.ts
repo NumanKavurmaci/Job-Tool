@@ -66,7 +66,12 @@ function createFlowPage(args: {
 
   return {
     goto,
-    evaluate: args.evaluate,
+    evaluate(callback: unknown, ...rest: unknown[]) {
+      if (typeof callback === "function") {
+        return Promise.resolve([]);
+      }
+      return args.evaluate(callback as never, ...(rest as never[]));
+    },
     waitForTimeout: vi.fn(async () => undefined),
     locator(selector: string) {
       return {
@@ -456,4 +461,5 @@ describe("external apply flows", () => {
       }),
     });
   });
+
 });

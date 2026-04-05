@@ -1,4 +1,5 @@
 import type {
+  EasyApplyExternalApplicationHandoff,
   EasyApplyBatchJobResult,
   EasyApplyBatchRunResult,
   EasyApplyRunResult,
@@ -70,9 +71,37 @@ export function mapEasyApplyStatusToHistoryStatus(
   return "FAILED";
 }
 
+function mapExternalHandoffToHistoryStatus(
+  handoff: EasyApplyExternalApplicationHandoff | undefined,
+): "READY_TO_SUBMIT" | "SUBMITTED" | "FAILED" | null {
+  if (!handoff || handoff.status !== "completed") {
+    return handoff?.status === "failed" ? "FAILED" : null;
+  }
+
+  if (handoff.finalStage === "completed" || handoff.finalStage === "final_submit_step") {
+    return handoff.runType === "submit" ? "SUBMITTED" : "READY_TO_SUBMIT";
+  }
+
+  return "FAILED";
+}
+
+export function mapCombinedEasyApplyResultToHistoryStatus(
+  result: EasyApplyRunResult,
+  finalDecision?: "APPLY" | "MAYBE" | "SKIP",
+): "READY_TO_SUBMIT" | "SUBMITTED" | "FAILED" | "SKIPPED" | "SKIPPED_DUE_TO_EASY_APPLY_RUN" {
+  const handoffStatus = mapExternalHandoffToHistoryStatus(
+    result.externalApplication,
+  );
+  if (handoffStatus) {
+    return handoffStatus;
+  }
+
+  return mapEasyApplyStatusToHistoryStatus(result.status, finalDecision);
+}
+
 export async function persistBatchJobHistory(
   args: {
-    source: "easy-apply-batch" | "easy-apply-dry-run";
+    source: "easy-apply-batch" | "easy-apply-dry-run" | "apply-batch";
     threshold: number;
     jobs: EasyApplyBatchJobResult[];
   },
@@ -110,8 +139,8 @@ export async function persistBatchJobHistory(
         {
           jobUrl: job.url,
           source: args.source,
-          status: mapEasyApplyStatusToHistoryStatus(
-            job.result.status,
+          status: mapCombinedEasyApplyResultToHistoryStatus(
+            job.result,
             job.evaluation.finalDecision,
           ),
           score: job.evaluation.score,
@@ -123,6 +152,21 @@ export async function persistBatchJobHistory(
           details: {
             easyApplyStatus: job.result.status,
             stepCount: job.result.steps.length,
+            ...(job.result.externalApplyUrl
+              ? { externalApplyUrl: job.result.externalApplyUrl }
+              : {}),
+            ...(job.result.externalApplication
+              ? {
+                  externalApplication: {
+                    canonicalUrl: job.result.externalApplication.canonicalUrl,
+                    status: job.result.externalApplication.status,
+                    finalStage: job.result.externalApplication.finalStage ?? null,
+                    stopReason: job.result.externalApplication.stopReason ?? null,
+                    platform: job.result.externalApplication.platform ?? null,
+                    reportPath: job.result.externalApplication.reportPath ?? null,
+                  },
+                }
+              : {}),
           },
         },
         deps,
@@ -235,7 +279,7 @@ export function collectBatchRunAnomalies(result: EasyApplyBatchRunResult): Array
 
 export async function persistBatchRunAnomalies(
   args: {
-    runType: "easy-apply-batch" | "easy-apply-dry-run";
+    runType: "easy-apply-batch" | "easy-apply-dry-run" | "apply-batch";
     collectionUrl: string;
     result: EasyApplyBatchRunResult;
   },

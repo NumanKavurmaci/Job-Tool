@@ -19,7 +19,9 @@ This file maps all `src/` files to their purpose.
 
 - [src/app/flows/jobFlow.ts](../src/app/flows/jobFlow.ts): `score` and `decide` job-analysis flow.
 - [src/app/flows/profileFlows.ts](../src/app/flows/profileFlows.ts): `build-profile` and `answer-questions` orchestration.
-- [src/app/flows/easyApplyFlows.ts](../src/app/flows/easyApplyFlows.ts): Single-job and batch LinkedIn Easy Apply orchestration.
+- [src/app/flows/linkedinFlows.ts](../src/app/flows/linkedinFlows.ts): Easy Apply-only public flow surface for single-job and batch LinkedIn runs.
+- [src/app/flows/applyFlows.ts](../src/app/flows/applyFlows.ts): All-apply public flow surface that can continue from LinkedIn into external applications.
+- [src/app/flows/linkedinApplyShared.ts](../src/app/flows/linkedinApplyShared.ts): Shared LinkedIn orchestration, persistence, external handoff, and observability helpers.
 - [src/app/flows/externalApplyFlows.ts](../src/app/flows/externalApplyFlows.ts): External application dry-run/live orchestration, precursor-link routing, persistence, and artifact writing.
 
 ## `src/adapters/`
@@ -43,6 +45,7 @@ This file maps all `src/` files to their purpose.
 ## `src/browser/`
 
 - [src/browser/playwright.ts](../src/browser/playwright.ts): Shared Playwright launcher, persistent profile support, and browser/session wiring.
+- [src/browser/siteFeedback.ts](../src/browser/siteFeedback.ts): Shared types and merge helpers for site-visible errors, warnings, and info messages.
 
 ## `src/candidate/`
 
@@ -131,6 +134,7 @@ This file maps all `src/` files to their purpose.
 - [src/questions/strategies/resumeAware.ts](../src/questions/strategies/resumeAware.ts): Resume/profile-derived answers for structured questions.
 - [src/questions/strategies/generated.ts](../src/questions/strategies/generated.ts): Short-answer generation strategy.
 - [src/questions/strategies/aiFallback.ts](../src/questions/strategies/aiFallback.ts): Last-resort LLM grounded answer strategy.
+- [src/questions/strategies/aiCorrection.ts](../src/questions/strategies/aiCorrection.ts): LLM-driven retry strategy that repairs a rejected field value using site feedback.
 - [src/questions/strategies/manualReview.ts](../src/questions/strategies/manualReview.ts): Explicit manual-review fallback behavior.
 
 ## `src/scoring/`

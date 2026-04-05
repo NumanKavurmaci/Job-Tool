@@ -2,6 +2,7 @@ import type { Locator, Page } from "@playwright/test";
 import { ensureLinkedInAuthenticated } from "../adapters/LinkedInAdapter.js";
 import type {
   EasyApplyDriver,
+  EasyApplyExternalDetection,
   EasyApplyPrimaryAction,
   EasyApplyReviewDiagnostics,
   EasyApplyStepStateSnapshot,
@@ -9,6 +10,7 @@ import type {
 } from "./easyApply.js";
 import { chooseRadioValue } from "./easyApply.js";
 import type { ResolvedAnswer } from "../answers/types.js";
+import { createEmptySiteFeedbackSnapshot, type SiteFeedbackSnapshot } from "../browser/siteFeedback.js";
 
 const EASY_APPLY_TRIGGER_SELECTOR = [
   "button[aria-label*='Easy Apply']",
@@ -23,6 +25,17 @@ const EXTERNAL_APPLY_TRIGGER_SELECTOR = [
   "button#jobs-apply-button-id[role='link']",
   "button.jobs-apply-button[aria-label*='company website']",
   "a[aria-label*='company website']",
+].join(", ");
+const EXTERNAL_RESPONSES_MANAGED_OFF_LINKEDIN_SELECTOR = [
+  "p:has-text('Responses managed off LinkedIn')",
+  "span:has-text('Responses managed off LinkedIn')",
+  "div:has-text('Responses managed off LinkedIn')",
+].join(", ");
+const EXTERNAL_HEADER_APPLY_FALLBACK_SELECTOR = [
+  "a[aria-label*='Apply on company website']",
+  "button[aria-label*='Apply on company website']",
+  "a[href*='linkedin.com/safety/go']:has-text('Apply')",
+  "a[target='_blank'][href*='linkedin.com/safety/go']",
 ].join(", ");
 
 const SAFETY_REMINDER_TITLE_SELECTOR = [
@@ -42,6 +55,56 @@ const CONTINUE_APPLYING_SELECTOR = [
   "a[href*='/apply/'][href*='openSDUIApplyFlow=true']",
 ].join(", ");
 
+const EXTERNAL_APPLICATION_FINISHED_PROMPT_SELECTOR = [
+  "p:has-text('Did you finish applying?')",
+  "div:has-text('Did you finish applying?')",
+].join(", ");
+
+const EXTERNAL_APPLICATION_FINISHED_CONFIRM_SELECTOR = [
+  "a:has-text('Yes')",
+  "button:has-text('Yes')",
+].join(", ");
+
+function buildInlineValidationHelperScript(): string {
+  return `
+    const jobToolNormalize = (value) => (value ?? "").replace(/\\s+/g, " ").trim();
+    const collectInlineValidationMessages = (root, element) => {
+      const describedByIds = jobToolNormalize(element.getAttribute("aria-describedby"))
+        .split(/\\s+/)
+        .filter(Boolean);
+      const messages = [];
+      const seen = new Set();
+
+      const addMessage = (value) => {
+        const message = jobToolNormalize(value);
+        if (!message || seen.has(message)) {
+          return;
+        }
+        seen.add(message);
+        messages.push(message);
+      };
+
+      for (const id of describedByIds) {
+        const describedElement = root.ownerDocument?.getElementById(id);
+        if (!describedElement || !(root === describedElement || root.contains(describedElement))) {
+          continue;
+        }
+        addMessage(describedElement.textContent);
+      }
+
+      const fieldContainer = element.closest(".fb-dash-form-element, .jobs-easy-apply-form-section__grouping, .artdeco-text-input");
+      if (fieldContainer) {
+        for (const candidate of fieldContainer.querySelectorAll("[role='alert'], .artdeco-inline-feedback__message, .fb-form-element__error")) {
+          addMessage(candidate.textContent);
+        }
+      }
+
+      return messages;
+    };
+  `;
+}
+
+// Reads the currently visible Easy Apply controls and annotates them with job-tool-specific metadata.
 async function annotateQuestions(page: Page): Promise<EasyApplyQuestionView[]> {
   const dialog = page.locator(".jobs-easy-apply-modal, [role='dialog']").first();
   const script = `
@@ -67,6 +130,8 @@ async function annotateQuestions(page: Page): Promise<EasyApplyQuestionView[]> {
         ""
       ).replace(/\\s+/g, " ").trim();
     };
+
+    ${buildInlineValidationHelperScript()}
 
     const results = [];
     let counter = 0;
@@ -128,13 +193,31 @@ async function annotateQuestions(page: Page): Promise<EasyApplyQuestionView[]> {
           ? control.selectedOptions[0].textContent.trim()
           : "")
         : ((control.value || "").trim());
+      const semanticHints = [
+        control.getAttribute("id"),
+        control.getAttribute("name"),
+        control.getAttribute("data-test-form-element"),
+        control.getAttribute("aria-describedby"),
+        control.getAttribute("placeholder"),
+        getLabel(modal, control),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      const inlineValidationMessages = collectInlineValidationMessages(modal, control);
       const expectsDecimal = (control.getAttribute("inputmode") || "").toLowerCase() === "decimal"
         || (control.getAttribute("type") || "").toLowerCase() === "number"
-        || (control.getAttribute("step") || "").includes(".");
+        || (control.getAttribute("step") || "").includes(".")
+        || semanticHints.includes("numeric")
+        || inlineValidationMessages.some((message) => /decimal|numeric|number|say[ıi]|rakam/.test(message.toLowerCase()));
       const isPrefilled = Boolean(
         currentValue &&
         (!options || !["select an option", "choose an option", "please select"].includes(currentValue.toLowerCase())),
       );
+      const validationMessage = [
+        ...inlineValidationMessages,
+        (("validationMessage" in control ? control.validationMessage : "") || "").replace(/\\s+/g, " ").trim(),
+      ].find(Boolean) || null;
 
       results.push({
         fieldKey,
@@ -145,7 +228,7 @@ async function annotateQuestions(page: Page): Promise<EasyApplyQuestionView[]> {
         currentValue: currentValue || null,
         isPrefilled,
         expectsDecimal,
-        validationMessage: control.validationMessage || null,
+        validationMessage,
         ...(options && options.length > 0 ? { options } : {}),
         required: control.hasAttribute("required") || control.getAttribute("aria-required") === "true",
       });
@@ -162,6 +245,48 @@ async function annotateQuestions(page: Page): Promise<EasyApplyQuestionView[]> {
 
 export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
   constructor(private page: Page) {}
+
+  // LinkedIn keeps changing the external-apply CTA markup. We first prefer the
+  // explicit company-website selectors, then fall back to the generic header
+  // Apply CTA only when the page also says responses are managed off LinkedIn.
+  private async resolveExternalApplyTrigger(): Promise<{
+    locator: Locator;
+    detection: EasyApplyExternalDetection;
+  } | null> {
+    const explicitTrigger = this.page.locator(EXTERNAL_APPLY_TRIGGER_SELECTOR).first();
+    if ((await explicitTrigger.count()) > 0) {
+      return {
+        locator: explicitTrigger,
+        detection: {
+          source: "explicit_company_website_cta",
+          signals: ["selector:explicit_company_website_cta"],
+        },
+      };
+    }
+
+    const offLinkedInSignal = this.page
+      .locator(EXTERNAL_RESPONSES_MANAGED_OFF_LINKEDIN_SELECTOR)
+      .first();
+    if ((await offLinkedInSignal.count()) === 0) {
+      return null;
+    }
+
+    const fallbackTrigger = this.page
+      .locator(EXTERNAL_HEADER_APPLY_FALLBACK_SELECTOR)
+      .first();
+    return (await fallbackTrigger.count()) > 0
+      ? {
+          locator: fallbackTrigger,
+          detection: {
+            source: "header_apply_fallback",
+            signals: [
+              "signal:responses_managed_off_linkedin",
+              "selector:header_apply_fallback",
+            ],
+          },
+        }
+      : null;
+  }
 
   private isBlankPage(page: Page): boolean {
     const url = page.url().trim().toLowerCase();
@@ -269,15 +394,15 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
   }
 
   async isExternalApplyAvailable(): Promise<boolean> {
-    const locator = this.page.locator(EXTERNAL_APPLY_TRIGGER_SELECTOR).first();
-    return (await locator.count()) > 0;
+    return (await this.resolveExternalApplyTrigger()) !== null;
   }
 
   async getExternalApplyUrl(): Promise<string | null> {
-    const locator = this.page.locator(EXTERNAL_APPLY_TRIGGER_SELECTOR).first();
-    if ((await locator.count()) === 0) {
+    const resolved = await this.resolveExternalApplyTrigger();
+    if (!resolved) {
       return null;
     }
+    const locator = resolved.locator;
 
     const href = await locator.getAttribute("href").catch(() => null);
     if (href) {
@@ -286,6 +411,10 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
 
     const ariaLabel = await locator.getAttribute("aria-label").catch(() => null);
     return ariaLabel ? `linkedin-external:${ariaLabel}` : null;
+  }
+
+  async getExternalApplyDetection(): Promise<EasyApplyExternalDetection | null> {
+    return (await this.resolveExternalApplyTrigger())?.detection ?? null;
   }
 
   async isAlreadyApplied(): Promise<boolean> {
@@ -344,6 +473,81 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
   async collectQuestions(): Promise<EasyApplyQuestionView[]> {
     await this.continuePastSafetyReminder().catch(() => undefined);
     return annotateQuestions(this.page);
+  }
+
+  // Collects user-visible LinkedIn feedback so orchestration can persist or react to it.
+  async collectSiteFeedback(): Promise<SiteFeedbackSnapshot> {
+    await this.continuePastSafetyReminder().catch(() => undefined);
+    const dialog = this.page.locator(".jobs-easy-apply-modal, [role='dialog']").first();
+    const script = `
+      const normalize = (value) => (value ?? "").replace(/\\s+/g, " ").trim();
+      const elements = Array.from(
+        modal.querySelectorAll([
+          "[role='alert']",
+          "[aria-live='assertive']",
+          "[aria-live='polite']",
+          ".artdeco-inline-feedback",
+          ".artdeco-inline-feedback__message",
+          ".fb-form-element__error",
+          ".jobs-easy-apply-form-section__grouping .t-12.t-black--light",
+        ].join(", ")),
+      );
+      const messages = [];
+      const seen = new Set();
+      for (const element of elements) {
+        const message = normalize(element.textContent);
+        if (!message || seen.has(message)) {
+          continue;
+        }
+        seen.add(message);
+        const className = normalize(element.getAttribute("class")).toLowerCase();
+        const ariaLive = normalize(element.getAttribute("aria-live")).toLowerCase();
+        const severity =
+          className.includes("error") || ariaLive === "assertive"
+            ? "error"
+            : className.includes("warning")
+              ? "warning"
+              : "info";
+        messages.push({
+          severity,
+          message,
+          source: "linkedin.easy-apply",
+        });
+      }
+      return messages;
+    `;
+
+    const messages = await dialog.evaluate(
+      (modal, source) => new Function("modal", source)(modal),
+      script,
+    ).catch(() => []);
+
+    return {
+      ...createEmptySiteFeedbackSnapshot(),
+      messages,
+      errors: messages.filter((message: { severity: string }) => message.severity === "error").map((message: { message: string }) => message.message),
+      warnings: messages.filter((message: { severity: string }) => message.severity === "warning").map((message: { message: string }) => message.message),
+      infos: messages.filter((message: { severity: string }) => message.severity === "info").map((message: { message: string }) => message.message),
+    };
+  }
+
+  async confirmExternalApplicationFinished(): Promise<boolean> {
+    await this.page.bringToFront().catch(() => undefined);
+    const prompt = this.page.locator(EXTERNAL_APPLICATION_FINISHED_PROMPT_SELECTOR).first();
+    if ((await prompt.count().catch(() => 0)) === 0) {
+      return false;
+    }
+
+    const yesAction = this.page.locator(EXTERNAL_APPLICATION_FINISHED_CONFIRM_SELECTOR).filter({
+      hasText: /^Yes$/i,
+    }).first();
+    if ((await yesAction.count().catch(() => 0)) === 0) {
+      return false;
+    }
+
+    await this.clickFollowingNewPage(yesAction);
+    await this.page.waitForLoadState("domcontentloaded").catch(() => undefined);
+    return true;
   }
 
   async collectVisibleJobs() {
@@ -487,6 +691,7 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
     const dialog = this.page.locator(".jobs-easy-apply-modal, [role='dialog']").first();
     const script = `
       const normalize = (value) => (value ?? "").replace(/\\s+/g, " ").trim();
+      ${buildInlineValidationHelperScript()}
       const getLabel = (modal, element) => {
         const id = element.getAttribute("id");
         const byFor = id ? modal.querySelector('label[for="' + id + '"]') : null;
@@ -515,9 +720,10 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
 
       const blockingFields = Array.from(modal.querySelectorAll("input, textarea, select"))
         .map((element) => {
-          const validationMessage = normalize(
-            "validationMessage" in element ? element.validationMessage : "",
-          );
+          const validationMessage = [
+            ...collectInlineValidationMessages(modal, element),
+            normalize("validationMessage" in element ? element.validationMessage : ""),
+          ].find(Boolean) || "";
           const currentValue =
             element.tagName === "SELECT"
               ? normalize(element.selectedOptions[0] ? element.selectedOptions[0].textContent : "")
@@ -606,6 +812,7 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
     question: EasyApplyQuestionView,
     resolved: ResolvedAnswer,
   ): Promise<{ filled: boolean; details?: string }> {
+    // Applies one answer and immediately inspects site-level validation before claiming success.
     if (question.inputType === "radio") {
       const optionLabel = chooseRadioValue(question.options ?? [], resolved.answer);
       if (!optionLabel) {
@@ -620,15 +827,15 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
       try {
         await locator.click({ force: true });
       } catch {
-        await locator.evaluate((element) => {
-          const input = element as {
-            checked?: boolean;
-            dispatchEvent: (event: Event) => boolean;
-          };
-          input.checked = true;
-          input.dispatchEvent(new Event("input", { bubbles: true }));
-          input.dispatchEvent(new Event("change", { bubbles: true }));
-        });
+        await locator.evaluate(
+          (element, source) => new Function("element", source)(element),
+          `
+            const input = element;
+            input.checked = true;
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+          `,
+        );
       }
       return { filled: true };
     }
@@ -672,12 +879,72 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
       return { filled: false, details: "No value available for text input." };
     }
 
+    if (question.expectsDecimal) {
+      const normalizedNumericValue = value.replace(/\s+/g, "").replace(",", ".");
+      if (!/^\d+(\.\d+)?$/.test(normalizedNumericValue) || Number(normalizedNumericValue) <= 0) {
+        return {
+          filled: false,
+          details: "Expected a numeric answer greater than 0 for this LinkedIn field.",
+        };
+      }
+    }
+
     await locator.fill(value);
     await locator.blur();
+    await this.page.waitForTimeout(0);
 
-    const validationMessage = await locator.evaluate((element) =>
-      "validationMessage" in element ? String((element as { validationMessage?: string }).validationMessage || "") : "",
-    );
+    const validationMessage = await locator.evaluate((element) => {
+      const input = element as {
+        getAttribute?: (name: string) => string | null;
+        validationMessage?: string;
+        ownerDocument?: {
+          getElementById?: (id: string) => { textContent?: string | null } | null;
+        } | null;
+        closest?: (selector: string) => {
+          querySelectorAll?: (selector: string) => Iterable<{ textContent?: string | null }>;
+        } | null;
+      };
+      const describedByIds = String(input.getAttribute?.("aria-describedby") ?? "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean);
+      const messages: string[] = [];
+
+      const nativeMessage = String(input.validationMessage ?? "").replace(/\s+/g, " ").trim();
+      if (nativeMessage) {
+        messages.push(nativeMessage);
+      }
+
+      const rootDocument = input.ownerDocument;
+      for (const id of describedByIds) {
+        const describedElement = rootDocument?.getElementById?.(id);
+        if (!describedElement) {
+          continue;
+        }
+
+        const describedText = String(describedElement.textContent ?? "").replace(/\s+/g, " ").trim();
+        if (describedText && !messages.includes(describedText)) {
+          messages.push(describedText);
+        }
+      }
+
+      const fieldContainer = input.closest?.(
+        ".fb-dash-form-element, .jobs-easy-apply-form-section__grouping, .artdeco-text-input",
+      );
+      if (fieldContainer) {
+        for (const candidate of fieldContainer.querySelectorAll?.(
+          "[role='alert'], .artdeco-inline-feedback__message, .fb-form-element__error",
+        ) ?? []) {
+          const candidateText = String(candidate.textContent ?? "").replace(/\s+/g, " ").trim();
+          if (candidateText && !messages.includes(candidateText)) {
+            messages.push(candidateText);
+          }
+        }
+      }
+
+      return messages[0] ?? "";
+    });
     if (validationMessage) {
       return { filled: false, details: validationMessage };
     }

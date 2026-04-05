@@ -20,6 +20,7 @@ When you need to change behavior:
 - start with the source map to find the responsible module
 - use the test map to find the regression tests that should move with the change
 - use the Prisma map when persistence or schema behavior is involved
+- treat these docs as the source of truth for file ownership; update them when files, commands, or orchestration boundaries change
 
 When you need to debug runtime behavior:
 - check the source map for orchestration and observability modules

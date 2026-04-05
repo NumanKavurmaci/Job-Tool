@@ -1,9 +1,16 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+const { repairAnswerFromSiteFeedbackMock } = vi.hoisted(() => ({
+  repairAnswerFromSiteFeedbackMock: vi.fn(),
+}));
+vi.mock("../../src/questions/strategies/aiCorrection.js", () => ({
+  repairAnswerFromSiteFeedback: repairAnswerFromSiteFeedbackMock,
+}));
 import {
   chooseRadioValue,
   isAutoHandledQuestion,
   isManualReviewAnswer,
   isSubmitButtonLabel,
+  resolveLinkedInExternalApplyUrl,
   runEasyApply,
   runEasyApplyBatch,
   runEasyApplyBatchDryRun,
@@ -45,6 +52,11 @@ const profile = {
   sourceMetadata: {},
 } as const;
 
+beforeEach(() => {
+  repairAnswerFromSiteFeedbackMock.mockReset();
+  repairAnswerFromSiteFeedbackMock.mockResolvedValue(null);
+});
+
 describe("easy apply helpers", () => {
   it("detects submit labels and manual-review answers", () => {
     expect(isSubmitButtonLabel("Submit application")).toBe(true);
@@ -85,6 +97,22 @@ describe("easy apply helpers", () => {
         required: false,
       }),
     ).toBe(true);
+  });
+
+  it("unwraps LinkedIn safety redirect URLs for external apply targets", () => {
+    expect(
+      resolveLinkedInExternalApplyUrl(
+        "https://www.linkedin.com/safety/go/?url=https%3A%2F%2Fapply.workable.com%2Fj%2F64A61ED04E&urlhash=tq5M&isSdui=true",
+      ),
+    ).toBe("https://apply.workable.com/j/64A61ED04E");
+    expect(
+      resolveLinkedInExternalApplyUrl(
+        "https://www.linkedin.com/safety/go/?url=https%3A%2F%2Fjobs.lever.co%2Fcommencis%2Fa3be10ef-53ab-4842-b114-ae9f60b43e99&urlhash=kEke&isSdui=true",
+      ),
+    ).toBe("https://jobs.lever.co/commencis/a3be10ef-53ab-4842-b114-ae9f60b43e99");
+    expect(resolveLinkedInExternalApplyUrl("https://company.example/apply")).toBe(
+      "https://company.example/apply",
+    );
   });
 });
 
@@ -291,6 +319,71 @@ describe("runEasyApplyDryRun", () => {
 
     expect(result.status).toBe("stopped_manual_review");
     expect(result.steps[0]?.questions[0]?.details).toContain("decimal number");
+  });
+
+  it("stops when a required decimal field receives a non-numeric answer", async () => {
+    repairAnswerFromSiteFeedbackMock.mockResolvedValueOnce({
+      questionType: "salary",
+      strategy: "generated",
+      answer: "85000",
+      confidence: 0.8,
+      confidenceLabel: "high",
+      source: "llm",
+      notes: ["Corrected from site feedback."],
+    });
+    const driver = {
+      open: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn()
+        .mockResolvedValueOnce([
+          {
+            fieldKey: "q1",
+            label: "Net ücret beklentiniz nedir?",
+            inputType: "text",
+            required: true,
+            expectsDecimal: true,
+          },
+        ])
+        .mockResolvedValueOnce([]),
+      fillAnswer: vi.fn()
+        .mockResolvedValueOnce({
+          filled: false,
+          details: "Expected a numeric answer greater than 0 for this LinkedIn field.",
+        })
+        .mockResolvedValueOnce({
+          filled: true,
+        }),
+      getPrimaryAction: vi.fn()
+        .mockResolvedValueOnce("review")
+        .mockResolvedValueOnce("submit"),
+      advance: vi.fn(),
+    };
+
+    const result = await runEasyApplyDryRun({
+      driver,
+      url: "https://www.linkedin.com/jobs/view/1",
+      candidateProfile: profile,
+      resolveAnswer: async () => ({
+        questionType: "salary",
+        strategy: "generated",
+        answer: "negotiable",
+        confidence: 0.6,
+        confidenceLabel: "medium",
+        source: "llm",
+      }),
+    });
+
+    expect(result.status).toBe("ready_to_submit");
+    expect(driver.fillAnswer).toHaveBeenCalledTimes(2);
+    expect(repairAnswerFromSiteFeedbackMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        validationFeedback: "Expected a numeric answer greater than 0 for this LinkedIn field.",
+      }),
+    );
+    expect(result.steps[0]?.questions[0]?.resolved.answer).toBe("85000");
+    expect(result.steps[0]?.questions[0]?.details).toContain("after AI corrected");
   });
 
   it("can advance to review when a formerly manual-review question gets an AI answer", async () => {
@@ -571,6 +664,243 @@ describe("runEasyApplyDryRun", () => {
     expect(result.reviewDiagnostics?.blockingFields[0]?.fieldKey).toBe("q1");
   });
 
+  it("carries captured site feedback into the final easy apply result", async () => {
+    const driver = {
+      open: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn(),
+      collectSiteFeedback: vi.fn().mockResolvedValue({
+        errors: ["LinkedIn says salary must be numeric."],
+        warnings: [],
+        infos: [],
+        messages: [
+          {
+            severity: "error",
+            message: "LinkedIn says salary must be numeric.",
+            source: "linkedin.easy-apply",
+          },
+        ],
+      }),
+      collectQuestions: vi.fn().mockResolvedValue([
+        {
+          fieldKey: "q1",
+          label: "Net ücret beklentiniz nedir?",
+          inputType: "text",
+          required: true,
+          expectsDecimal: true,
+        },
+      ]),
+      fillAnswer: vi.fn().mockResolvedValue({
+        filled: false,
+        details: "Expected a numeric answer greater than 0 for this LinkedIn field.",
+      }),
+      getPrimaryAction: vi.fn().mockResolvedValue("review"),
+      advance: vi.fn(),
+    };
+
+    const result = await runEasyApplyDryRun({
+      driver,
+      url: "https://www.linkedin.com/jobs/view/1",
+      candidateProfile: profile,
+      resolveAnswer: async () => ({
+        questionType: "salary",
+        strategy: "generated",
+        answer: "negotiable",
+        confidence: 0.6,
+        confidenceLabel: "medium",
+        source: "llm",
+      }),
+    });
+
+    expect(result.siteFeedback?.errors).toContain("LinkedIn says salary must be numeric.");
+    expect(result.steps[0]?.siteFeedback?.errors).toContain("LinkedIn says salary must be numeric.");
+  });
+
+  it("does not ask AI to repair answers that are already manual-review", async () => {
+    const driver = {
+      open: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn().mockResolvedValue([
+        {
+          fieldKey: "q1",
+          label: "What is your salary expectation?",
+          inputType: "text",
+          required: true,
+        },
+      ]),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn().mockResolvedValue("next"),
+      advance: vi.fn(),
+    };
+
+    const result = await runEasyApplyDryRun({
+      driver,
+      url: "https://www.linkedin.com/jobs/view/1",
+      candidateProfile: profile,
+      resolveAnswer: async () => ({
+        questionType: "salary",
+        strategy: "needs-review",
+        answer: null,
+        confidence: 0.2,
+        confidenceLabel: "manual_review",
+        source: "manual",
+      }),
+    });
+
+    expect(result.status).toBe("stopped_manual_review");
+    expect(driver.fillAnswer).not.toHaveBeenCalled();
+    expect(repairAnswerFromSiteFeedbackMock).not.toHaveBeenCalled();
+  });
+
+  it("does not retry when AI repair returns the same answer", async () => {
+    repairAnswerFromSiteFeedbackMock.mockResolvedValueOnce({
+      questionType: "salary",
+      strategy: "generated",
+      answer: "negotiable",
+      confidence: 0.7,
+      confidenceLabel: "medium",
+      source: "llm",
+    });
+
+    const driver = {
+      open: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn().mockResolvedValue([
+        {
+          fieldKey: "q1",
+          label: "Expected salary",
+          inputType: "text",
+          required: true,
+        },
+      ]),
+      fillAnswer: vi.fn().mockResolvedValue({
+        filled: false,
+        details: "Please enter a number.",
+      }),
+      getPrimaryAction: vi.fn().mockResolvedValue("next"),
+      advance: vi.fn(),
+    };
+
+    const result = await runEasyApplyDryRun({
+      driver,
+      url: "https://www.linkedin.com/jobs/view/1",
+      candidateProfile: profile,
+      resolveAnswer: async () => ({
+        questionType: "salary",
+        strategy: "generated",
+        answer: "negotiable",
+        confidence: 0.6,
+        confidenceLabel: "medium",
+        source: "llm",
+      }),
+    });
+
+    expect(result.status).toBe("stopped_manual_review");
+    expect(driver.fillAnswer).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the latest validation failure when the repaired answer is also rejected", async () => {
+    repairAnswerFromSiteFeedbackMock.mockResolvedValueOnce({
+      questionType: "salary",
+      strategy: "generated",
+      answer: "85000",
+      confidence: 0.8,
+      confidenceLabel: "high",
+      source: "llm",
+    });
+
+    const driver = {
+      open: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn().mockResolvedValue([
+        {
+          fieldKey: "q1",
+          label: "Expected salary",
+          inputType: "text",
+          required: true,
+        },
+      ]),
+      fillAnswer: vi.fn()
+        .mockResolvedValueOnce({
+          filled: false,
+          details: "Please enter a number.",
+        })
+        .mockResolvedValueOnce({
+          filled: false,
+          details: "Salary is above the allowed range.",
+        }),
+      getPrimaryAction: vi.fn().mockResolvedValue("next"),
+      advance: vi.fn(),
+    };
+
+    const result = await runEasyApplyDryRun({
+      driver,
+      url: "https://www.linkedin.com/jobs/view/1",
+      candidateProfile: profile,
+      resolveAnswer: async () => ({
+        questionType: "salary",
+        strategy: "generated",
+        answer: "negotiable",
+        confidence: 0.6,
+        confidenceLabel: "medium",
+        source: "llm",
+      }),
+    });
+
+    expect(result.status).toBe("stopped_manual_review");
+    expect(result.steps[0]?.questions[0]?.details).toContain("allowed range");
+    expect(driver.fillAnswer).toHaveBeenCalledTimes(2);
+  });
+
+  it("continues without crashing when AI repair throws", async () => {
+    repairAnswerFromSiteFeedbackMock.mockRejectedValueOnce(new Error("llm down"));
+
+    const driver = {
+      open: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn().mockResolvedValue([
+        {
+          fieldKey: "q1",
+          label: "Expected salary",
+          inputType: "text",
+          required: true,
+        },
+      ]),
+      fillAnswer: vi.fn().mockResolvedValue({
+        filled: false,
+        details: "Please enter a number.",
+      }),
+      getPrimaryAction: vi.fn().mockResolvedValue("next"),
+      advance: vi.fn(),
+    };
+
+    const result = await runEasyApplyDryRun({
+      driver,
+      url: "https://www.linkedin.com/jobs/view/1",
+      candidateProfile: profile,
+      resolveAnswer: async () => ({
+        questionType: "salary",
+        strategy: "generated",
+        answer: "negotiable",
+        confidence: 0.6,
+        confidenceLabel: "medium",
+        source: "llm",
+      }),
+    });
+
+    expect(result.status).toBe("stopped_manual_review");
+    expect(driver.fillAnswer).toHaveBeenCalledTimes(1);
+  });
+
   it("stops when the step limit is exceeded", async () => {
     const driver = {
       open: vi.fn(),
@@ -760,15 +1090,18 @@ describe("runEasyApplyBatchDryRun", () => {
       isEasyApplyAvailable: vi
         .fn()
         .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true)
         .mockResolvedValueOnce(true),
       openEasyApply: vi
         .fn()
         .mockResolvedValueOnce(undefined)
-        .mockRejectedValueOnce(new Error("modal did not open")),
+        .mockRejectedValueOnce(new Error("modal did not open"))
+        .mockResolvedValueOnce(undefined),
       collectQuestions: vi.fn().mockResolvedValue([]),
       collectVisibleJobUrls: vi.fn().mockResolvedValue([
         "https://www.linkedin.com/jobs/view/1",
         "https://www.linkedin.com/jobs/view/2",
+        "https://www.linkedin.com/jobs/view/3",
       ]),
       goToNextResultsPage: vi.fn().mockResolvedValue(false),
       fillAnswer: vi.fn(),
@@ -779,7 +1112,7 @@ describe("runEasyApplyBatchDryRun", () => {
     const result = await runEasyApplyBatchDryRun({
       driver,
       url: "https://www.linkedin.com/jobs/collections/easy-apply",
-      targetCount: 2,
+      targetCount: 3,
       candidateProfile: profile,
       evaluateJob: async () => ({
         shouldApply: true,
@@ -801,7 +1134,21 @@ describe("runEasyApplyBatchDryRun", () => {
     expect(result.status).toBe("completed");
     expect(result.jobs[0]?.result.status).toBe("ready_to_submit");
     expect(result.jobs[1]?.result.status).toBe("stopped_unknown_action");
-    expect(result.jobs[1]?.result.stopReason).toContain("modal did not open");
+    expect(result.jobs[1]?.result.stopReason).toContain("message=modal did not open");
+    expect(result.jobs[1]?.result.recovery).toEqual({
+      attempted: true,
+      succeeded: true,
+      message:
+        "Recovered batch context after failure on https://www.linkedin.com/jobs/view/2 by reopening the LinkedIn collection.",
+    });
+    expect(result.jobs[2]?.result.status).toBe("ready_to_submit");
+    expect(driver.ensureAuthenticated).toHaveBeenCalledWith(
+      "https://www.linkedin.com/jobs/collections/easy-apply",
+    );
+    expect(driver.openCollection).toHaveBeenCalledWith(
+      "https://www.linkedin.com/jobs/collections/easy-apply",
+    );
+    expect(driver.openCollection.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
   it("preserves a failed processing result for approved job 4386362641 when the modal never opens", async () => {
@@ -855,6 +1202,119 @@ describe("runEasyApplyBatchDryRun", () => {
     expect(result.jobs[0]?.result?.stopReason).toContain(
       "Easy Apply modal did not open after clicking the trigger.",
     );
+  });
+
+  it("stops batch safely when recovery after a job failure also fails", async () => {
+    const driver = {
+      open: vi.fn(),
+      openCollection: vi
+        .fn()
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error("collection reopen failed")),
+      ensureAuthenticated: vi
+        .fn()
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce(undefined),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn().mockRejectedValue(new Error("modal crashed before opening")),
+      collectQuestions: vi.fn().mockResolvedValue([]),
+      collectVisibleJobUrls: vi.fn().mockResolvedValue([
+        "https://www.linkedin.com/jobs/view/1",
+        "https://www.linkedin.com/jobs/view/2",
+      ]),
+      goToNextResultsPage: vi.fn().mockResolvedValue(false),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn().mockResolvedValue("submit"),
+      advance: vi.fn(),
+    };
+
+    const result = await runEasyApplyBatchDryRun({
+      driver,
+      url: "https://www.linkedin.com/jobs/collections/easy-apply",
+      targetCount: 2,
+      candidateProfile: profile,
+      evaluateJob: async () => ({
+        shouldApply: true,
+        finalDecision: "APPLY",
+        score: 82,
+        reason: "Strong fit.",
+        policyAllowed: true,
+      }),
+      resolveAnswer: async () => ({
+        questionType: "contact_info",
+        strategy: "deterministic",
+        answer: "123",
+        confidence: 0.95,
+        confidenceLabel: "high",
+        source: "candidate-profile",
+      }),
+    });
+
+    expect(result.status).toBe("partial");
+    expect(result.attemptedCount).toBe(1);
+    expect(result.stopReason).toContain("Failed to recover batch context after failure on https://www.linkedin.com/jobs/view/1");
+    expect(result.jobs[0]?.result?.recovery).toEqual({
+      attempted: true,
+      succeeded: false,
+      message:
+        "Failed to recover batch context after failure on https://www.linkedin.com/jobs/view/1: collection reopen failed",
+    });
+    expect(result.jobs).toHaveLength(1);
+  });
+
+  it("keeps the batch alive when evaluateJob throws for one listing", async () => {
+    const driver = {
+      open: vi.fn(),
+      openCollection: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn().mockResolvedValue(undefined),
+      collectQuestions: vi.fn().mockResolvedValue([]),
+      collectVisibleJobUrls: vi.fn().mockResolvedValue([
+        "https://www.linkedin.com/jobs/view/1",
+        "https://www.linkedin.com/jobs/view/2",
+      ]),
+      goToNextResultsPage: vi.fn().mockResolvedValue(false),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn().mockResolvedValue("submit"),
+      advance: vi.fn(),
+    };
+
+    const evaluateJob = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new Error("phase=linkedin_auth code=LINKEDIN_LOGIN_FORM_NOT_FOUND"),
+      )
+      .mockResolvedValueOnce({
+        shouldApply: true,
+        finalDecision: "APPLY",
+        score: 81,
+        reason: "Strong fit.",
+        policyAllowed: true,
+      });
+
+    const result = await runEasyApplyBatchDryRun({
+      driver,
+      url: "https://www.linkedin.com/jobs/collections/easy-apply",
+      targetCount: 1,
+      candidateProfile: profile,
+      evaluateJob,
+      resolveAnswer: async () => ({
+        questionType: "contact_info",
+        strategy: "deterministic",
+        answer: "123",
+        confidence: 0.95,
+        confidenceLabel: "high",
+        source: "candidate-profile",
+      }),
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.skippedCount).toBe(1);
+    expect(result.jobs[0]?.evaluation.finalDecision).toBe("SKIP");
+    expect(result.jobs[0]?.evaluation.reason).toContain("Job evaluation failed:");
+    expect(result.jobs[0]?.evaluation.reason).toContain("LINKEDIN_LOGIN_FORM_NOT_FOUND");
+    expect(result.jobs[1]?.result?.status).toBe("ready_to_submit");
   });
 
   it("skips bad-fit jobs and keeps paginating until enough eligible jobs are found", async () => {

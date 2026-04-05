@@ -6,7 +6,7 @@ import {
   refreshJobPostingMetadata,
 } from "../../utils/jobPersistence.js";
 import type { CliArgs } from "../cli.js";
-import { isLinkedInCollectionUrl, LINKEDIN_BROWSER_SESSION_OPTIONS } from "../constants.js";
+import { LINKEDIN_BROWSER_SESSION_OPTIONS } from "../constants.js";
 import type { AppDeps } from "../deps.js";
 import {
   createBatchJobEvaluator,
@@ -15,8 +15,8 @@ import {
 } from "../flowHelpers.js";
 import {
   ensureBatchJobProcessingResults,
+  mapCombinedEasyApplyResultToHistoryStatus,
   persistBatchRunAnomalies,
-  mapEasyApplyStatusToHistoryStatus,
   persistBatchJobHistory,
   persistJobHistory,
   persistRunArtifact,
@@ -25,13 +25,35 @@ import {
 import type {
   EasyApplyAnsweredQuestion,
   EasyApplyBatchEvent,
+  EasyApplyDriver,
+  EasyApplyExternalApplicationHandoff,
   EasyApplyRunResult,
   EasyApplyStepReport,
 } from "../../linkedin/easyApply.js";
+import { resolveLinkedInExternalApplyUrl } from "../../linkedin/easyApply.js";
+import {
+  runExternalApplyDryRunFlow,
+  runExternalApplyFlow,
+} from "./externalApplyFlows.js";
 
 type EasyApplyArgs = Extract<CliArgs, { mode: "easy-apply" }>;
 type EasyApplyBatchArgs = Extract<CliArgs, { mode: "easy-apply-batch" }>;
-type EasyApplyRunType = "easy-apply" | "easy-apply-dry-run" | "easy-apply-batch";
+type ApplyArgs = Extract<CliArgs, { mode: "apply" }>;
+type ApplyBatchArgs = Extract<CliArgs, { mode: "apply-batch" }>;
+type LinkedInApplyArgs = EasyApplyArgs | ApplyArgs;
+type LinkedInApplyBatchArgs = EasyApplyBatchArgs | ApplyBatchArgs;
+type LinkedInApplyFlowArgs = LinkedInApplyArgs | LinkedInApplyBatchArgs;
+type EasyApplyRunType =
+  | "easy-apply"
+  | "easy-apply-dry-run"
+  | "easy-apply-batch"
+  | "apply"
+  | "apply-dry-run"
+  | "apply-batch";
+
+interface LinkedInApplyFlowOptions {
+  enableExternalApplyHandoff?: boolean;
+}
 
 const DETECTED_ALREADY_APPLIED_REASON =
   "Detected LinkedIn applied badge; application was already submitted outside the bot.";
@@ -47,9 +69,9 @@ function isAlreadyAppliedBatchJob(job: {
 }
 
 function isBatchDryRunArgs(
-  args: EasyApplyArgs | EasyApplyBatchArgs,
-): args is EasyApplyBatchArgs {
-  return args.mode === "easy-apply-batch";
+  args: LinkedInApplyFlowArgs,
+): args is LinkedInApplyBatchArgs {
+  return args.mode === "easy-apply-batch" || args.mode === "apply-batch";
 }
 
 function collectAnsweredQuestions(steps: EasyApplyStepReport[]): EasyApplyAnsweredQuestion[] {
@@ -231,12 +253,211 @@ async function persistDetectedAppliedJob(args: {
   );
 }
 
-function getEasyApplyRunType(args: EasyApplyArgs | EasyApplyBatchArgs): EasyApplyRunType {
+function getEasyApplyRunType(args: LinkedInApplyFlowArgs): EasyApplyRunType {
   if (args.dryRun) {
-    return "easy-apply-dry-run";
+    return args.mode === "apply" || args.mode === "apply-batch"
+      ? "apply-dry-run"
+      : "easy-apply-dry-run";
+  }
+
+  if (args.mode === "apply-batch") {
+    return "apply-batch";
+  }
+  if (args.mode === "apply") {
+    return "apply";
   }
 
   return args.mode === "easy-apply-batch" ? "easy-apply-batch" : "easy-apply";
+}
+
+function getBatchPersistenceSource(
+  args: EasyApplyBatchArgs | ApplyBatchArgs,
+): "easy-apply-batch" | "apply-batch" {
+  return args.mode === "apply-batch" ? "apply-batch" : "easy-apply-batch";
+}
+
+function getBatchCompletionLabel(args: EasyApplyBatchArgs | ApplyBatchArgs): string {
+  return args.mode === "apply-batch"
+    ? "LinkedIn Apply batch finished"
+    : "LinkedIn Easy Apply batch finished";
+}
+
+async function continueExternalApplyFromLinkedIn(args: {
+  runType: EasyApplyRunType;
+  resumePath: string;
+  easyApplyResult: EasyApplyRunResult;
+  driver?: EasyApplyDriver;
+  deps: AppDeps;
+}): Promise<EasyApplyExternalApplicationHandoff | null> {
+  if (args.easyApplyResult.status !== "stopped_external_apply") {
+    return null;
+  }
+
+  const rawExternalApplyUrl = args.easyApplyResult.externalApplyUrl;
+  const canonicalUrl = resolveLinkedInExternalApplyUrl(rawExternalApplyUrl);
+  if (!rawExternalApplyUrl || !canonicalUrl) {
+    return null;
+  }
+
+  const handoffScope =
+    args.runType === "easy-apply-batch" ? "linkedin.batch" : "linkedin.easy_apply";
+  const handoffRunType = args.runType.endsWith("dry-run") ? "dry-run" : "submit";
+
+  await persistSystemEvent(
+    {
+      level: "INFO",
+      scope: handoffScope,
+      message: "Starting LinkedIn external apply handoff.",
+      runType: args.runType,
+      jobUrl: args.easyApplyResult.url,
+      details: {
+        rawExternalApplyUrl,
+        canonicalUrl,
+      },
+    },
+    args.deps,
+  );
+
+  if (!/^https?:\/\//i.test(canonicalUrl)) {
+    return {
+      sourceUrl: args.easyApplyResult.url,
+      externalApplyUrl: rawExternalApplyUrl,
+      canonicalUrl,
+      runType: handoffRunType,
+      status: "failed",
+      stopReason: "Resolved external application URL was not a valid http(s) URL.",
+    };
+  }
+
+  try {
+    const externalArgs = {
+      mode: "external-apply" as const,
+      url: canonicalUrl,
+      resumePath: args.resumePath,
+      dryRun: handoffRunType === "dry-run",
+    };
+    const externalResult =
+      handoffRunType === "dry-run"
+        ? await runExternalApplyDryRunFlow(externalArgs, args.deps)
+        : await runExternalApplyFlow(externalArgs, args.deps);
+
+    const handoff: EasyApplyExternalApplicationHandoff = {
+      sourceUrl: args.easyApplyResult.url,
+      externalApplyUrl: rawExternalApplyUrl,
+      canonicalUrl,
+      runType: handoffRunType,
+      status: "completed",
+      finalStage: externalResult.finalStage,
+      stopReason: externalResult.stopReason,
+      platform: externalResult.discovery.platform,
+      reportPath: externalResult.reportPath,
+    };
+
+    await persistSystemEvent(
+      {
+        level: "INFO",
+        scope: handoffScope,
+        message: "LinkedIn external apply handoff finished.",
+        runType: args.runType,
+        jobUrl: args.easyApplyResult.url,
+        details: {
+          canonicalUrl,
+          finalStage: handoff.finalStage,
+          platform: handoff.platform,
+          reportPath: handoff.reportPath,
+        },
+      },
+      args.deps,
+    );
+
+    if (
+      handoffRunType === "submit" &&
+      handoff.finalStage === "completed" &&
+      args.driver?.confirmExternalApplicationFinished
+    ) {
+      try {
+        const confirmed = await args.driver.confirmExternalApplicationFinished();
+        await persistSystemEvent(
+          {
+            level: confirmed ? "INFO" : "WARN",
+            scope: handoffScope,
+            message: confirmed
+              ? "Confirmed external application completion on LinkedIn."
+              : "LinkedIn external completion prompt was not found after submit.",
+            runType: args.runType,
+            jobUrl: args.easyApplyResult.url,
+            details: {
+              canonicalUrl,
+              confirmed,
+            },
+          },
+          args.deps,
+        );
+      } catch (error) {
+        args.deps.logger.warn(
+          {
+            event: "linkedin.external_apply_confirmation.failed",
+            jobUrl: args.easyApplyResult.url,
+            canonicalUrl,
+            error: serializeError(error),
+          },
+          "LinkedIn external application completion confirmation failed",
+        );
+        await persistSystemEvent(
+          {
+            level: "WARN",
+            scope: handoffScope,
+            message: "LinkedIn external completion prompt confirmation failed.",
+            runType: args.runType,
+            jobUrl: args.easyApplyResult.url,
+            details: {
+              canonicalUrl,
+              error: serializeError(error),
+            },
+          },
+          args.deps,
+        );
+      }
+    }
+
+    return handoff;
+  } catch (error) {
+    const stopReason = error instanceof Error ? error.message : String(error);
+    args.deps.logger.error(
+      {
+        event: "linkedin.external_apply_handoff.failed",
+        jobUrl: args.easyApplyResult.url,
+        externalApplyUrl: rawExternalApplyUrl,
+        canonicalUrl,
+        error: serializeError(error),
+      },
+      "LinkedIn external apply handoff failed",
+    );
+    await persistSystemEvent(
+      {
+        level: "ERROR",
+        scope: handoffScope,
+        message: "LinkedIn external apply handoff failed.",
+        runType: args.runType,
+        jobUrl: args.easyApplyResult.url,
+        details: {
+          rawExternalApplyUrl,
+          canonicalUrl,
+          error: serializeError(error),
+        },
+      },
+      args.deps,
+    );
+
+    return {
+      sourceUrl: args.easyApplyResult.url,
+      externalApplyUrl: rawExternalApplyUrl,
+      canonicalUrl,
+      runType: handoffRunType,
+      status: "failed",
+      stopReason,
+    };
+  }
 }
 
 function createBatchEventObserver(args: {
@@ -356,6 +577,57 @@ function createBatchEventObserver(args: {
           args.deps,
         );
         return;
+      case "job_processing_failed":
+        args.deps.logger.error(
+          {
+            jobUrl: event.jobUrl,
+            collectionUrl: event.collectionUrl,
+            pageNumber: event.pageNumber,
+            attemptIndex: event.attemptIndex,
+            finalDecision: event.evaluation.finalDecision,
+            error: event.error,
+          },
+          "Application processing failed for approved job",
+        );
+        await persistSystemEvent(
+          {
+            level: "ERROR",
+            scope: "linkedin.batch",
+            message: "Application processing failed for approved job.",
+            runType: args.runType,
+            jobUrl: event.jobUrl,
+            details: {
+              collectionUrl: event.collectionUrl,
+              pageNumber: event.pageNumber,
+              attemptIndex: event.attemptIndex,
+              finalDecision: event.evaluation.finalDecision,
+              error: event.error,
+            },
+          },
+          args.deps,
+        );
+        return;
+      case "job_processing_recovered":
+        await persistSystemEvent(
+          {
+            level: event.recovered ? "INFO" : "ERROR",
+            scope: "linkedin.batch",
+            message: event.recovered
+              ? "Recovered batch context after job processing failure."
+              : "Failed to recover batch context after job processing failure.",
+            runType: args.runType,
+            jobUrl: event.jobUrl,
+            details: {
+              collectionUrl: event.collectionUrl,
+              pageNumber: event.pageNumber,
+              attemptIndex: event.attemptIndex,
+              recovered: event.recovered,
+              message: event.message,
+            },
+          },
+          args.deps,
+        );
+        return;
       case "page_advanced":
         await persistSystemEvent(
           {
@@ -375,9 +647,10 @@ function createBatchEventObserver(args: {
   };
 }
 
-export async function runEasyApplyDryRunFlow(
-  args: EasyApplyArgs | EasyApplyBatchArgs,
+async function runLinkedInDryRunFlow(
+  args: LinkedInApplyFlowArgs,
   deps: AppDeps,
+  options: LinkedInApplyFlowOptions = {},
 ) {
   const runType = getEasyApplyRunType(args);
   const isBatchRun = isBatchDryRunArgs(args);
@@ -438,10 +711,32 @@ export async function runEasyApplyDryRunFlow(
               });
             }
 
+            for (const job of batchResult.jobs) {
+              if (!job.result) {
+                continue;
+              }
+
+              if (options.enableExternalApplyHandoff) {
+                const externalApplication = await continueExternalApplyFromLinkedIn({
+                  runType,
+                  resumePath: args.resumePath,
+                  easyApplyResult: job.result,
+                  driver,
+                  deps,
+                });
+                if (externalApplication) {
+                  job.result = {
+                    ...job.result,
+                    externalApplication,
+                  };
+                }
+              }
+            }
+
             return batchResult;
           }
 
-          const singleResult = await deps.runEasyApplyDryRun(sharedInput);
+          let singleResult = await deps.runEasyApplyDryRun(sharedInput);
           if (isAlreadyAppliedSingleRun(singleResult)) {
             await persistDetectedAppliedJob({
               url: args.url,
@@ -449,6 +744,22 @@ export async function runEasyApplyDryRunFlow(
               deps,
               page,
             });
+          }
+
+          if (options.enableExternalApplyHandoff) {
+            const externalApplication = await continueExternalApplyFromLinkedIn({
+              runType,
+              resumePath: args.resumePath,
+              easyApplyResult: singleResult,
+              driver,
+              deps,
+            });
+            if (externalApplication) {
+              singleResult = {
+                ...singleResult,
+                externalApplication,
+              };
+            }
           }
 
           return singleResult;
@@ -521,6 +832,12 @@ export async function runEasyApplyDryRunFlow(
           ...(result.reviewDiagnostics
             ? { reviewDiagnostics: result.reviewDiagnostics }
             : {}),
+          ...(result.externalApplyUrl
+            ? { externalApplyUrl: result.externalApplyUrl }
+            : {}),
+          ...(result.externalApplication
+            ? { externalApplication: result.externalApplication }
+            : {}),
         },
     "LinkedIn Easy Apply dry run finished",
   );
@@ -590,11 +907,26 @@ export async function runEasyApplyDryRunFlow(
         {
           jobUrl: args.url,
           source: runType,
-          status: mapEasyApplyStatusToHistoryStatus(result.status),
+          status: mapCombinedEasyApplyResultToHistoryStatus(result),
           reasons: [result.stopReason],
           summary: result.stopReason,
           details: {
             stepCount: result.steps.length,
+            ...(result.externalApplyUrl
+              ? { externalApplyUrl: result.externalApplyUrl }
+              : {}),
+            ...(result.externalApplication
+              ? {
+                  externalApplication: {
+                    canonicalUrl: result.externalApplication.canonicalUrl,
+                    status: result.externalApplication.status,
+                    finalStage: result.externalApplication.finalStage ?? null,
+                    stopReason: result.externalApplication.stopReason ?? null,
+                    platform: result.externalApplication.platform ?? null,
+                    reportPath: result.externalApplication.reportPath ?? null,
+                  },
+                }
+              : {}),
           },
         },
         deps,
@@ -628,9 +960,10 @@ export async function runEasyApplyDryRunFlow(
   };
 }
 
-export async function runEasyApplyFlow(
-  args: EasyApplyArgs,
+async function runLinkedInSingleFlow(
+  args: LinkedInApplyArgs,
   deps: AppDeps,
+  options: LinkedInApplyFlowOptions = {},
 ) {
   const runType = getEasyApplyRunType(args);
   const profile = await loadMasterProfileForArgs(args, deps);
@@ -643,7 +976,7 @@ export async function runEasyApplyFlow(
       LINKEDIN_BROWSER_SESSION_OPTIONS,
       async (page) => {
         const driver = await deps.createEasyApplyDriver(page);
-        const singleResult = await deps.runEasyApply({
+        let singleResult = await deps.runEasyApply({
           driver,
           url: args.url,
           candidateProfile: profile,
@@ -657,6 +990,22 @@ export async function runEasyApplyFlow(
             deps,
             page,
           });
+        }
+
+        if (options.enableExternalApplyHandoff) {
+          const externalApplication = await continueExternalApplyFromLinkedIn({
+            runType,
+            resumePath: args.resumePath,
+            easyApplyResult: singleResult,
+            driver,
+            deps,
+          });
+          if (externalApplication) {
+            singleResult = {
+              ...singleResult,
+              externalApplication,
+            };
+          }
         }
 
         return singleResult;
@@ -700,11 +1049,26 @@ export async function runEasyApplyFlow(
       {
         jobUrl: args.url,
         source: runType,
-        status: mapEasyApplyStatusToHistoryStatus(result.status),
+        status: mapCombinedEasyApplyResultToHistoryStatus(result),
         reasons: [result.stopReason],
         summary: result.stopReason,
         details: {
           stepCount: result.steps.length,
+          ...(result.externalApplyUrl
+            ? { externalApplyUrl: result.externalApplyUrl }
+            : {}),
+          ...(result.externalApplication
+            ? {
+                externalApplication: {
+                  canonicalUrl: result.externalApplication.canonicalUrl,
+                  status: result.externalApplication.status,
+                  finalStage: result.externalApplication.finalStage ?? null,
+                  stopReason: result.externalApplication.stopReason ?? null,
+                  platform: result.externalApplication.platform ?? null,
+                  reportPath: result.externalApplication.reportPath ?? null,
+                },
+              }
+            : {}),
         },
       },
       deps,
@@ -721,6 +1085,9 @@ export async function runEasyApplyFlow(
         : {}),
       ...(result.externalApplyUrl
         ? { externalApplyUrl: result.externalApplyUrl }
+        : {}),
+      ...(result.externalApplication
+        ? { externalApplication: result.externalApplication }
         : {}),
     },
     "LinkedIn Easy Apply finished",
@@ -755,9 +1122,10 @@ export async function runEasyApplyFlow(
   };
 }
 
-export async function runEasyApplyBatchFlow(
-  args: EasyApplyBatchArgs,
+async function runLinkedInBatchFlow(
+  args: LinkedInApplyBatchArgs,
   deps: AppDeps,
+  options: LinkedInApplyFlowOptions = {},
 ) {
   const runType = getEasyApplyRunType(args);
   const profile = await loadMasterProfileForArgs(args, deps);
@@ -809,6 +1177,28 @@ export async function runEasyApplyBatchFlow(
               deps,
               page: evaluationPage ?? page,
             });
+          }
+
+          for (const job of batchResult.jobs) {
+            if (!job.result) {
+              continue;
+            }
+
+            if (options.enableExternalApplyHandoff) {
+              const externalApplication = await continueExternalApplyFromLinkedIn({
+                runType,
+                resumePath: args.resumePath,
+                easyApplyResult: job.result,
+                driver,
+                deps,
+              });
+              if (externalApplication) {
+                job.result = {
+                  ...job.result,
+                  externalApplication,
+                };
+              }
+            }
           }
 
           return batchResult;
@@ -866,7 +1256,7 @@ export async function runEasyApplyBatchFlow(
   }
   await persistBatchRunAnomalies(
     {
-      runType: "easy-apply-batch",
+      runType: getBatchPersistenceSource(args),
       collectionUrl: args.url,
       result,
     },
@@ -874,7 +1264,7 @@ export async function runEasyApplyBatchFlow(
   );
   await persistBatchJobHistory(
     {
-      source: "easy-apply-batch",
+      source: getBatchPersistenceSource(args),
       threshold: args.scoreThreshold,
       jobs: result.jobs,
     },
@@ -894,12 +1284,12 @@ export async function runEasyApplyBatchFlow(
       useAiScoreAdjustment: args.useAiScoreAdjustment,
       stopReason: result.stopReason,
     },
-    "LinkedIn Easy Apply batch finished",
+    getBatchCompletionLabel(args),
   );
 
   reportPath = await persistRunArtifact({
       category: "batch-runs",
-      prefix: "easy-apply-batch",
+      prefix: args.mode,
       payload: {
         mode: args.mode,
         dryRun: false,
@@ -929,4 +1319,52 @@ export async function runEasyApplyBatchFlow(
     ...(preparedAnswerSets.length > 0 ? { preparedAnswerSets } : {}),
     reportPath,
   };
+}
+
+export async function runLinkedInEasyApplyDryRunFlow(
+  args: EasyApplyArgs | EasyApplyBatchArgs,
+  deps: AppDeps,
+) {
+  return runLinkedInDryRunFlow(args, deps);
+}
+
+export async function runLinkedInApplyDryRunFlow(
+  args: ApplyArgs | ApplyBatchArgs,
+  deps: AppDeps,
+) {
+  return runLinkedInDryRunFlow(args, deps, {
+    enableExternalApplyHandoff: true,
+  });
+}
+
+export async function runLinkedInEasyApplyFlow(
+  args: EasyApplyArgs,
+  deps: AppDeps,
+) {
+  return runLinkedInSingleFlow(args, deps);
+}
+
+export async function runLinkedInApplyFlow(
+  args: ApplyArgs,
+  deps: AppDeps,
+) {
+  return runLinkedInSingleFlow(args, deps, {
+    enableExternalApplyHandoff: true,
+  });
+}
+
+export async function runLinkedInEasyApplyBatchFlow(
+  args: EasyApplyBatchArgs,
+  deps: AppDeps,
+) {
+  return runLinkedInBatchFlow(args, deps);
+}
+
+export async function runLinkedInApplyBatchFlow(
+  args: ApplyBatchArgs,
+  deps: AppDeps,
+) {
+  return runLinkedInBatchFlow(args, deps, {
+    enableExternalApplyHandoff: true,
+  });
 }

@@ -1,6 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppDeps } from "../../../src/app/deps.js";
 
+const runExternalApplyDryRunFlowMock = vi.fn();
+const runExternalApplyFlowMock = vi.fn();
+
+vi.mock("../../../src/app/flows/externalApplyFlows.js", () => ({
+  runExternalApplyDryRunFlow: runExternalApplyDryRunFlowMock,
+  runExternalApplyFlow: runExternalApplyFlowMock,
+}));
+
 function createDeps(): AppDeps {
   const scoreJob = vi.fn();
   const scoreJobWithAi = vi.fn().mockImplementation(async (...args) => scoreJob(...args));
@@ -84,6 +92,8 @@ function mockWithPage(deps: AppDeps) {
 describe("easy apply flows", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    runExternalApplyDryRunFlowMock.mockReset();
+    runExternalApplyFlowMock.mockReset();
   });
 
   it("runs a single dry run, persists history, and writes an easy-apply artifact", async () => {
@@ -95,7 +105,11 @@ describe("easy apply flows", () => {
     });
     (deps.loadCandidateProfile as any).mockResolvedValue({});
     (deps.resolveAnswer as any).mockResolvedValue({ answer: "ok" });
-    (deps.createEasyApplyDriver as any).mockResolvedValue({ driver: true });
+    const confirmExternalApplicationFinished = vi.fn().mockResolvedValue(true);
+    (deps.createEasyApplyDriver as any).mockResolvedValue({
+      driver: true,
+      confirmExternalApplicationFinished,
+    });
     (deps.extractJobText as any).mockResolvedValue({
       rawText: "raw",
       title: "Engineer",
@@ -142,7 +156,7 @@ describe("easy apply flows", () => {
     });
     (deps.writeRunReport as any).mockResolvedValue("artifacts/easy-apply-runs/run.json");
 
-    const { runEasyApplyDryRunFlow } = await import("../../../src/app/flows/easyApplyFlows.js");
+    const { runEasyApplyDryRunFlow } = await import("../../../src/app/flows/linkedinFlows.js");
     const result = await runEasyApplyDryRunFlow(
       {
         mode: "easy-apply",
@@ -208,7 +222,7 @@ describe("easy apply flows", () => {
     });
     (deps.writeRunReport as any).mockResolvedValue("artifacts/easy-apply-runs/run.json");
 
-    const { runEasyApplyDryRunFlow } = await import("../../../src/app/flows/easyApplyFlows.js");
+    const { runEasyApplyDryRunFlow } = await import("../../../src/app/flows/linkedinFlows.js");
     await runEasyApplyDryRunFlow(
       {
         mode: "easy-apply",
@@ -295,7 +309,7 @@ describe("easy apply flows", () => {
     });
     (deps.writeRunReport as any).mockResolvedValue("artifacts/batch-runs/run.json");
 
-    const { runEasyApplyDryRunFlow } = await import("../../../src/app/flows/easyApplyFlows.js");
+    const { runEasyApplyDryRunFlow } = await import("../../../src/app/flows/linkedinFlows.js");
     const result = await runEasyApplyDryRunFlow(
       {
         mode: "easy-apply-batch",
@@ -329,7 +343,7 @@ describe("easy apply flows", () => {
     expect(evaluationPage.close).toHaveBeenCalledTimes(1);
   });
 
-  it("records a dedicated easy-apply skip state when AI wants to apply but the run stops on external apply", async () => {
+  it("records external handoff results only for LinkedIn apply batch runs", async () => {
     const deps = createDeps();
     const { evaluationPage } = mockWithPage(deps);
     (deps.loadCandidateMasterProfile as any).mockResolvedValue({
@@ -368,12 +382,20 @@ describe("easy apply flows", () => {
         },
       ],
     });
+    runExternalApplyDryRunFlowMock.mockResolvedValue({
+      finalStage: "final_submit_step",
+      stopReason: "Filled 4 field(s) and reached the final submit step without submitting.",
+      discovery: {
+        platform: "workable",
+      },
+      reportPath: "artifacts/external-apply-runs/run.json",
+    });
     (deps.writeRunReport as any).mockResolvedValue("artifacts/batch-runs/run.json");
 
-    const { runEasyApplyDryRunFlow } = await import("../../../src/app/flows/easyApplyFlows.js");
-    await runEasyApplyDryRunFlow(
+    const { runApplyDryRunFlow } = await import("../../../src/app/flows/applyFlows.js");
+    await runApplyDryRunFlow(
       {
-        mode: "easy-apply-batch",
+        mode: "apply-batch",
         url: "https://www.linkedin.com/jobs/collections/easy-apply",
         resumePath: "./resume.pdf",
         count: 1,
@@ -388,11 +410,21 @@ describe("easy apply flows", () => {
     expect(deps.prisma.jobReviewHistory.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         jobUrl: "https://www.linkedin.com/jobs/view/1",
-        status: "SKIPPED_DUE_TO_EASY_APPLY_RUN",
+        status: "READY_TO_SUBMIT",
         decision: "APPLY",
         summary: "This LinkedIn job redirects to an external application page.",
+        detailsJson: expect.stringContaining("\"canonicalUrl\":\"https://company.example/apply\""),
       }),
     });
+    expect(runExternalApplyDryRunFlowMock).toHaveBeenCalledWith(
+      {
+        mode: "external-apply",
+        url: "https://company.example/apply",
+        resumePath: "./resume.pdf",
+        dryRun: true,
+      },
+      deps,
+    );
     expect(evaluationPage.close).toHaveBeenCalledTimes(1);
   });
 
@@ -430,7 +462,7 @@ describe("easy apply flows", () => {
     });
     (deps.writeRunReport as any).mockResolvedValue("artifacts/batch-runs/live.json");
 
-    const { runEasyApplyBatchFlow } = await import("../../../src/app/flows/easyApplyFlows.js");
+    const { runEasyApplyBatchFlow } = await import("../../../src/app/flows/linkedinFlows.js");
     await runEasyApplyBatchFlow(
       {
         mode: "easy-apply-batch",
@@ -514,7 +546,7 @@ describe("easy apply flows", () => {
     });
     (deps.writeRunReport as any).mockResolvedValue("artifacts/batch-runs/live.json");
 
-    const { runEasyApplyBatchFlow } = await import("../../../src/app/flows/easyApplyFlows.js");
+    const { runEasyApplyBatchFlow } = await import("../../../src/app/flows/linkedinFlows.js");
     await runEasyApplyBatchFlow(
       {
         mode: "easy-apply-batch",
@@ -567,7 +599,7 @@ describe("easy apply flows", () => {
     (deps.createEasyApplyDriver as any).mockResolvedValue({ driver: true });
     (deps.runEasyApplyDryRun as any).mockRejectedValue(new Error("boom"));
 
-    const { runEasyApplyDryRunFlow } = await import("../../../src/app/flows/easyApplyFlows.js");
+    const { runEasyApplyDryRunFlow } = await import("../../../src/app/flows/linkedinFlows.js");
 
     await expect(
       runEasyApplyDryRunFlow(
@@ -619,7 +651,7 @@ describe("easy apply flows", () => {
     });
     (deps.writeRunReport as any).mockResolvedValue("artifacts/easy-apply-runs/run.json");
 
-    const { runEasyApplyDryRunFlow } = await import("../../../src/app/flows/easyApplyFlows.js");
+    const { runEasyApplyDryRunFlow } = await import("../../../src/app/flows/linkedinFlows.js");
     await runEasyApplyDryRunFlow(
       {
         mode: "easy-apply",
@@ -646,7 +678,7 @@ describe("easy apply flows", () => {
     });
   });
 
-  it("runs the live easy-apply flow and preserves the external apply URL branch", async () => {
+  it("runs the live LinkedIn apply flow and follows external apply handoff", async () => {
     const deps = createDeps();
     mockWithPage(deps);
     (deps.loadCandidateMasterProfile as any).mockResolvedValue({
@@ -654,7 +686,11 @@ describe("easy apply flows", () => {
       sourceMetadata: { resumePath: "./resume.pdf" },
     });
     (deps.resolveAnswer as any).mockResolvedValue({ answer: "ok" });
-    (deps.createEasyApplyDriver as any).mockResolvedValue({ driver: true });
+    const confirmExternalApplicationFinished = vi.fn().mockResolvedValue(true);
+    (deps.createEasyApplyDriver as any).mockResolvedValue({
+      driver: true,
+      confirmExternalApplicationFinished,
+    });
     (deps.runEasyApply as any).mockResolvedValue({
       status: "stopped_external_apply",
       steps: [{ action: "external" }],
@@ -662,12 +698,20 @@ describe("easy apply flows", () => {
       url: "https://www.linkedin.com/jobs/view/1",
       externalApplyUrl: "https://company.example/apply",
     });
+    runExternalApplyFlowMock.mockResolvedValue({
+      finalStage: "completed",
+      stopReason: "Submitted the application successfully after filling 6 field(s).",
+      discovery: {
+        platform: "workable",
+      },
+      reportPath: "artifacts/external-apply-runs/live.json",
+    });
     (deps.writeRunReport as any).mockResolvedValue("artifacts/easy-apply-runs/live.json");
 
-    const { runEasyApplyFlow } = await import("../../../src/app/flows/easyApplyFlows.js");
-    const result = await runEasyApplyFlow(
+    const { runApplyFlow } = await import("../../../src/app/flows/applyFlows.js");
+    const result = await runApplyFlow(
       {
-        mode: "easy-apply",
+        mode: "apply",
         url: "https://www.linkedin.com/jobs/view/1",
         resumePath: "./resume.pdf",
         dryRun: false,
@@ -676,18 +720,45 @@ describe("easy apply flows", () => {
     );
 
     expect(result.reportPath).toBe("artifacts/easy-apply-runs/live.json");
+    expect(result.easyApply.externalApplication).toEqual(
+      expect.objectContaining({
+        canonicalUrl: "https://company.example/apply",
+        status: "completed",
+        finalStage: "completed",
+        platform: "workable",
+      }),
+    );
     expect(deps.logger.info).toHaveBeenCalledWith(
       expect.objectContaining({
         externalApplyUrl: "https://company.example/apply",
+        externalApplication: expect.objectContaining({
+          finalStage: "completed",
+        }),
       }),
       "LinkedIn Easy Apply finished",
     );
-    expect(deps.prisma.systemLog.create).toHaveBeenCalledWith({
+    expect(runExternalApplyFlowMock).toHaveBeenCalledWith(
+      {
+        mode: "external-apply",
+        url: "https://company.example/apply",
+        resumePath: "./resume.pdf",
+        dryRun: false,
+      },
+      deps,
+    );
+    expect(confirmExternalApplicationFinished).toHaveBeenCalledTimes(1);
+    expect(deps.prisma.jobReviewHistory.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        status: "SUBMITTED",
+        detailsJson: expect.stringContaining("\"finalStage\":\"completed\""),
+      }),
+    });
+    expect(deps.prisma.systemLog.create).toHaveBeenLastCalledWith({
       data: expect.objectContaining({
         level: "INFO",
         scope: "linkedin.easy_apply",
         message: "LinkedIn Easy Apply finished.",
-        runType: "easy-apply",
+        runType: "apply",
       }),
     });
   });
@@ -733,7 +804,7 @@ describe("easy apply flows", () => {
     });
     (deps.writeRunReport as any).mockResolvedValue("artifacts/easy-apply-runs/live.json");
 
-    const { runEasyApplyFlow } = await import("../../../src/app/flows/easyApplyFlows.js");
+    const { runEasyApplyFlow } = await import("../../../src/app/flows/linkedinFlows.js");
     const result = await runEasyApplyFlow(
       {
         mode: "easy-apply",
@@ -774,7 +845,7 @@ describe("easy apply flows", () => {
     });
     (deps.writeRunReport as any).mockResolvedValue("artifacts/easy-apply-runs/live.json");
 
-    const { runEasyApplyFlow } = await import("../../../src/app/flows/easyApplyFlows.js");
+    const { runEasyApplyFlow } = await import("../../../src/app/flows/linkedinFlows.js");
     await runEasyApplyFlow(
       {
         mode: "easy-apply",
@@ -837,7 +908,7 @@ describe("easy apply flows", () => {
     });
     (deps.writeRunReport as any).mockResolvedValue("artifacts/batch-runs/live.json");
 
-    const { runEasyApplyBatchFlow } = await import("../../../src/app/flows/easyApplyFlows.js");
+    const { runEasyApplyBatchFlow } = await import("../../../src/app/flows/linkedinFlows.js");
     const result = await runEasyApplyBatchFlow(
       {
         mode: "easy-apply-batch",
@@ -980,10 +1051,10 @@ describe("easy apply flows", () => {
     });
     (deps.writeRunReport as any).mockResolvedValue("artifacts/batch-runs/live.json");
 
-    const { runEasyApplyBatchFlow } = await import("../../../src/app/flows/easyApplyFlows.js");
-    await runEasyApplyBatchFlow(
+    const { runApplyBatchFlow } = await import("../../../src/app/flows/applyFlows.js");
+    await runApplyBatchFlow(
       {
-        mode: "easy-apply-batch",
+        mode: "apply-batch",
         url: "https://www.linkedin.com/jobs/collections/easy-apply",
         resumePath: "./resume.pdf",
         count: 1,
@@ -1071,7 +1142,7 @@ describe("easy apply flows", () => {
     });
     (deps.writeRunReport as any).mockResolvedValue("artifacts/batch-runs/live.json");
 
-    const { runEasyApplyBatchFlow } = await import("../../../src/app/flows/easyApplyFlows.js");
+    const { runEasyApplyBatchFlow } = await import("../../../src/app/flows/linkedinFlows.js");
     await runEasyApplyBatchFlow(
       {
         mode: "easy-apply-batch",
@@ -1131,7 +1202,7 @@ describe("easy apply flows", () => {
     });
     (deps.writeRunReport as any).mockResolvedValue("artifacts/batch-runs/live.json");
 
-    const { runEasyApplyBatchFlow } = await import("../../../src/app/flows/easyApplyFlows.js");
+    const { runEasyApplyBatchFlow } = await import("../../../src/app/flows/linkedinFlows.js");
     await runEasyApplyBatchFlow(
       {
         mode: "easy-apply-batch",
@@ -1160,7 +1231,7 @@ describe("easy apply flows", () => {
     (deps.createEasyApplyDriver as any).mockResolvedValue({ driver: true });
     (deps.runEasyApplyBatch as any).mockRejectedValue(new Error("submit failed"));
 
-    const { runEasyApplyBatchFlow } = await import("../../../src/app/flows/easyApplyFlows.js");
+    const { runEasyApplyBatchFlow } = await import("../../../src/app/flows/linkedinFlows.js");
 
     await expect(
       runEasyApplyBatchFlow(

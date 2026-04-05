@@ -11,7 +11,12 @@ import {
   runEasyApplyBatchFlow,
   runEasyApplyDryRunFlow,
   runEasyApplyFlow,
-} from "./flows/easyApplyFlows.js";
+} from "./flows/linkedinFlows.js";
+import {
+  runApplyBatchFlow,
+  runApplyDryRunFlow,
+  runApplyFlow,
+} from "./flows/applyFlows.js";
 import { runJobFlow } from "./flows/jobFlow.js";
 import {
   runAnswerQuestionsFlow,
@@ -34,11 +39,19 @@ function renderCliSummary(
 
     return formatBatchTerminalSummary({
       label:
-        result.mode === "easy-apply-batch"
+        result.mode === "apply-batch"
+          ? result.dryRun
+            ? "LinkedIn Apply dry run"
+            : "LinkedIn Apply batch"
+          : result.mode === "easy-apply-batch"
           ? result.dryRun
             ? "LinkedIn Easy Apply dry run"
             : "LinkedIn Easy Apply batch"
-          : "LinkedIn Easy Apply dry run",
+          : result.mode === "apply"
+            ? result.dryRun
+              ? "LinkedIn Apply dry run"
+              : "LinkedIn Apply"
+            : "LinkedIn Easy Apply dry run",
       status: result.easyApply.status,
       requestedCount: result.easyApply.requestedCount,
       attemptedCount: result.easyApply.attemptedCount,
@@ -52,7 +65,7 @@ function renderCliSummary(
 
   return (
     [
-      "LinkedIn Easy Apply finished",
+      result.mode === "apply" ? "LinkedIn Apply finished" : "LinkedIn Easy Apply finished",
       `Status: ${result.easyApply.status}`,
       `Steps: ${result.easyApply.steps.length}`,
       `Reason: ${result.easyApply.stopReason}`,
@@ -90,10 +103,18 @@ export async function main(
     result = args.dryRun
       ? await runEasyApplyDryRunFlow(args, deps)
       : await runEasyApplyFlow(args, deps);
+  } else if (args.mode === "apply") {
+    result = args.dryRun
+      ? await runApplyDryRunFlow(args, deps)
+      : await runApplyFlow(args, deps);
   } else if (args.mode === "easy-apply-batch") {
     result = args.dryRun
       ? await runEasyApplyDryRunFlow(args, deps)
       : await runEasyApplyBatchFlow(args, deps);
+  } else if (args.mode === "apply-batch") {
+    result = args.dryRun
+      ? await runApplyDryRunFlow(args, deps)
+      : await runApplyBatchFlow(args, deps);
   } else if (args.mode === "external-apply") {
     result = args.dryRun
       ? await runExternalApplyDryRunFlow(args, deps)

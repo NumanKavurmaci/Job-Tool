@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { chromium, type Browser } from "@playwright/test";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 vi.mock("../../src/answers/resolveAnswer.js", () => ({
   resolveAnswer: vi.fn(async ({ question }: { question: { label: string } }) => ({
     questionType: "general_short_text",
@@ -14,10 +15,25 @@ import {
   discoverExternalApplication,
   extractExternalPageText,
   followExternalApplicationLink,
+  inspectExternalApplicationPage,
   planExternalApplicationAnswers,
 } from "../../src/external/discovery.js";
+import {
+  greenhousePrecursorPageHtml,
+  leverPrecursorPageHtml,
+  workdayPrecursorPageHtml,
+} from "../fixtures/external.js";
 
 const mockedResolveAnswer = vi.mocked(resolveAnswer);
+let browser: Browser;
+
+beforeAll(async () => {
+  browser = await chromium.launch({ headless: true });
+});
+
+afterAll(async () => {
+  await browser.close();
+});
 
 function buildCandidateProfile(overrides: Partial<Parameters<typeof planExternalApplicationAnswers>[0]["candidateProfile"]> = {}) {
   return {
@@ -289,6 +305,153 @@ describe("external application discovery", () => {
     expect(goto).toHaveBeenCalledWith("https://example.com/form");
     expect(result.followedPrecursorLink).toBe("https://example.com/form");
     expect(result.finalUrl).toBe("https://example.com/form");
+  });
+
+  it("waits for late-rendered external apply CTA content before inspecting the page", async () => {
+    const goto = vi.fn();
+    const waitForFunction = vi.fn().mockResolvedValue(undefined);
+    const evaluate = vi.fn().mockResolvedValue({
+      url: "https://apply.workable.com/j/64A61ED04E",
+      title: "Constructor job",
+      fields: [],
+      precursorLinks: [
+        {
+          label: "Apply for this job",
+          href: "https://apply.workable.com/constructor-1/j/64A61ED04E/apply/",
+        },
+      ],
+    });
+
+    const result = await discoverExternalApplication(
+      { goto, waitForFunction, evaluate } as never,
+      "https://apply.workable.com/j/64A61ED04E",
+    );
+
+    expect(waitForFunction).toHaveBeenCalledTimes(1);
+    expect(result.precursorLinks).toEqual([
+      {
+        label: "Apply for this job",
+        href: "https://apply.workable.com/constructor-1/j/64A61ED04E/apply/",
+      },
+    ]);
+  });
+
+  it("retries inspection when the first pass sees an empty pre-apply page", async () => {
+    const goto = vi.fn();
+    const waitForFunction = vi.fn().mockResolvedValue(undefined);
+    const waitForTimeout = vi.fn().mockResolvedValue(undefined);
+    const evaluate = vi
+      .fn()
+      .mockResolvedValueOnce({
+        url: "https://apply.workable.com/constructor-1/j/64A61ED04E",
+        title: "Constructor job",
+        fields: [],
+        precursorLinks: [],
+      })
+      .mockResolvedValueOnce({
+        url: "https://apply.workable.com/constructor-1/j/64A61ED04E/",
+        title: "Constructor job",
+        fields: [],
+        precursorLinks: [
+          {
+            label: "Apply for this job",
+            href: "https://apply.workable.com/constructor-1/j/64A61ED04E/apply/",
+          },
+        ],
+      });
+
+    const result = await discoverExternalApplication(
+      { goto, waitForFunction, waitForTimeout, evaluate } as never,
+      "https://apply.workable.com/j/64A61ED04E",
+    );
+
+    expect(waitForTimeout).toHaveBeenCalledWith(500);
+    expect(evaluate).toHaveBeenCalledTimes(2);
+    expect(result.precursorLinks).toEqual([
+      {
+        label: "Apply for this job",
+        href: "https://apply.workable.com/constructor-1/j/64A61ED04E/apply/",
+      },
+    ]);
+  });
+
+  it("detects the Lever precursor apply CTA from the Commencis-style landing page", async () => {
+    const page = await browser.newPage();
+    await page.route("https://jobs.lever.co/commencis/a3be10ef-53ab-4842-b114-ae9f60b43e99", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/html",
+        body: leverPrecursorPageHtml,
+      });
+    });
+
+    const result = await discoverExternalApplication(
+      page,
+      "https://jobs.lever.co/commencis/a3be10ef-53ab-4842-b114-ae9f60b43e99",
+    );
+
+    expect(result.platform).toBe("lever");
+    expect(result.fields).toEqual([]);
+    expect(result.precursorLinks).toContainEqual({
+      label: "apply for this job",
+      href: "https://jobs.lever.co/commencis/a3be10ef-53ab-4842-b114-ae9f60b43e99/apply",
+    });
+
+    await page.close();
+  });
+
+  it("keeps the explicit Lever apply CTA when inspecting the precursor page directly", async () => {
+    const page = await browser.newPage();
+    await page.setContent(leverPrecursorPageHtml);
+
+    const result = await inspectExternalApplicationPage(
+      page,
+      "https://jobs.lever.co/commencis/a3be10ef-53ab-4842-b114-ae9f60b43e99",
+    );
+
+    expect(result.fields).toEqual([]);
+    expect(result.precursorLinks[0]).toEqual({
+      label: "apply for this job",
+      href: "https://jobs.lever.co/commencis/a3be10ef-53ab-4842-b114-ae9f60b43e99/apply",
+    });
+
+    await page.close();
+  });
+
+  it("detects a Greenhouse bridge page as a precursor page with an apply CTA", async () => {
+    const page = await browser.newPage();
+    await page.setContent(greenhousePrecursorPageHtml);
+
+    const result = await inspectExternalApplicationPage(
+      page,
+      "https://boards.greenhouse.io/example/jobs/1234567",
+    );
+
+    expect(result.precursorPage).toBe(true);
+    expect(result.precursorLinks).toContainEqual({
+      label: "Apply for this job",
+      href: "https://boards.greenhouse.io/example/jobs/1234567/apply",
+    });
+
+    await page.close();
+  });
+
+  it("detects a Workday intermediate page as a precursor page with a continue CTA", async () => {
+    const page = await browser.newPage();
+    await page.setContent(workdayPrecursorPageHtml);
+
+    const result = await inspectExternalApplicationPage(
+      page,
+      "https://example.wd1.myworkdayjobs.com/en-US/Careers/job/Istanbul",
+    );
+
+    expect(result.precursorPage).toBe(true);
+    expect(result.precursorLinks).toContainEqual({
+      label: "Continue to application",
+      href: "https://example.wd1.myworkdayjobs.com/en-US/Careers/job/Istanbul/apply",
+    });
+
+    await page.close();
   });
 
   it("extracts cleaned page text and falls back to empty string on evaluation failure", async () => {

@@ -97,6 +97,26 @@ describe("app cli", () => {
     });
   });
 
+  it("parses LinkedIn apply commands separately from easy-apply", () => {
+    expect(parseCliArgs(["apply", "https://www.linkedin.com/jobs/view/1", "--dry-run"])).toEqual({
+      mode: "apply",
+      url: "https://www.linkedin.com/jobs/view/1",
+      resumePath: expect.any(String),
+      dryRun: true,
+    });
+
+    expect(parseCliArgs(["apply-dry-run", "--count", "2"])).toEqual({
+      mode: "apply-batch",
+      url: "https://www.linkedin.com/jobs/collections/easy-apply",
+      resumePath: expect.any(String),
+      count: 2,
+      disableAiEvaluation: false,
+      scoreThreshold: 40,
+      useAiScoreAdjustment: false,
+      dryRun: true,
+    });
+  });
+
   it("treats collection links with currentJobId as single LinkedIn job URLs for single-job apply flows", () => {
     expect(parseCliArgs([
       "easy-apply-dry-run",

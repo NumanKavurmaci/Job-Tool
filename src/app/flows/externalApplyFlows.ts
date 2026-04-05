@@ -138,6 +138,7 @@ async function runExternalApplyCore({
   deps,
   submit,
 }: RunExternalApplyOptions) {
+  // Shared external-apply pipeline: discover -> optionally follow precursor -> plan -> fill -> persist.
   const runType = getExternalApplyRunType(args);
   const candidateProfile = await loadMasterProfileForArgs(args, deps);
   try {
@@ -203,6 +204,7 @@ async function runExternalApplyCore({
         page,
         discovery,
         answerPlan,
+        candidateProfile,
         submit,
       });
 
@@ -236,6 +238,7 @@ async function runExternalApplyCore({
         discovery,
         finalStage,
         filledCount,
+        siteFeedback: fillResult.siteFeedback,
       });
 
       return {
@@ -349,6 +352,7 @@ interface BuildStopReasonOptions {
   discovery: Awaited<ReturnType<typeof discoverExternalApplication>>;
   finalStage: string;
   filledCount: number;
+  siteFeedback?: { errors: string[]; warnings: string[]; infos: string[] } | null;
 }
 
 function buildStopReason({
@@ -356,26 +360,39 @@ function buildStopReason({
   discovery,
   finalStage,
   filledCount,
+  siteFeedback,
 }: BuildStopReasonOptions): string {
+  // Keep stop reasons human-readable while still surfacing the most useful site-level feedback.
+  const firstFeedback =
+    siteFeedback?.errors[0] ??
+    siteFeedback?.warnings[0] ??
+    siteFeedback?.infos[0] ??
+    null;
+
   if (discovery.fields.length === 0) {
-    return "No application fields were discovered on the target page.";
+    return firstFeedback
+      ? `No application fields were discovered on the target page. Site feedback: ${firstFeedback}`
+      : "No application fields were discovered on the target page.";
   }
 
   if (finalStage === "completed") {
-    return submit
+    const base = submit
       ? `Submitted the application successfully after filling ${filledCount} field(s).`
       : "Observed a completion page after filling the form.";
+    return firstFeedback ? `${base} Site feedback: ${firstFeedback}` : base;
   }
 
   if (finalStage === "final_submit_step") {
-    return submit
+    const base = submit
       ? `Filled ${filledCount} field(s) and submitted the application.`
       : `Filled ${filledCount} field(s) and reached the final submit step without submitting.`;
+    return firstFeedback ? `${base} Site feedback: ${firstFeedback}` : base;
   }
 
-  return submit
+  const base = submit
     ? `Filled ${filledCount} field(s) across ${discovery.fields.length} discovered field(s); may require additional steps.`
     : `Discovered ${discovery.fields.length} external application field(s), filled what was possible, and stopped without submitting.`;
+  return firstFeedback ? `${base} Site feedback: ${firstFeedback}` : base;
 }
 
 // ---------------------------------------------------------------------------
