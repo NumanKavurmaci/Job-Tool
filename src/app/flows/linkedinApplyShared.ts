@@ -1,3 +1,4 @@
+import { performance } from "node:perf_hooks";
 import { AppError, serializeError } from "../../utils/errors.js";
 import { getLatestJobReview } from "../../utils/jobHistory.js";
 import {
@@ -134,8 +135,15 @@ async function persistEasyApplySurveyAnswers(args: {
 
   const preparedAnswerSets = [];
   for (const entry of payloads) {
+    const jobPostingId = args.deps.prisma.jobPosting.findUnique
+      ? (await args.deps.prisma.jobPosting.findUnique({
+          where: { url: entry.url },
+          select: { id: true },
+        }))?.id ?? null
+      : null;
     const preparedAnswerSet = await args.deps.prisma.preparedAnswerSet.create({
       data: {
+        ...(jobPostingId ? { jobPostingId } : {}),
         candidateProfileId: snapshot.id,
         questionsJson: JSON.stringify(entry.payload.questions),
         answersJson: JSON.stringify({
@@ -282,6 +290,100 @@ function getBatchCompletionLabel(args: EasyApplyBatchArgs | ApplyBatchArgs): str
     : "LinkedIn Easy Apply batch finished";
 }
 
+function buildLinkedInSingleRunMeta(args: {
+  mode: "easy-apply" | "apply";
+  dryRun: boolean;
+  url: string;
+  durationMs: number;
+  result: EasyApplyRunResult;
+}) {
+  const siteFeedbackCount =
+    (args.result.siteFeedback?.errors.length ?? 0) +
+    (args.result.siteFeedback?.warnings.length ?? 0) +
+    (args.result.siteFeedback?.infos.length ?? 0);
+
+  return {
+    durationMs: args.durationMs,
+    finishedAt: new Date().toISOString(),
+    summary: `${args.mode}${args.dryRun ? " dry run" : ""} finished with status ${args.result.status} after ${args.durationMs}ms.`,
+    keyEvents: [
+      "Opened LinkedIn job page.",
+      args.result.externalApplyUrl
+        ? "Detected an external application path on LinkedIn."
+        : `Completed ${args.result.steps.length} LinkedIn form step(s).`,
+      args.result.externalApplication
+        ? `External handoff finished with status ${args.result.externalApplication.status}.`
+        : "No external handoff was used.",
+      siteFeedbackCount > 0
+        ? `Captured ${siteFeedbackCount} site feedback message(s).`
+        : "No site feedback was captured.",
+    ],
+    metrics: {
+      stepCount: args.result.steps.length,
+      siteFeedbackCount,
+      usedExternalHandoff: Boolean(args.result.externalApplication),
+      externalHandoffStatus: args.result.externalApplication?.status ?? null,
+    },
+    urls: {
+      jobUrl: args.url,
+      ...(args.result.externalApplyUrl
+        ? { externalApplyUrl: args.result.externalApplyUrl }
+        : {}),
+      ...(args.result.externalApplication?.canonicalUrl
+        ? { canonicalExternalUrl: args.result.externalApplication.canonicalUrl }
+        : {}),
+    },
+    stopReason: args.result.stopReason,
+  };
+}
+
+function buildLinkedInBatchRunMeta(args: {
+  mode: "easy-apply-batch" | "apply-batch";
+  dryRun: boolean;
+  collectionUrl: string;
+  durationMs: number;
+  result: Awaited<ReturnType<typeof ensureBatchJobProcessingResults>>["result"];
+}) {
+  const externalHandoffs = args.result.jobs.filter(
+    (job) => job.result?.externalApplication != null,
+  ).length;
+  const failureCount = args.result.jobs.filter(
+    (job) =>
+      job.result?.status === "stopped_unknown_action" ||
+      job.result?.status === "stopped_manual_review",
+  ).length;
+
+  return {
+    durationMs: args.durationMs,
+    finishedAt: new Date().toISOString(),
+    summary: `${args.mode}${args.dryRun ? " dry run" : ""} evaluated ${args.result.evaluatedCount} job(s), attempted ${args.result.attemptedCount}, and finished ${args.result.status} after ${args.durationMs}ms.`,
+    keyEvents: [
+      "Opened LinkedIn collection.",
+      `Visited ${args.result.pagesVisited} page(s) and evaluated ${args.result.evaluatedCount} job(s).`,
+      `Attempted ${args.result.attemptedCount} approved job(s) and skipped ${args.result.skippedCount}.`,
+      externalHandoffs > 0
+        ? `Used external handoff for ${externalHandoffs} job(s).`
+        : "No external handoffs were used.",
+      failureCount > 0
+        ? `${failureCount} attempted job(s) ended with a failure-style stop.`
+        : "No attempted job ended with a failure-style stop.",
+    ],
+    metrics: {
+      requestedCount: args.result.requestedCount,
+      attemptedCount: args.result.attemptedCount,
+      evaluatedCount: args.result.evaluatedCount,
+      skippedCount: args.result.skippedCount,
+      pagesVisited: args.result.pagesVisited,
+      externalHandoffs,
+      failureCount,
+    },
+    urls: {
+      collectionUrl: args.collectionUrl,
+    },
+    stopReason: args.result.stopReason,
+  };
+}
+
 async function continueExternalApplyFromLinkedIn(args: {
   runType: EasyApplyRunType;
   resumePath: string;
@@ -338,8 +440,12 @@ async function continueExternalApplyFromLinkedIn(args: {
     };
     const externalResult =
       handoffRunType === "dry-run"
-        ? await runExternalApplyDryRunFlow(externalArgs, args.deps)
-        : await runExternalApplyFlow(externalArgs, args.deps);
+        ? await runExternalApplyDryRunFlow(externalArgs, args.deps, {
+            originalJobUrl: args.easyApplyResult.url,
+          })
+        : await runExternalApplyFlow(externalArgs, args.deps, {
+            originalJobUrl: args.easyApplyResult.url,
+          });
 
     const handoff: EasyApplyExternalApplicationHandoff = {
       sourceUrl: args.easyApplyResult.url,
@@ -652,6 +758,7 @@ async function runLinkedInDryRunFlow(
   deps: AppDeps,
   options: LinkedInApplyFlowOptions = {},
 ) {
+  const startedAt = performance.now();
   const runType = getEasyApplyRunType(args);
   const isBatchRun = isBatchDryRunArgs(args);
   const profile = await loadMasterProfileForArgs(args, deps);
@@ -882,6 +989,13 @@ async function runLinkedInDryRunFlow(
         scoreThreshold: isBatchRun ? args.scoreThreshold : 0,
         useAiScoreAdjustment: isBatchRun ? args.useAiScoreAdjustment : false,
         result,
+        meta: buildLinkedInBatchRunMeta({
+          mode: args.mode as "easy-apply-batch" | "apply-batch",
+          dryRun: true,
+          collectionUrl: args.url,
+          durationMs: Math.round(performance.now() - startedAt),
+          result,
+        }),
       },
       deps,
     });
@@ -935,7 +1049,16 @@ async function runLinkedInDryRunFlow(
     reportPath = await persistRunArtifact({
       category: "easy-apply-runs",
       prefix: "easy-apply-dry-run",
-      payload: response,
+      payload: {
+        ...response,
+        meta: buildLinkedInSingleRunMeta({
+          mode: args.mode as "easy-apply" | "apply",
+          dryRun: true,
+          url: args.url,
+          durationMs: Math.round(performance.now() - startedAt),
+          result,
+        }),
+      },
       deps,
     });
     return {
@@ -965,6 +1088,7 @@ async function runLinkedInSingleFlow(
   deps: AppDeps,
   options: LinkedInApplyFlowOptions = {},
 ) {
+  const startedAt = performance.now();
   const runType = getEasyApplyRunType(args);
   const profile = await loadMasterProfileForArgs(args, deps);
   const resolveCandidateAnswer = createCandidateAnswerResolver(profile, deps);
@@ -1101,6 +1225,13 @@ async function runLinkedInSingleFlow(
       dryRun: false,
       url: args.url,
       result,
+      meta: buildLinkedInSingleRunMeta({
+        mode: args.mode,
+        dryRun: false,
+        url: args.url,
+        durationMs: Math.round(performance.now() - startedAt),
+        result,
+      }),
     },
     deps,
   });
@@ -1127,6 +1258,7 @@ async function runLinkedInBatchFlow(
   deps: AppDeps,
   options: LinkedInApplyFlowOptions = {},
 ) {
+  const startedAt = performance.now();
   const runType = getEasyApplyRunType(args);
   const profile = await loadMasterProfileForArgs(args, deps);
   const scoringProfile = await deps.loadCandidateProfile();
@@ -1298,6 +1430,13 @@ async function runLinkedInBatchFlow(
       scoreThreshold: args.scoreThreshold,
       useAiScoreAdjustment: args.useAiScoreAdjustment,
       result,
+      meta: buildLinkedInBatchRunMeta({
+        mode: args.mode,
+        dryRun: false,
+        collectionUrl: args.url,
+        durationMs: Math.round(performance.now() - startedAt),
+        result,
+      }),
     },
     deps,
   });

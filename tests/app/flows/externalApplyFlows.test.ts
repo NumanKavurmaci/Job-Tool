@@ -145,6 +145,9 @@ describe("external apply flows", () => {
     const deps = {
       loadCandidateMasterProfile: vi.fn().mockResolvedValue(buildCandidateProfile()),
       prisma: {
+        jobPosting: {
+          findUnique: vi.fn().mockResolvedValue(null),
+        },
         candidateProfileSnapshot: {
           create: vi.fn().mockResolvedValue({ id: "snapshot_1" }),
         },
@@ -239,6 +242,9 @@ describe("external apply flows", () => {
     const deps = {
       loadCandidateMasterProfile: vi.fn().mockResolvedValue(buildCandidateProfile()),
       prisma: {
+        jobPosting: {
+          findUnique: vi.fn().mockResolvedValue(null),
+        },
         candidateProfileSnapshot: {
           create: vi.fn().mockResolvedValue({ id: "snapshot_1" }),
         },
@@ -325,6 +331,9 @@ describe("external apply flows", () => {
     const deps = {
       loadCandidateMasterProfile: vi.fn().mockResolvedValue(buildCandidateProfile()),
       prisma: {
+        jobPosting: {
+          findUnique: vi.fn().mockResolvedValue(null),
+        },
         candidateProfileSnapshot: {
           create: vi.fn().mockResolvedValue({ id: "snapshot_1" }),
         },
@@ -416,6 +425,9 @@ describe("external apply flows", () => {
     const deps = {
       loadCandidateMasterProfile: vi.fn().mockResolvedValue(buildCandidateProfile()),
       prisma: {
+        jobPosting: {
+          findUnique: vi.fn().mockResolvedValue(null),
+        },
         candidateProfileSnapshot: {
           create: vi.fn().mockResolvedValue({ id: "snapshot_1" }),
         },
@@ -458,6 +470,93 @@ describe("external apply flows", () => {
       data: expect.objectContaining({
         candidateProfileId: "snapshot_1",
         answersJson: expect.stringContaining('"runType":"external-apply"'),
+      }),
+    });
+  });
+
+  it("links external prepared answers back to the originating LinkedIn job when provided", async () => {
+    const goto = vi.fn();
+    const evaluate = vi.fn();
+    evaluate
+      .mockResolvedValueOnce({
+        url: "https://apply.workable.com/j/64A61ED04E",
+        title: "Application form",
+        fields: [
+          {
+            key: "salary",
+            label: "Expected salary",
+            inputType: "number",
+            required: true,
+            options: [],
+            placeholder: null,
+            helpText: null,
+            accept: null,
+          },
+        ],
+        precursorLinks: [],
+      })
+      .mockResolvedValueOnce("Actual application form")
+      .mockResolvedValueOnce("Actual application form");
+
+    const findUnique = vi
+      .fn()
+      .mockResolvedValueOnce({ id: "job_linkedin_1" });
+
+    const deps = {
+      loadCandidateMasterProfile: vi.fn().mockResolvedValue(buildCandidateProfile()),
+      prisma: {
+        jobPosting: {
+          findUnique,
+        },
+        candidateProfileSnapshot: {
+          create: vi.fn().mockResolvedValue({ id: "snapshot_1" }),
+        },
+        preparedAnswerSet: {
+          create: vi.fn().mockResolvedValue({ id: "prepared_1" }),
+        },
+        systemLog: {
+          create: vi.fn().mockResolvedValue({}),
+        },
+      },
+      withPage: vi.fn(async (fn: (page: unknown) => Promise<unknown>) =>
+        fn(
+          createFlowPage({
+            goto,
+            evaluate,
+            visibleSelectors: [`[id="salary"]`],
+          }),
+        )),
+      completePrompt: vi.fn(),
+      writeRunReport: vi.fn().mockResolvedValue("artifacts/external-apply-runs/report.json"),
+      logger: {
+        info: vi.fn(),
+        error: vi.fn(),
+      },
+    } as any;
+
+    await runExternalApplyDryRunFlow(
+      {
+        mode: "external-apply",
+        url: "https://apply.workable.com/j/64A61ED04E",
+        resumePath: "./user/resume.pdf",
+        dryRun: true,
+      },
+      deps,
+      {
+        originalJobUrl: "https://www.linkedin.com/jobs/view/4358153114",
+      },
+    );
+
+    expect(findUnique).toHaveBeenCalledWith({
+      where: { url: "https://www.linkedin.com/jobs/view/4358153114" },
+      select: { id: true },
+    });
+    expect(deps.prisma.preparedAnswerSet.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        jobPostingId: "job_linkedin_1",
+        answersJson: expect.stringContaining(
+          '"originalJobUrl":"https://www.linkedin.com/jobs/view/4358153114"',
+        ),
       }),
     });
   });

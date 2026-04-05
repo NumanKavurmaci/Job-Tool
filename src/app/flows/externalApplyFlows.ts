@@ -1,3 +1,4 @@
+import { performance } from "node:perf_hooks";
 import type { PromptCompletionResult } from "../../llm/completePrompt.js";
 import { AppError, serializeError } from "../../utils/errors.js";
 import { loadMasterProfileForArgs } from "../flowHelpers.js";
@@ -16,6 +17,10 @@ import type { ExternalApplicationPlannedAnswer } from "../../external/types.js";
 
 type ExternalApplyArgs = Extract<CliArgs, { mode: "external-apply" }>;
 type ExternalApplyRunType = "external-apply-dry-run" | "external-apply";
+
+interface ExternalApplyOriginContext {
+  originalJobUrl?: string;
+}
 
 function truncate(value: string, max = 5000) {
   return value.length <= max ? value : `${value.slice(0, max)}...`;
@@ -67,6 +72,7 @@ async function persistExternalApplyAnswers(args: {
   answerPlan: ExternalApplicationPlannedAnswer[];
   profile: Awaited<ReturnType<AppDeps["loadCandidateMasterProfile"]>>;
   runType: ExternalApplyRunType;
+  originalJobUrl?: string;
   deps: AppDeps;
 }) {
   if (args.answerPlan.length === 0) {
@@ -82,13 +88,31 @@ async function persistExternalApplyAnswers(args: {
     },
   });
 
+  const jobPostingId = args.deps.prisma.jobPosting.findUnique
+    ? (await args.deps.prisma.jobPosting.findUnique({
+        where: { url: args.originalJobUrl ?? args.sourceUrl },
+        select: { id: true },
+      }))?.id ??
+      (await args.deps.prisma.jobPosting.findUnique({
+        where: { url: args.sourceUrl },
+        select: { id: true },
+      }))?.id ??
+      (await args.deps.prisma.jobPosting.findUnique({
+        where: { url: args.finalUrl },
+        select: { id: true },
+      }))?.id ??
+      null
+    : null;
+
   const preparedAnswerSet = await args.deps.prisma.preparedAnswerSet.create({
     data: {
+      ...(jobPostingId ? { jobPostingId } : {}),
       candidateProfileId: snapshot.id,
       questionsJson: JSON.stringify(
         args.answerPlan.map((entry) => entry.question),
       ),
       answersJson: JSON.stringify({
+        originalJobUrl: args.originalJobUrl ?? null,
         sourceUrl: args.sourceUrl,
         finalUrl: args.finalUrl,
         platform: args.platform,
@@ -127,18 +151,79 @@ interface RunExternalApplyOptions {
   args: ExternalApplyArgs;
   deps: AppDeps;
   submit: boolean;
+  originContext: ExternalApplyOriginContext | undefined;
 }
 
 function getExternalApplyRunType(args: ExternalApplyArgs): ExternalApplyRunType {
   return args.dryRun ? "external-apply-dry-run" : "external-apply";
 }
 
+function buildExternalApplyMeta(args: {
+  runType: ExternalApplyRunType;
+  sourceUrl: string;
+  finalUrl: string;
+  durationMs: number;
+  platform: string;
+  fieldCount: number;
+  filledCount: number;
+  finalStage: string;
+  stopReason: string;
+  followedPrecursorLink: string | null;
+  recommendedAction: "stay" | "follow";
+  siteFeedback: { errors: string[]; warnings: string[]; infos: string[] } | null;
+}) {
+  const siteFeedbackCount =
+    (args.siteFeedback?.errors.length ?? 0) +
+    (args.siteFeedback?.warnings.length ?? 0) +
+    (args.siteFeedback?.infos.length ?? 0);
+
+  const keyEvents = [
+    `Opened external application source URL.`,
+    args.followedPrecursorLink
+      ? `Followed precursor link to continue the application.`
+      : "Stayed on the initial application page.",
+    args.fieldCount > 0
+      ? `Discovered ${args.fieldCount} application field(s).`
+      : "No application fields were discovered on the current page.",
+    `Filled ${args.filledCount} field(s).`,
+    `Stopped at ${args.finalStage}.`,
+    siteFeedbackCount > 0
+      ? `Captured ${siteFeedbackCount} site feedback message(s).`
+      : "No site feedback was captured.",
+  ];
+
+  return {
+    durationMs: args.durationMs,
+    finishedAt: new Date().toISOString(),
+    summary: `${args.runType} on ${args.platform} reached ${args.finalStage} after ${args.durationMs}ms and filled ${args.filledCount}/${args.fieldCount} field(s).`,
+    keyEvents,
+    metrics: {
+      fieldCount: args.fieldCount,
+      filledCount: args.filledCount,
+      finalStage: args.finalStage,
+      siteFeedbackCount,
+      precursorFollowed: Boolean(args.followedPrecursorLink),
+      recommendedAction: args.recommendedAction,
+    },
+    urls: {
+      sourceUrl: args.sourceUrl,
+      finalUrl: args.finalUrl,
+      ...(args.followedPrecursorLink
+        ? { followedPrecursorLink: args.followedPrecursorLink }
+        : {}),
+    },
+    stopReason: args.stopReason,
+  };
+}
+
 async function runExternalApplyCore({
   args,
   deps,
   submit,
+  originContext,
 }: RunExternalApplyOptions) {
   // Shared external-apply pipeline: discover -> optionally follow precursor -> plan -> fill -> persist.
+  const startedAt = performance.now();
   const runType = getExternalApplyRunType(args);
   const candidateProfile = await loadMasterProfileForArgs(args, deps);
   try {
@@ -274,7 +359,25 @@ async function runExternalApplyCore({
     const reportPath = await persistRunArtifact({
       category: "external-apply-runs",
       prefix: runType,
-      payload: result,
+      payload: {
+        ...result,
+        meta: buildExternalApplyMeta({
+          runType,
+          sourceUrl: args.url,
+          finalUrl: result.discovery.finalUrl,
+          durationMs: Math.round(performance.now() - startedAt),
+          platform: result.discovery.platform,
+          fieldCount: result.discovery.fields.length,
+          filledCount: result.fillResult.fieldResults.filter(
+            (entry) => entry.status === "filled",
+          ).length,
+          finalStage: result.finalStage,
+          stopReason: result.stopReason,
+          followedPrecursorLink: result.discovery.followedPrecursorLink,
+          recommendedAction: result.recommendedAction,
+          siteFeedback: result.fillResult.siteFeedback,
+        }),
+      },
       deps,
     });
 
@@ -285,6 +388,9 @@ async function runExternalApplyCore({
       answerPlan: result.answerPlan,
       profile: candidateProfile,
       runType,
+      ...(originContext?.originalJobUrl
+        ? { originalJobUrl: originContext.originalJobUrl }
+        : {}),
       deps,
     });
 
@@ -402,13 +508,25 @@ function buildStopReason({
 export async function runExternalApplyDryRunFlow(
   args: ExternalApplyArgs,
   deps: AppDeps,
+  originContext?: ExternalApplyOriginContext,
 ) {
-  return runExternalApplyCore({ args, deps, submit: false });
+  return runExternalApplyCore({
+    args,
+    deps,
+    submit: false,
+    originContext,
+  });
 }
 
 export async function runExternalApplyFlow(
   args: ExternalApplyArgs,
   deps: AppDeps,
+  originContext?: ExternalApplyOriginContext,
 ) {
-  return runExternalApplyCore({ args, deps, submit: true });
+  return runExternalApplyCore({
+    args,
+    deps,
+    submit: true,
+    originContext,
+  });
 }

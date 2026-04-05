@@ -55,6 +55,22 @@ export async function persistJobHistory(
   });
 }
 
+async function findJobPostingIdByUrl(
+  jobUrl: string,
+  deps: AppDeps,
+): Promise<string | undefined> {
+  if (!deps.prisma.jobPosting.findUnique) {
+    return undefined;
+  }
+
+  const jobPosting = await deps.prisma.jobPosting.findUnique({
+    where: { url: jobUrl },
+    select: { id: true },
+  });
+
+  return jobPosting?.id ?? undefined;
+}
+
 export function mapEasyApplyStatusToHistoryStatus(
   status: EasyApplyRunResult["status"],
   finalDecision?: "APPLY" | "MAYBE" | "SKIP",
@@ -112,11 +128,14 @@ export async function persistBatchJobHistory(
       continue;
     }
 
+    const jobPostingId = await findJobPostingIdByUrl(job.url, deps);
+
     const evaluationStatus =
       job.evaluation.finalDecision === "SKIP" ? "SKIPPED" : "EVALUATED";
 
     await persistJobHistory(
       {
+        ...(jobPostingId ? { jobPostingId } : {}),
         jobUrl: job.url,
         source: args.source,
         status: evaluationStatus,
@@ -137,6 +156,7 @@ export async function persistBatchJobHistory(
     if (job.result) {
       await persistJobHistory(
         {
+          ...(jobPostingId ? { jobPostingId } : {}),
           jobUrl: job.url,
           source: args.source,
           status: mapCombinedEasyApplyResultToHistoryStatus(

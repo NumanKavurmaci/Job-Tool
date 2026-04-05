@@ -125,7 +125,14 @@ describe("app observability helpers", () => {
 
   it("persists both evaluation and easy-apply-result history for batch jobs", async () => {
     const { persistBatchJobHistory } = await import("../../src/app/observability.js");
-    const deps = { prisma: {}, logger: {} } as any;
+    const deps = {
+      prisma: {
+        jobPosting: {
+          findUnique: vi.fn().mockResolvedValue({ id: "job_1" }),
+        },
+      },
+      logger: {},
+    } as any;
 
     await persistBatchJobHistory(
       {
@@ -168,6 +175,7 @@ describe("app observability helpers", () => {
       1,
       expect.objectContaining({
         entry: expect.objectContaining({
+          jobPostingId: "job_1",
           jobUrl: "https://example.com/1",
           status: "EVALUATED",
           decision: "APPLY",
@@ -178,6 +186,7 @@ describe("app observability helpers", () => {
       2,
       expect.objectContaining({
         entry: expect.objectContaining({
+          jobPostingId: "job_1",
           jobUrl: "https://example.com/1",
           status: "READY_TO_SUBMIT",
           summary: "Reached final submit.",
