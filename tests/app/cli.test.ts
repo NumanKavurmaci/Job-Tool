@@ -97,6 +97,29 @@ describe("app cli", () => {
     });
   });
 
+  it("parses explicit batch commands for LinkedIn apply flows", () => {
+    expect(
+      parseCliArgs([
+        "apply-batch",
+        "https://www.linkedin.com/jobs/collections/top-applicant",
+        "--count",
+        "3",
+        "--score-threshold",
+        "55",
+        "--disable-ai-evaluation",
+      ]),
+    ).toEqual({
+      mode: "apply-batch",
+      url: "https://www.linkedin.com/jobs/collections/top-applicant",
+      resumePath: expect.any(String),
+      count: 3,
+      disableAiEvaluation: true,
+      scoreThreshold: 55,
+      useAiScoreAdjustment: false,
+      dryRun: false,
+    });
+  });
+
   it("parses LinkedIn apply commands separately from easy-apply", () => {
     expect(parseCliArgs(["apply", "https://www.linkedin.com/jobs/view/1", "--dry-run"])).toEqual({
       mode: "apply",
@@ -137,5 +160,15 @@ describe("app cli", () => {
       resumePath: expect.any(String),
       dryRun: false,
     });
+  });
+
+  it("rejects missing or invalid URLs for explicit apply commands", () => {
+    expect(() => parseCliArgs(["external-apply"])).toThrow("--url is required for external-apply.");
+    expect(() => parseCliArgs(["apply-batch", "https://www.linkedin.com/jobs/view/1"])).toThrow(
+      "apply-batch requires a LinkedIn collection URL or the default collection.",
+    );
+    expect(() =>
+      parseCliArgs(["easy-apply-batch", "https://www.linkedin.com/jobs/view/1"]),
+    ).toThrow("easy-apply-batch requires a LinkedIn collection URL or the default collection.");
   });
 });

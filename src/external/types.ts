@@ -13,10 +13,37 @@ export type ExternalApplicationFieldType =
   | "file"
   | "unknown";
 
+export type ExternalApplicationFieldSemanticKey =
+  | "salary.amount"
+  | "salary.currency"
+  | "salary.period"
+  | "work.authorization"
+  | "sponsorship.required"
+  | "sponsorship.details"
+  | "relocation.willing"
+  | "location.city"
+  | "phone.country_code"
+  | "phone.number"
+  | "profile.linkedin"
+  | "profile.github"
+  | "profile.portfolio"
+  | "experience.years"
+  | "consent.sms"
+  | "consent.privacy"
+  | "resume.upload"
+  | "cover_letter.text"
+  | "cover_letter.upload";
+
+export type ExternalApplicationFieldSemanticConfidence = "high" | "medium" | "low";
+
 export type ExternalApplicationField = {
   key: string;
   label: string;
   type: ExternalApplicationFieldType;
+  semanticKey?: ExternalApplicationFieldSemanticKey | undefined;
+  semanticSignals?: string[] | undefined;
+  semanticConfidence?: ExternalApplicationFieldSemanticConfidence | undefined;
+  selectorHints?: string[] | undefined;
   required: boolean;
   options: string[];
   placeholder: string | null;
@@ -53,9 +80,31 @@ export type ExternalApplicationPlannedAnswer = {
   fieldKey: string;
   fieldLabel: string;
   fieldType: ExternalApplicationFieldType;
+  semanticKey?: ExternalApplicationFieldSemanticKey | undefined;
   question: InputQuestion;
   answer: string | null;
   source: string;
   confidenceLabel: string;
+  resolutionStrategy?: string | undefined;
   notes?: string;
+};
+
+export type ExternalApplicationStepSnapshot = {
+  stepIndex: number;
+  pageTitle: string;
+  finalUrl: string;
+  fieldCount: number;
+  fieldKeys: string[];
+  answerPlanCount: number;
+  filledCount: number;
+  blockingRequiredFields: string[];
+  primaryAction: "next" | "submit" | "unknown";
+  advanced: boolean;
+  finalStage: string;
+  stopReason: string;
+  siteFeedback: {
+    errors: string[];
+    warnings: string[];
+    infos: string[];
+  };
 };

@@ -106,10 +106,26 @@ const CandidateProfileFileSchema = z.object({
       workAuthorizationStatus: z
         .enum(["authorized", "requires-sponsorship", "unknown"])
         .default("unknown"),
+      regional: z
+        .object({
+          defaultRequiresSponsorship: z.boolean().nullable().default(null),
+          turkeyRequiresSponsorship: z.boolean().nullable().default(null),
+          europeRequiresSponsorship: z.boolean().nullable().default(null),
+        })
+        .default({
+          defaultRequiresSponsorship: null,
+          turkeyRequiresSponsorship: null,
+          europeRequiresSponsorship: null,
+        }),
     })
     .default({
       visaRequirement: "unknown",
       workAuthorizationStatus: "unknown",
+      regional: {
+        defaultRequiresSponsorship: null,
+        turkeyRequiresSponsorship: null,
+        europeRequiresSponsorship: null,
+      },
     }),
   personal: z
     .object({
@@ -127,6 +143,17 @@ const CandidateProfileFileSchema = z.object({
         accommodationNotes: null,
         disclosurePreference: "manual-review",
       },
+    }),
+  identity: z
+    .object({
+      linkedinUrl: z.string().url().nullable().default(null),
+      githubUrl: z.string().url().nullable().default(null),
+      portfolioUrl: z.string().url().nullable().default(null),
+    })
+    .default({
+      linkedinUrl: null,
+      githubUrl: null,
+      portfolioUrl: null,
     }),
   compensation: z
     .object({
@@ -161,6 +188,14 @@ export type CandidateProfile = {
   remoteOnly: boolean;
   visaRequirement: "required" | "not-required" | "unknown";
   workAuthorizationStatus: "authorized" | "requires-sponsorship" | "unknown";
+  regionalAuthorization: {
+    defaultRequiresSponsorship: boolean | null;
+    turkeyRequiresSponsorship: boolean | null;
+    europeRequiresSponsorship: boolean | null;
+  };
+  linkedinUrl: string | null;
+  githubUrl: string | null;
+  portfolioUrl: string | null;
   languages: string[];
   experienceOverrides: Record<string, number>;
   salaryExpectations: {
@@ -190,6 +225,10 @@ function toRuntimeProfile(file: CandidateProfileFile): CandidateProfile {
     remoteOnly: file.locations.remoteOnly,
     visaRequirement: file.authorization.visaRequirement,
     workAuthorizationStatus: file.authorization.workAuthorizationStatus,
+    regionalAuthorization: file.authorization.regional,
+    linkedinUrl: file.identity.linkedinUrl,
+    githubUrl: file.identity.githubUrl,
+    portfolioUrl: file.identity.portfolioUrl,
     languages: file.personal.languages,
     experienceOverrides: file.experience.overrides,
     salaryExpectations: file.compensation.expectations,

@@ -424,6 +424,9 @@ describe("easy apply flows", () => {
         dryRun: true,
       },
       deps,
+      {
+        originalJobUrl: "https://www.linkedin.com/jobs/view/1",
+      },
     );
     expect(evaluationPage.close).toHaveBeenCalledTimes(1);
   });
@@ -745,6 +748,9 @@ describe("easy apply flows", () => {
         dryRun: false,
       },
       deps,
+      {
+        originalJobUrl: "https://www.linkedin.com/jobs/view/1",
+      },
     );
     expect(confirmExternalApplicationFinished).toHaveBeenCalledTimes(1);
     expect(deps.prisma.jobReviewHistory.create).toHaveBeenCalledWith({

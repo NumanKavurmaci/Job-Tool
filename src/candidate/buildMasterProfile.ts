@@ -44,6 +44,9 @@ export async function buildMasterProfile(input: {
 
   return {
     ...normalized,
+    linkedinUrl: manualProfile.linkedinUrl ?? normalized.linkedinUrl,
+    githubUrl: manualProfile.githubUrl ?? normalized.githubUrl,
+    portfolioUrl: manualProfile.portfolioUrl ?? normalized.portfolioUrl,
     preferredRoles: unique([...manualProfile.preferredRoles, ...normalized.preferredRoles]),
     preferredTechStack: unique([
       ...manualProfile.preferredTechStack,
@@ -56,6 +59,7 @@ export async function buildMasterProfile(input: {
     gpa: manualProfile.gpa,
     yearsOfExperienceTotal:
       normalized.yearsOfExperienceTotal ?? manualProfile.yearsOfExperience,
+    regionalAuthorization: manualProfile.regionalAuthorization,
     remotePreference: manualProfile.remotePreference,
     remoteOnly: manualProfile.remoteOnly,
     disability: manualProfile.disability,

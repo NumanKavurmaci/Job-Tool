@@ -11,13 +11,17 @@ Its job is simple:
 
 1. [ROOT_FILE_MAP.md](../docs/ROOT_FILE_MAP.md)
 2. [SOURCE_FILE_MAP.md](../docs/SOURCE_FILE_MAP.md)
-3. [TEST_FILE_MAP.md](../docs/TEST_FILE_MAP.md)
-4. [PRISMA_FILE_MAP.md](../docs/PRISMA_FILE_MAP.md)
+3. [FUNCTION_INDEX.md](../docs/FUNCTION_INDEX.md)
+4. [TASK_GUIDE.md](../docs/TASK_GUIDE.md)
+5. [TEST_FILE_MAP.md](../docs/TEST_FILE_MAP.md)
+6. [PRISMA_FILE_MAP.md](../docs/PRISMA_FILE_MAP.md)
 
 ## Intended Use
 
 When you need to change behavior:
 - start with the source map to find the responsible module
+- then use the function index to find the owning entrypoint inside that module
+- use the task guide to avoid reading unrelated files
 - use the test map to find the regression tests that should move with the change
 - use the Prisma map when persistence or schema behavior is involved
 - treat these docs as the source of truth for file ownership; update them when files, commands, or orchestration boundaries change

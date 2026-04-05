@@ -13,7 +13,10 @@ import {
 } from "../../external/discovery.js";
 import { fillExternalApplicationPage } from "../../external/fill.js";
 import { persistRunArtifact, persistSystemEvent } from "../observability.js";
-import type { ExternalApplicationPlannedAnswer } from "../../external/types.js";
+import type {
+  ExternalApplicationPlannedAnswer,
+  ExternalApplicationStepSnapshot,
+} from "../../external/types.js";
 
 type ExternalApplyArgs = Extract<CliArgs, { mode: "external-apply" }>;
 type ExternalApplyRunType = "external-apply-dry-run" | "external-apply";
@@ -154,6 +157,14 @@ interface RunExternalApplyOptions {
   originContext: ExternalApplyOriginContext | undefined;
 }
 
+const MAX_EXTERNAL_APPLICATION_STEPS = 6;
+
+function buildExternalStepSignature(
+  discovery: Pick<Awaited<ReturnType<typeof discoverExternalApplication>>, "finalUrl" | "fields">,
+): string {
+  return `${discovery.finalUrl}::${discovery.fields.map((field) => field.key).join("|")}`;
+}
+
 function getExternalApplyRunType(args: ExternalApplyArgs): ExternalApplyRunType {
   return args.dryRun ? "external-apply-dry-run" : "external-apply";
 }
@@ -166,6 +177,9 @@ function buildExternalApplyMeta(args: {
   platform: string;
   fieldCount: number;
   filledCount: number;
+  semanticFieldCount: number;
+  manualReviewPlannedCount: number;
+  semanticAnswerCount: number;
   finalStage: string;
   stopReason: string;
   followedPrecursorLink: string | null;
@@ -186,6 +200,12 @@ function buildExternalApplyMeta(args: {
       ? `Discovered ${args.fieldCount} application field(s).`
       : "No application fields were discovered on the current page.",
     `Filled ${args.filledCount} field(s).`,
+    args.semanticFieldCount > 0
+      ? `Mapped ${args.semanticFieldCount} field(s) to structured semantics.`
+      : "No structured field semantics were detected.",
+    args.manualReviewPlannedCount > 0
+      ? `Left ${args.manualReviewPlannedCount} field(s) in manual review mode.`
+      : "No fields were explicitly left for manual review.",
     `Stopped at ${args.finalStage}.`,
     siteFeedbackCount > 0
       ? `Captured ${siteFeedbackCount} site feedback message(s).`
@@ -200,6 +220,9 @@ function buildExternalApplyMeta(args: {
     metrics: {
       fieldCount: args.fieldCount,
       filledCount: args.filledCount,
+      semanticFieldCount: args.semanticFieldCount,
+      semanticAnswerCount: args.semanticAnswerCount,
+      manualReviewPlannedCount: args.manualReviewPlannedCount,
       finalStage: args.finalStage,
       siteFeedbackCount,
       precursorFollowed: Boolean(args.followedPrecursorLink),
@@ -213,6 +236,58 @@ function buildExternalApplyMeta(args: {
         : {}),
     },
     stopReason: args.stopReason,
+  };
+}
+
+function determineExternalFinalStage(args: {
+  fillPrimaryAction: "next" | "submit" | "unknown";
+  postAdvancePageText: string | null;
+  postAdvanceDiscovery: Awaited<ReturnType<typeof inspectExternalApplicationPage>> | null;
+}): string {
+  if (
+    args.postAdvancePageText &&
+    /thanks for completing this form|thank you for applying/i.test(args.postAdvancePageText)
+  ) {
+    return "completed";
+  }
+
+  if (args.postAdvanceDiscovery?.fields.length) {
+    return "form_step";
+  }
+
+  if (args.fillPrimaryAction === "next" || args.fillPrimaryAction === "submit") {
+    return "final_submit_step";
+  }
+
+  return "unknown";
+}
+
+function buildExternalStepSnapshot(args: {
+  stepIndex: number;
+  discovery: Awaited<ReturnType<typeof discoverExternalApplication>>;
+  answerPlan: ExternalApplicationPlannedAnswer[];
+  fillResult: Awaited<ReturnType<typeof fillExternalApplicationPage>>;
+  finalStage: string;
+  stopReason: string;
+}): ExternalApplicationStepSnapshot {
+  return {
+    stepIndex: args.stepIndex,
+    pageTitle: args.discovery.pageTitle,
+    finalUrl: args.discovery.finalUrl,
+    fieldCount: args.discovery.fields.length,
+    fieldKeys: args.discovery.fields.map((field) => field.key),
+    answerPlanCount: args.answerPlan.length,
+    filledCount: args.fillResult.fieldResults.filter((entry) => entry.status === "filled").length,
+    blockingRequiredFields: args.fillResult.blockingRequiredFields,
+    primaryAction: args.fillResult.primaryAction,
+    advanced: args.fillResult.advanced,
+    finalStage: args.finalStage,
+    stopReason: args.stopReason,
+    siteFeedback: {
+      errors: args.fillResult.siteFeedback.errors,
+      warnings: args.fillResult.siteFeedback.warnings,
+      infos: args.fillResult.siteFeedback.infos,
+    },
   };
 }
 
@@ -273,58 +348,116 @@ async function runExternalApplyCore({
           );
         }
       }
+      const steps: ExternalApplicationStepSnapshot[] = [];
+      const allAnswerPlans: ExternalApplicationPlannedAnswer[] = [];
+      let latestFillResult: Awaited<ReturnType<typeof fillExternalApplicationPage>> | null = null;
+      let latestPageTextSample: string | null = null;
+      let latestPostFillPageTextSample: string | null = null;
+      let latestPostFillDiscovery: Awaited<ReturnType<typeof inspectExternalApplicationPage>> | null = null;
+      let finalStage = "unknown";
+      let stopReason = "External application stopped before any fields were processed.";
+      const seenStepSignatures = new Set<string>();
 
-      const finalPageText = await extractExternalPageText(page);
-      const answerPlan = await planExternalApplicationAnswers({
-        fields: discovery.fields,
-        candidateProfile,
-        pageContext: {
-          title: discovery.pageTitle,
-          text: finalPageText,
-          sourceUrl: discovery.finalUrl,
-        },
-      });
+      for (let stepIndex = 1; stepIndex <= MAX_EXTERNAL_APPLICATION_STEPS; stepIndex += 1) {
+        seenStepSignatures.add(buildExternalStepSignature(discovery));
+        const currentPageText = await extractExternalPageText(page);
+        latestPageTextSample = truncate(currentPageText, 2500);
+        const answerPlan = await planExternalApplicationAnswers({
+          fields: discovery.fields,
+          candidateProfile,
+          pageContext: {
+            title: discovery.pageTitle,
+            text: currentPageText,
+            sourceUrl: discovery.finalUrl,
+          },
+        });
+        allAnswerPlans.push(...answerPlan);
 
-      const fillResult = await fillExternalApplicationPage({
-        page,
-        discovery,
-        answerPlan,
-        candidateProfile,
-        submit,
-      });
+        const fillResult = await fillExternalApplicationPage({
+          page,
+          discovery,
+          answerPlan,
+          candidateProfile,
+          submit,
+        });
+        latestFillResult = fillResult;
 
-      const postFillDiscovery = fillResult.advanced
-        ? await inspectExternalApplicationPage(page, args.url)
-        : null;
-      const postFillPageText = fillResult.advanced
-        ? await extractExternalPageText(page)
-        : null;
+        const postFillDiscovery = fillResult.advanced
+          ? await inspectExternalApplicationPage(page, args.url)
+          : null;
+        latestPostFillDiscovery = postFillDiscovery;
+        const postFillPageText = fillResult.advanced
+          ? await extractExternalPageText(page)
+          : null;
+        latestPostFillPageTextSample = postFillPageText
+          ? truncate(postFillPageText, 2500)
+          : null;
 
-      const finalStage = postFillPageText
-        ? /thanks for completing this form|thank you for applying/i.test(
-            postFillPageText,
-          )
-          ? "completed"
-          : postFillDiscovery?.fields.length
-            ? "form_step"
-            : fillResult.primaryAction === "next"
-              ? "final_submit_step"
-              : "unknown"
-        : fillResult.primaryAction === "submit"
-          ? "final_submit_step"
-          : "form_step";
+        finalStage = determineExternalFinalStage({
+          fillPrimaryAction: fillResult.primaryAction,
+          postAdvancePageText: postFillPageText,
+          postAdvanceDiscovery: postFillDiscovery,
+        });
 
-      const filledCount = fillResult.fieldResults.filter(
-        (r) => r.status === "filled",
-      ).length;
+        const filledCount = fillResult.fieldResults.filter(
+          (r) => r.status === "filled",
+        ).length;
 
-      const stopReason = buildStopReason({
-        submit,
-        discovery,
-        finalStage,
-        filledCount,
-        siteFeedback: fillResult.siteFeedback,
-      });
+        stopReason = buildStopReason({
+          submit,
+          discovery,
+          finalStage,
+          filledCount,
+          siteFeedback: fillResult.siteFeedback,
+        });
+
+        const repeatedStepDetected =
+          fillResult.advanced &&
+          postFillDiscovery != null &&
+          seenStepSignatures.has(buildExternalStepSignature(postFillDiscovery));
+        if (repeatedStepDetected) {
+          finalStage = "form_step";
+          const repeatedFeedback =
+            fillResult.siteFeedback.errors[0] ??
+            fillResult.siteFeedback.warnings[0] ??
+            fillResult.siteFeedback.infos[0] ??
+            null;
+          stopReason = repeatedFeedback
+            ? `The application remained on the same step after attempting to continue. Site feedback: ${repeatedFeedback}`
+            : "The application remained on the same step after attempting to continue.";
+        }
+
+        steps.push(
+          buildExternalStepSnapshot({
+            stepIndex,
+            discovery,
+            answerPlan,
+            fillResult,
+            finalStage,
+            stopReason,
+          }),
+        );
+
+        if (!fillResult.advanced || finalStage !== "form_step") {
+          break;
+        }
+        if (repeatedStepDetected) {
+          break;
+        }
+
+        discovery = postFillDiscovery ?? discovery;
+      }
+
+      const fillResult =
+        latestFillResult ??
+        ({
+          fieldResults: [],
+          primaryAction: "unknown",
+          advanced: false,
+          blockingRequiredFields: [],
+          siteFeedback: { errors: [], warnings: [], infos: [], messages: [] },
+          aiCorrectionAttempts: [],
+        } as Awaited<ReturnType<typeof fillExternalApplicationPage>>);
 
       return {
         mode: args.mode,
@@ -337,13 +470,12 @@ async function runExternalApplyCore({
         },
         discovery,
         fillResult,
-        postFillDiscovery,
-        answerPlan,
+        postFillDiscovery: latestPostFillDiscovery,
+        answerPlan: allAnswerPlans,
+        steps,
         recommendedAction,
-        pageTextSample: truncate(finalPageText, 2500),
-        postFillPageTextSample: postFillPageText
-          ? truncate(postFillPageText, 2500)
-          : null,
+        pageTextSample: latestPageTextSample,
+        postFillPageTextSample: latestPostFillPageTextSample,
         finalStage,
         aiAdvisory: aiAdvisory
           ? {
@@ -371,6 +503,11 @@ async function runExternalApplyCore({
           filledCount: result.fillResult.fieldResults.filter(
             (entry) => entry.status === "filled",
           ).length,
+          semanticFieldCount: result.discovery.fields.filter((entry) => entry.semanticKey).length,
+          semanticAnswerCount: result.answerPlan.filter((entry) => entry.semanticKey).length,
+          manualReviewPlannedCount: result.answerPlan.filter(
+            (entry) => entry.confidenceLabel === "manual_review",
+          ).length,
           finalStage: result.finalStage,
           stopReason: result.stopReason,
           followedPrecursorLink: result.discovery.followedPrecursorLink,
@@ -393,6 +530,33 @@ async function runExternalApplyCore({
         : {}),
       deps,
     });
+
+    for (const step of result.steps) {
+      await persistSystemEvent(
+        {
+          level: "INFO",
+          scope: "external.apply.step",
+          message: `External application step ${step.stepIndex} processed.`,
+          runType,
+          jobUrl: args.url,
+          details: {
+            stepIndex: step.stepIndex,
+            pageTitle: step.pageTitle,
+            finalUrl: step.finalUrl,
+            fieldCount: step.fieldCount,
+            answerPlanCount: step.answerPlanCount,
+            filledCount: step.filledCount,
+            primaryAction: step.primaryAction,
+            advanced: step.advanced,
+            finalStage: step.finalStage,
+            blockingRequiredFields: step.blockingRequiredFields,
+            stopReason: step.stopReason,
+            siteFeedback: step.siteFeedback,
+          },
+        },
+        deps,
+      );
+    }
 
     await persistSystemEvent(
       {
@@ -505,6 +669,7 @@ function buildStopReason({
 // Public entry points
 // ---------------------------------------------------------------------------
 
+// Public dry-run entrypoint for external applications. Stops before the terminal submit action.
 export async function runExternalApplyDryRunFlow(
   args: ExternalApplyArgs,
   deps: AppDeps,
@@ -518,6 +683,7 @@ export async function runExternalApplyDryRunFlow(
   });
 }
 
+// Public live entrypoint for external applications. Allows the final submit action when reached.
 export async function runExternalApplyFlow(
   args: ExternalApplyArgs,
   deps: AppDeps,

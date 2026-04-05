@@ -87,6 +87,9 @@ function createFlowPage(args: {
         async fill() {
           return undefined;
         },
+        async selectOption() {
+          return undefined;
+        },
         async press() {
           return undefined;
         },
@@ -209,6 +212,17 @@ describe("external apply flows", () => {
       expect.objectContaining({
         category: "external-apply-runs",
         prefix: "external-apply-dry-run",
+        payload: expect.objectContaining({
+          meta: expect.objectContaining({
+            metrics: expect.objectContaining({
+              fieldCount: 2,
+              filledCount: 2,
+              semanticFieldCount: 2,
+              semanticAnswerCount: 2,
+              manualReviewPlannedCount: 0,
+            }),
+          }),
+        }),
       }),
     );
     expect(deps.prisma.candidateProfileSnapshot.create).toHaveBeenCalledWith({
@@ -407,13 +421,8 @@ describe("external apply flows", () => {
         ],
         precursorLinks: [],
       })
+      .mockResolvedValueOnce("Initial application page")
       .mockResolvedValueOnce("Actual application form")
-      .mockResolvedValueOnce({
-        url: "https://example.com/form/complete",
-        title: "Application complete",
-        fields: [],
-        precursorLinks: [],
-      })
       .mockResolvedValueOnce({
         url: "https://example.com/form/complete",
         title: "Application complete",
@@ -472,6 +481,415 @@ describe("external apply flows", () => {
         answersJson: expect.stringContaining('"runType":"external-apply"'),
       }),
     });
+  });
+
+  it("records a single-step dry run as one completed step with a final submit stage", async () => {
+    const goto = vi.fn();
+    const evaluate = vi.fn();
+    evaluate
+      .mockResolvedValueOnce({
+        url: "https://example.com/single-step",
+        title: "Single-step form",
+        fields: [
+          {
+            key: "candidate_name",
+            label: "Full name",
+            inputType: "text",
+            required: true,
+            options: [],
+            placeholder: "Full name",
+            helpText: null,
+            accept: null,
+          },
+          {
+            key: "candidate_email",
+            label: "Email",
+            inputType: "email",
+            required: true,
+            options: [],
+            placeholder: "Email",
+            helpText: null,
+            accept: null,
+          },
+        ],
+        precursorLinks: [],
+      })
+      .mockResolvedValueOnce("Initial single-step page text")
+      .mockResolvedValueOnce("Single-step page text");
+
+    const deps = {
+      loadCandidateMasterProfile: vi.fn().mockResolvedValue(buildCandidateProfile()),
+      prisma: {
+        jobPosting: { findUnique: vi.fn().mockResolvedValue(null) },
+        candidateProfileSnapshot: { create: vi.fn().mockResolvedValue({ id: "snapshot_1" }) },
+        preparedAnswerSet: { create: vi.fn().mockResolvedValue({ id: "prepared_1" }) },
+        systemLog: { create: vi.fn().mockResolvedValue({}) },
+      },
+      withPage: vi.fn(async (fn: (page: unknown) => Promise<unknown>) =>
+        fn(
+          createFlowPage({
+            goto,
+            evaluate,
+            visibleSelectors: [
+              `[name="candidate_name"]`,
+              `[name="candidate_email"]`,
+              `button:has-text("Submit")`,
+            ],
+          }),
+        )),
+      completePrompt: vi.fn(),
+      writeRunReport: vi.fn().mockResolvedValue("artifacts/external-apply-runs/report.json"),
+      logger: { info: vi.fn(), error: vi.fn() },
+    } as any;
+
+    const result = await runExternalApplyDryRunFlow(
+      {
+        mode: "external-apply",
+        url: "https://example.com/single-step",
+        resumePath: "./user/resume.pdf",
+        dryRun: true,
+      },
+      deps,
+    );
+
+    expect(result.steps).toHaveLength(1);
+    expect(result.steps[0]).toEqual(
+      expect.objectContaining({
+        stepIndex: 1,
+        fieldCount: 2,
+        primaryAction: "submit",
+        advanced: false,
+        finalStage: "final_submit_step",
+      }),
+    );
+    expect(result.finalStage).toBe("final_submit_step");
+    expect(result.stopReason).toContain("final submit step");
+  });
+
+  it("re-discovers and re-plans each step after Next in a multi-step external flow", async () => {
+    const goto = vi.fn();
+    const evaluate = vi.fn();
+    evaluate
+      .mockResolvedValueOnce({
+        url: "https://example.com/apply",
+        title: "Step 1",
+        fields: [
+          {
+            key: "email",
+            label: "Email address",
+            inputType: "email",
+            required: true,
+            options: [],
+            placeholder: "Email address",
+            helpText: null,
+            accept: null,
+            selectorHints: ['[name="email"]'],
+          },
+        ],
+        precursorLinks: [],
+      })
+      .mockResolvedValueOnce("Initial page text")
+      .mockResolvedValueOnce("Step 1 page text")
+      .mockResolvedValueOnce({
+        url: "https://example.com/apply",
+        title: "Step 2",
+        fields: [
+          {
+            key: "name",
+            label: "Full name",
+            inputType: "text",
+            required: true,
+            options: [],
+            placeholder: "Full name",
+            helpText: null,
+            accept: null,
+            selectorHints: ['[name="name"]'],
+          },
+          {
+            key: "salaryCurrency",
+            label: "Desired Salary",
+            inputType: "select",
+            required: false,
+            options: ["US Dollar ($)", "Turkish Lira (TL)"],
+            placeholder: null,
+            helpText: null,
+            accept: null,
+            selectorHints: ['[name="salaryCurrency"]'],
+          },
+        ],
+        precursorLinks: [],
+      })
+      .mockResolvedValueOnce("Step 2 page text after next")
+      .mockResolvedValueOnce("Step 2 current page text")
+      .mockResolvedValueOnce({
+        url: "https://example.com/apply/complete",
+        title: "Complete",
+        fields: [],
+        precursorLinks: [],
+      })
+      .mockResolvedValueOnce("Thank you for applying!");
+
+    let stepState = 1;
+    const page = {
+      goto,
+      evaluate(callback: unknown, ...rest: unknown[]) {
+        if (typeof callback === "function") {
+          return Promise.resolve([]);
+        }
+        return evaluate(callback as never, ...(rest as never[]));
+      },
+      waitForTimeout: vi.fn(async () => undefined),
+      locator(selector: string) {
+        return {
+          first() {
+            return this;
+          },
+          async count() {
+            const currentVisibleSelectors =
+              stepState === 1
+                ? [`[name="email"]`, `button:has-text("Next")`]
+                : [
+                    `[name="name"]`,
+                    `[name="salaryCurrency"]`,
+                    `button:has-text("Submit")`,
+                  ];
+            return currentVisibleSelectors.includes(selector) ? 1 : 0;
+          },
+          async click() {
+            if (selector === `button:has-text("Next")`) {
+              stepState = 2;
+            }
+            return undefined;
+          },
+          async fill() {
+            return undefined;
+          },
+          async selectOption() {
+            return undefined;
+          },
+          async press() {
+            return undefined;
+          },
+          async blur() {
+            return undefined;
+          },
+          async setInputFiles() {
+            return undefined;
+          },
+        };
+      },
+    };
+
+    const deps = {
+      loadCandidateMasterProfile: vi.fn().mockResolvedValue(buildCandidateProfile()),
+      prisma: {
+        jobPosting: {
+          findUnique: vi.fn().mockResolvedValue(null),
+        },
+        candidateProfileSnapshot: {
+          create: vi.fn().mockResolvedValue({ id: "snapshot_1" }),
+        },
+        preparedAnswerSet: {
+          create: vi.fn().mockResolvedValue({ id: "prepared_1" }),
+        },
+        systemLog: {
+          create: vi.fn().mockResolvedValue({}),
+        },
+      },
+      withPage: vi.fn(async (fn: (page: unknown) => Promise<unknown>) => fn(page)),
+      completePrompt: vi.fn(),
+      writeRunReport: vi.fn().mockResolvedValue("artifacts/external-apply-runs/report.json"),
+      logger: {
+        info: vi.fn(),
+        error: vi.fn(),
+      },
+    } as any;
+
+    const result = await runExternalApplyFlow(
+      {
+        mode: "external-apply",
+        url: "https://example.com/apply",
+        resumePath: "./user/resume.pdf",
+        dryRun: false,
+      },
+      deps,
+    );
+
+    expect(result.steps).toHaveLength(2);
+    expect(result.steps[0]).toEqual(
+      expect.objectContaining({
+        stepIndex: 1,
+        fieldCount: 1,
+        primaryAction: "next",
+        advanced: true,
+        finalStage: "form_step",
+      }),
+    );
+    expect(result.steps[1]).toEqual(
+      expect.objectContaining({
+        stepIndex: 2,
+        fieldCount: 2,
+        primaryAction: "submit",
+        finalStage: "completed",
+      }),
+    );
+    expect(result.answerPlan).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ fieldKey: "email" }),
+        expect.objectContaining({ fieldKey: "name" }),
+        expect.objectContaining({
+          fieldKey: "salaryCurrency",
+          semanticKey: "salary.currency",
+        }),
+      ]),
+    );
+    expect(deps.prisma.systemLog.create).toHaveBeenCalled();
+    expect(result.finalStage).toBe("completed");
+  });
+
+  it("surfaces native validation feedback in the stop reason when the page refuses to advance", async () => {
+    const goto = vi.fn();
+    const evaluate = vi.fn();
+    evaluate
+      .mockResolvedValueOnce({
+        url: "https://example.com/apply",
+        title: "Step 2",
+        fields: [
+          {
+            key: "sponsorWorkVisaDetails",
+            label: "Please provide more details so we can support you:",
+            inputType: "textarea",
+            required: true,
+            options: [],
+            placeholder: null,
+            helpText: null,
+            accept: null,
+            selectorHints: ['[name="sponsorWorkVisaDetails"]'],
+          },
+        ],
+        precursorLinks: [],
+      })
+      .mockResolvedValueOnce("Step 2 page text")
+      .mockResolvedValueOnce("Step 2 page text")
+      .mockResolvedValueOnce({
+        url: "https://example.com/apply",
+        title: "Step 2",
+        fields: [
+          {
+            key: "sponsorWorkVisaDetails",
+            label: "Please provide more details so we can support you:",
+            inputType: "textarea",
+            required: true,
+            options: [],
+            placeholder: null,
+            helpText: null,
+            accept: null,
+            selectorHints: ['[name="sponsorWorkVisaDetails"]'],
+          },
+        ],
+        precursorLinks: [],
+      })
+      .mockResolvedValueOnce("Step 2 page text after failed continue");
+
+    const page = {
+      goto,
+      evaluate(callback: unknown, ...rest: unknown[]) {
+        if (
+          typeof callback === "function" &&
+          String(callback).includes("querySelectorAll")
+        ) {
+          return Promise.resolve([
+            {
+              severity: "error",
+              message: "Do you require sponsorship for a work visa?: Please fill out this field.",
+              source: "external.validation",
+            },
+          ]);
+        }
+        return evaluate(callback as never, ...(rest as never[]));
+      },
+      waitForTimeout: vi.fn(async () => undefined),
+      locator(selector: string) {
+        return {
+          first() {
+            return this;
+          },
+          async count() {
+            const visibleSelectors = [
+              `[name="sponsorWorkVisaDetails"]`,
+              `button:has-text("Next")`,
+            ];
+            return visibleSelectors.includes(selector) ? 1 : 0;
+          },
+          async click() {
+            return undefined;
+          },
+          async fill() {
+            return undefined;
+          },
+          async selectOption() {
+            return undefined;
+          },
+          async press() {
+            return undefined;
+          },
+          async blur() {
+            return undefined;
+          },
+          async setInputFiles() {
+            return undefined;
+          },
+        };
+      },
+    };
+
+    const deps = {
+      loadCandidateMasterProfile: vi.fn().mockResolvedValue(buildCandidateProfile({
+        regionalAuthorization: {
+          defaultRequiresSponsorship: true,
+          turkeyRequiresSponsorship: false,
+          europeRequiresSponsorship: true,
+        },
+      })),
+      prisma: {
+        jobPosting: {
+          findUnique: vi.fn().mockResolvedValue(null),
+        },
+        candidateProfileSnapshot: {
+          create: vi.fn().mockResolvedValue({ id: "snapshot_1" }),
+        },
+        preparedAnswerSet: {
+          create: vi.fn().mockResolvedValue({ id: "prepared_1" }),
+        },
+        systemLog: {
+          create: vi.fn().mockResolvedValue({}),
+        },
+      },
+      withPage: vi.fn(async (fn: (page: unknown) => Promise<unknown>) => fn(page)),
+      completePrompt: vi.fn(),
+      writeRunReport: vi.fn().mockResolvedValue("artifacts/external-apply-runs/report.json"),
+      logger: {
+        info: vi.fn(),
+        error: vi.fn(),
+      },
+    } as any;
+
+    const result = await runExternalApplyDryRunFlow(
+      {
+        mode: "external-apply",
+        url: "https://example.com/apply",
+        resumePath: "./user/resume.pdf",
+        dryRun: true,
+      },
+      deps,
+    );
+
+    expect(result.steps).toHaveLength(1);
+    expect(result.finalStage).toBe("final_submit_step");
+    expect(result.stopReason).toContain("Please fill out this field.");
+    expect(result.steps[0]?.blockingRequiredFields).toEqual([
+      "Please provide more details so we can support you:",
+    ]);
   });
 
   it("links external prepared answers back to the originating LinkedIn job when provided", async () => {

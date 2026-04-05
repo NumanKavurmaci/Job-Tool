@@ -49,6 +49,9 @@ function pushUnique(target: string[], value: string | null | undefined) {
 function buildFieldSelectors(field: ExternalApplicationField): string[] {
   const selectors: string[] = [];
 
+  for (const selectorHint of field.selectorHints ?? []) {
+    pushUnique(selectors, selectorHint);
+  }
   pushUnique(selectors, `[id="${escapeAttributeValue(field.key)}"]`);
   pushUnique(selectors, `[name="${escapeAttributeValue(field.key)}"]`);
 
@@ -71,6 +74,14 @@ function buildFieldSelectors(field: ExternalApplicationField): string[] {
     if (field.accept) {
       pushUnique(selectors, `input[type="file"][accept="${escapeAttributeValue(field.accept)}"]`);
     }
+    pushUnique(selectors, `.file-input-container .button.resume`);
+    pushUnique(selectors, `a.button.resume`);
+    pushUnique(selectors, `button.button.resume`);
+    pushUnique(selectors, `[ng-click*="showFileSelector"]`);
+    if (/upload resume/i.test(field.label)) {
+      pushUnique(selectors, `a:has-text("Upload Resume")`);
+      pushUnique(selectors, `button:has-text("Upload Resume")`);
+    }
   }
 
   return selectors;
@@ -78,17 +89,79 @@ function buildFieldSelectors(field: ExternalApplicationField): string[] {
 
 async function findFirstLocator(page: Page, selectors: string[]) {
   for (const selector of selectors) {
-    const locator = page.locator(selector).first();
-    if ((await locator.count()) > 0) {
-      return locator;
+    try {
+      const locator = page.locator(selector).first();
+      if ((await locator.count()) > 0) {
+        return locator;
+      }
+    } catch {
+      continue;
     }
   }
 
   return null;
 }
 
+async function uploadFileViaChooser(
+  page: Page,
+  locator: Awaited<ReturnType<typeof findFirstLocator>>,
+  filePath: string,
+): Promise<boolean> {
+  if (!locator || typeof (page as Page & { waitForEvent?: unknown }).waitForEvent !== "function") {
+    return false;
+  }
+
+  try {
+    const fileChooserPromise = (page as Page & {
+      waitForEvent: (event: string) => Promise<{ setFiles: (files: string) => Promise<void> }>;
+    }).waitForEvent("filechooser");
+    await locator.click();
+    const fileChooser = await fileChooserPromise;
+    await fileChooser.setFiles(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function normalizeAnswerValue(answer: string | null): string {
   return answer?.trim() ?? "";
+}
+
+function normalizeBooleanAnswer(answer: string, options: string[]): {
+  shouldCheck: boolean;
+  matchedOption?: string | undefined;
+} | null {
+  const normalized = answer.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  const matchedOption = options.find(
+    (option) => option.trim().toLowerCase() === normalized,
+  );
+  if (matchedOption) {
+    const option = matchedOption;
+    if (/^(yes|true|on|agree|accepted|allow|opt in)$/i.test(matchedOption.trim())) {
+      return option
+        ? { shouldCheck: true, matchedOption: option }
+        : { shouldCheck: true };
+    }
+    if (/^(no|false|off|decline|disagree|opt out)$/i.test(matchedOption.trim())) {
+      return option
+        ? { shouldCheck: false, matchedOption: option }
+        : { shouldCheck: false };
+    }
+  }
+
+  if (/^(yes|true|on|agree|accepted|allow|opt in)$/i.test(normalized)) {
+    return { shouldCheck: true, matchedOption };
+  }
+  if (/^(no|false|off|decline|disagree|opt out)$/i.test(normalized)) {
+    return { shouldCheck: false, matchedOption };
+  }
+
+  return null;
 }
 
 function normalizeUrlAnswer(answer: string): string {
@@ -115,6 +188,9 @@ async function clickVisibleOption(page: Page, answer: string): Promise<boolean> 
     `.list-item:has-text("${escapeAttributeValue(answer)}")`,
     `[role="option"]:has-text("${escapeAttributeValue(answer)}")`,
     `[data-value="${escapeAttributeValue(answer)}"]`,
+    `.places-autocomplete_optionsContainer__0VVTk:has-text("${escapeAttributeValue(answer)}")`,
+    `[class*="autocomplete"]:has-text("${escapeAttributeValue(answer)}")`,
+    `[class*="option"]:has-text("${escapeAttributeValue(answer)}")`,
     `li:has-text("${escapeAttributeValue(answer)}")`,
   ];
 
@@ -125,6 +201,36 @@ async function clickVisibleOption(page: Page, answer: string): Promise<boolean> 
 
   await locator.click();
   return true;
+}
+
+async function selectNativeOption(
+  locator: Awaited<ReturnType<typeof findFirstLocator>>,
+  answer: string,
+): Promise<boolean> {
+  if (!locator || typeof (locator as { selectOption?: unknown }).selectOption !== "function") {
+    return false;
+  }
+
+  const attempts: Array<string | { label: string } | { value: string }> = [
+    { label: answer },
+    { value: answer },
+    answer,
+  ];
+
+  for (const attempt of attempts) {
+    try {
+      await (
+        locator as unknown as {
+          selectOption: (value: unknown) => Promise<unknown>;
+        }
+      ).selectOption(attempt);
+      return true;
+    } catch {
+      continue;
+    }
+  }
+
+  return false;
 }
 
 // Fills a single external field and optionally retries once with an AI-corrected value.
@@ -173,7 +279,14 @@ async function fillSingleField(
         };
       }
 
-      await locator.setInputFiles(answer);
+      try {
+        await locator.setInputFiles(answer);
+      } catch {
+        const uploaded = await uploadFileViaChooser(page, locator, answer);
+        if (!uploaded) {
+          throw new Error("Could not upload the file using either a file input or file chooser.");
+        }
+      }
       return {
         fieldKey: field.key,
         fieldLabel: field.label,
@@ -185,13 +298,59 @@ async function fillSingleField(
 
     const fillValue = field.type === "url" ? normalizeUrlAnswer(answer) : answer;
 
-    if (field.type === "single_select" || field.type === "multi_select" || field.type === "boolean") {
-      await locator.click().catch(() => undefined);
-      await page.waitForTimeout(150);
-      const clickedOption = await clickVisibleOption(page, answer).catch(() => false);
+    if (field.type === "boolean") {
+      const booleanAnswer = normalizeBooleanAnswer(answer, field.options);
+      if (!booleanAnswer) {
+        return {
+          fieldKey: field.key,
+          fieldLabel: field.label,
+          required: field.required,
+          status: "skipped",
+          details: "No compatible boolean answer was available for this field.",
+        };
+      }
 
-      if (!clickedOption) {
+      if (booleanAnswer.shouldCheck) {
+        const clickedOption = await clickVisibleOption(
+          page,
+          booleanAnswer.matchedOption ?? answer,
+        ).catch(() => false);
+
+        if (!clickedOption) {
+          await locator.click();
+        }
+      }
+
+      await locator.blur().catch(() => undefined);
+
+      return {
+        fieldKey: field.key,
+        fieldLabel: field.label,
+        required: field.required,
+        status: "filled",
+        details: booleanAnswer.shouldCheck
+          ? "Selected the boolean field."
+          : "Left the boolean field unselected.",
+      };
+    }
+
+    if (field.type === "single_select" || field.type === "multi_select") {
+      const looksLikeReactSelect =
+        field.key.startsWith("react-select-") ||
+        (field.selectorHints ?? []).some((hint) => hint.includes("react-select-"));
+      await locator.click().catch(() => undefined);
+      await page.waitForTimeout(900);
+      const selectedNativeOption = await selectNativeOption(locator, answer).catch(() => false);
+      const clickedOption = selectedNativeOption
+        ? false
+        : await clickVisibleOption(page, answer).catch(() => false);
+
+      if (!selectedNativeOption && !clickedOption) {
         await locator.fill(answer);
+        if (looksLikeReactSelect) {
+          await page.waitForTimeout(150);
+          await locator.press("ArrowDown").catch(() => undefined);
+        }
         await locator.press("Enter").catch(() => undefined);
       }
 
@@ -202,13 +361,40 @@ async function fillSingleField(
         fieldLabel: field.label,
         required: field.required,
         status: "filled",
-        details: clickedOption
+        details: selectedNativeOption
+          ? "Selected a native option."
+          : clickedOption
           ? "Selected a visible option."
           : "Filled a selectable field.",
       };
     }
 
-    await locator.fill(fillValue);
+    if (field.semanticKey === "location.city") {
+      if (typeof (locator as { pressSequentially?: unknown }).pressSequentially === "function") {
+        await (
+          locator as unknown as {
+            pressSequentially: (value: string, options?: { delay?: number }) => Promise<void>;
+          }
+        ).pressSequentially(fillValue, { delay: 35 });
+      } else {
+        await locator.fill(fillValue);
+      }
+      await page.waitForTimeout(150);
+      const selectedAutocompleteContainer = await findFirstLocator(page, [
+        `.places-autocomplete_optionsContainer__0VVTk`,
+        `[class*="autocomplete_optionsContainer"]`,
+        `[class*="places-autocomplete"]`,
+      ]);
+      const selectedCityOption = selectedAutocompleteContainer
+        ? await selectedAutocompleteContainer.click().then(() => true).catch(() => false)
+        : await clickVisibleOption(page, fillValue).catch(() => false);
+      if (!selectedCityOption) {
+        await locator.press("ArrowDown").catch(() => undefined);
+        await locator.press("Enter").catch(() => undefined);
+      }
+    } else {
+      await locator.fill(fillValue);
+    }
     await locator.blur().catch(() => undefined);
 
     const siteFeedback = await collectExternalSiteFeedback(page);
@@ -407,6 +593,49 @@ export async function collectExternalSiteFeedback(page: Page): Promise<SiteFeedb
 
   const messages = await page.evaluate(() => {
     const normalize = (value: unknown) => String(value ?? "").replace(/\s+/g, " ").trim();
+    const getElementLabel = (element: {
+      id?: string;
+      name?: string;
+      placeholder?: string | null;
+      labels?: ArrayLike<{ textContent?: string | null }> | null;
+      getAttribute?: (name: string) => string | null;
+    }) => {
+      const ariaLabel = normalize(element.getAttribute?.("aria-label"));
+      if (ariaLabel) {
+        return ariaLabel;
+      }
+
+      const labelledBy = normalize(element.getAttribute?.("aria-labelledby"));
+      if (labelledBy && (globalThis as { document?: { getElementById?: (id: string) => { textContent?: string | null } | null } }).document?.getElementById) {
+        const labelledText = labelledBy
+          .split(/\s+/)
+          .map((id) =>
+            normalize(
+              (globalThis as { document?: { getElementById?: (id: string) => { textContent?: string | null } | null } }).document?.getElementById?.(id)?.textContent,
+            ),
+          )
+          .filter(Boolean)
+          .join(" ");
+        if (labelledText) {
+          return labelledText;
+        }
+      }
+
+      const explicitLabels = Array.from(element.labels ?? [])
+        .map((label) => normalize(label.textContent))
+        .filter(Boolean)
+        .join(" ");
+      if (explicitLabels) {
+        return explicitLabels;
+      }
+
+      const placeholder = normalize(element.placeholder);
+      if (placeholder) {
+        return placeholder;
+      }
+
+      return normalize(element.name) || normalize(element.id) || "Field";
+    };
     const nodes = Array.from(
       (globalThis as { document?: { querySelectorAll?: (selector: string) => Iterable<unknown> } }).document?.querySelectorAll?.([
         "[role='alert']",
@@ -449,6 +678,86 @@ export async function collectExternalSiteFeedback(page: Page): Promise<SiteFeedb
         source: "external.apply",
       });
     }
+
+    const formControls = Array.from(
+      (globalThis as { document?: { querySelectorAll?: (selector: string) => Iterable<unknown> } }).document?.querySelectorAll?.(
+        "input, textarea, select",
+      ) ?? [],
+    );
+    for (const control of formControls) {
+      const element = control as {
+        validationMessage?: string | null;
+        checkValidity?: () => boolean;
+        matches?: (selector: string) => boolean;
+        disabled?: boolean;
+        type?: string | null;
+        value?: string | null;
+        id?: string;
+        name?: string;
+        placeholder?: string | null;
+        labels?: ArrayLike<{ textContent?: string | null }> | null;
+        getAttribute?: (name: string) => string | null;
+      };
+      if (element.disabled) {
+        continue;
+      }
+
+      const isInvalid =
+        (typeof element.checkValidity === "function" && element.checkValidity() === false) ||
+        (typeof element.matches === "function" && element.matches(":invalid"));
+      if (!isInvalid) {
+        continue;
+      }
+
+      const validationMessage = normalize(element.validationMessage);
+      if (!validationMessage) {
+        continue;
+      }
+
+      const label = getElementLabel(element);
+      const message = label ? `${label}: ${validationMessage}` : validationMessage;
+      if (seen.has(message)) {
+        continue;
+      }
+      seen.add(message);
+      results.push({
+        severity: "error",
+        message,
+        source: "external.validation",
+      });
+    }
+
+    const bodyText = normalize(
+      (globalThis as { document?: { body?: { innerText?: string | null } } }).document?.body?.innerText,
+    );
+    const heuristicMessages = [
+      {
+        pattern: /that looks like an annual rate\.\s*we are asking for a monthly rate, please\.?/i,
+        severity: "warning" as const,
+      },
+      {
+        pattern: /please,\s*do not use decimals\.?/i,
+        severity: "warning" as const,
+      },
+      {
+        pattern: /please fill out the following information\.?/i,
+        severity: "error" as const,
+      },
+    ];
+    for (const heuristic of heuristicMessages) {
+      const match = bodyText.match(heuristic.pattern);
+      const message = normalize(match?.[0]);
+      if (!message || seen.has(message)) {
+        continue;
+      }
+      seen.add(message);
+      results.push({
+        severity: heuristic.severity,
+        message,
+        source: "external.heuristic",
+      });
+    }
+
     return results;
   }).catch(() => []);
 
@@ -461,6 +770,7 @@ export async function collectExternalSiteFeedback(page: Page): Promise<SiteFeedb
   };
 }
 
+// Detects whether the current step is asking the bot to continue or to submit.
 export async function getExternalPrimaryAction(page: Page): Promise<ExternalPrimaryAction> {
   const nextSelectors = [
     `button:has-text("Next")`,
@@ -484,6 +794,7 @@ export async function getExternalPrimaryAction(page: Page): Promise<ExternalPrim
   return "unknown";
 }
 
+// Clicks the current primary action and waits briefly for the page to settle.
 export async function advanceExternalApplicationPage(
   page: Page,
   action: Extract<ExternalPrimaryAction, "next" | "submit">,
@@ -501,6 +812,7 @@ export async function advanceExternalApplicationPage(
   return true;
 }
 
+// Fills one external application step, captures feedback, and decides whether the flow can advance.
 export async function fillExternalApplicationPage(args: {
   page: Page;
   discovery: ExternalApplicationDiscovery;

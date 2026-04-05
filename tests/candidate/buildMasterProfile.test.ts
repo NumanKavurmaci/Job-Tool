@@ -45,6 +45,14 @@ describe("buildMasterProfile", () => {
       gpa: 2.4,
       remotePreference: "remote",
       remoteOnly: true,
+      regionalAuthorization: {
+        defaultRequiresSponsorship: true,
+        turkeyRequiresSponsorship: false,
+        europeRequiresSponsorship: true,
+      },
+      linkedinUrl: "https://www.linkedin.com/in/jane-manual",
+      githubUrl: "https://github.com/jane-manual",
+      portfolioUrl: "https://jane.dev",
       disability: {
         hasVisualDisability: true,
         disabilityPercentage: 46,
@@ -60,6 +68,9 @@ describe("buildMasterProfile", () => {
     parseResumeMock.mockResolvedValue({ fullName: "Jane Doe" });
     normalizeResumeMock.mockReturnValue({
       fullName: "Jane Doe",
+      linkedinUrl: "https://www.linkedin.com/in/jane-resume",
+      githubUrl: "https://github.com/jane-resume",
+      portfolioUrl: "https://resume.dev",
       preferredRoles: ["Backend Engineer"],
       preferredTechStack: ["Node.js"],
       languages: ["German"],
@@ -93,6 +104,9 @@ describe("buildMasterProfile", () => {
     expect(normalizeResumeMock).toHaveBeenCalled();
     expect(result).toMatchObject({
       fullName: "Jane Doe",
+      linkedinUrl: "https://www.linkedin.com/in/jane-manual",
+      githubUrl: "https://github.com/jane-manual",
+      portfolioUrl: "https://jane.dev",
       preferredRoles: ["Software Engineer", "Backend Engineer"],
       preferredTechStack: ["TypeScript", "Node.js"],
       languages: ["English", "German"],
@@ -109,6 +123,14 @@ describe("buildMasterProfile", () => {
       yearsOfExperienceTotal: 3,
       remotePreference: "remote",
       remoteOnly: true,
+      regionalAuthorization: {
+        defaultRequiresSponsorship: true,
+        turkeyRequiresSponsorship: false,
+        europeRequiresSponsorship: true,
+      },
+      linkedinUrl: "https://www.linkedin.com/in/jane-manual",
+      githubUrl: "https://github.com/jane-manual",
+      portfolioUrl: "https://jane.dev",
       disability: {
         hasVisualDisability: true,
         disabilityPercentage: 46,
@@ -121,6 +143,9 @@ describe("buildMasterProfile", () => {
     parseResumeMock.mockResolvedValue({ fullName: "Jane Doe" });
     normalizeResumeMock.mockReturnValue({
       fullName: "Jane Doe",
+      linkedinUrl: null,
+      githubUrl: null,
+      portfolioUrl: null,
       preferredRoles: [],
       preferredTechStack: [],
       languages: [],
@@ -134,6 +159,11 @@ describe("buildMasterProfile", () => {
       gpa: null,
       remotePreference: null,
       remoteOnly: false,
+      regionalAuthorization: {
+        defaultRequiresSponsorship: null,
+        turkeyRequiresSponsorship: null,
+        europeRequiresSponsorship: null,
+      },
       disability: {
         hasVisualDisability: false,
         disabilityPercentage: null,
@@ -156,6 +186,9 @@ describe("buildMasterProfile", () => {
     parseResumeMock.mockResolvedValue({ fullName: "Jane Doe" });
     normalizeResumeMock.mockReturnValue({
       fullName: "Jane Doe",
+      linkedinUrl: null,
+      githubUrl: null,
+      portfolioUrl: null,
       preferredRoles: [],
       preferredTechStack: [],
       languages: [],
@@ -169,6 +202,11 @@ describe("buildMasterProfile", () => {
       gpa: null,
       remotePreference: null,
       remoteOnly: false,
+      regionalAuthorization: {
+        defaultRequiresSponsorship: null,
+        turkeyRequiresSponsorship: null,
+        europeRequiresSponsorship: null,
+      },
       disability: {
         hasVisualDisability: false,
         disabilityPercentage: null,

@@ -39,6 +39,12 @@ export interface CandidateExperienceOverrides {
   [normalizedKeyword: string]: number;
 }
 
+export interface CandidateRegionalAuthorization {
+  defaultRequiresSponsorship: boolean | null;
+  turkeyRequiresSponsorship: boolean | null;
+  europeRequiresSponsorship: boolean | null;
+}
+
 export interface CandidateProfile {
   fullName: string | null;
   email: string | null;
@@ -60,6 +66,7 @@ export interface CandidateProfile {
   experienceOverrides: CandidateExperienceOverrides;
   workAuthorization: string | null;
   requiresSponsorship: boolean | null;
+  regionalAuthorization?: CandidateRegionalAuthorization;
   willingToRelocate: boolean | null;
   remotePreference: string | null;
   remoteOnly: boolean;

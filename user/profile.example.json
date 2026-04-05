@@ -38,7 +38,12 @@
   },
   "authorization": {
     "visaRequirement": "unknown",
-    "workAuthorizationStatus": "unknown"
+    "workAuthorizationStatus": "unknown",
+    "regional": {
+      "defaultRequiresSponsorship": null,
+      "turkeyRequiresSponsorship": null,
+      "europeRequiresSponsorship": null
+    }
   },
   "personal": {
     "languages": [
@@ -52,6 +57,11 @@
       "accommodationNotes": null,
       "disclosurePreference": "manual-review"
     }
+  },
+  "identity": {
+    "linkedinUrl": null,
+    "githubUrl": null,
+    "portfolioUrl": null
   },
   "compensation": {
     "expectations": {

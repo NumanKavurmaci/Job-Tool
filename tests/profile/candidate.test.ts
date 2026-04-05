@@ -34,6 +34,14 @@ describe("candidate profile loader", () => {
       remoteOnly: false,
       visaRequirement: "unknown",
       workAuthorizationStatus: "unknown",
+      regionalAuthorization: {
+        defaultRequiresSponsorship: null,
+        turkeyRequiresSponsorship: null,
+        europeRequiresSponsorship: null,
+      },
+      linkedinUrl: null,
+      githubUrl: null,
+      portfolioUrl: null,
       languages: [],
       experienceOverrides: {},
       salaryExpectations: {
@@ -85,6 +93,11 @@ describe("candidate profile loader", () => {
         authorization: {
           visaRequirement: "not-required",
           workAuthorizationStatus: "authorized",
+          regional: {
+            defaultRequiresSponsorship: true,
+            turkeyRequiresSponsorship: false,
+            europeRequiresSponsorship: true,
+          },
         },
         personal: {
           languages: ["English"],
@@ -96,6 +109,11 @@ describe("candidate profile loader", () => {
             accommodationNotes: null,
             disclosurePreference: "manual-review",
           },
+        },
+        identity: {
+          linkedinUrl: "https://www.linkedin.com/in/jane-doe",
+          githubUrl: "https://github.com/jane-doe",
+          portfolioUrl: "https://jane.dev",
         },
         compensation: {
           expectations: {
@@ -116,6 +134,14 @@ describe("candidate profile loader", () => {
     expect(profile.preferredRoleOverlapSignals).toEqual(["frontend", "full stack"]);
     expect(profile.disallowedRoleKeywords).toEqual(["ios"]);
     expect(profile.remoteOnly).toBe(true);
+    expect(profile.regionalAuthorization).toEqual({
+      defaultRequiresSponsorship: true,
+      turkeyRequiresSponsorship: false,
+      europeRequiresSponsorship: true,
+    });
+    expect(profile.linkedinUrl).toBe("https://www.linkedin.com/in/jane-doe");
+    expect(profile.githubUrl).toBe("https://github.com/jane-doe");
+    expect(profile.portfolioUrl).toBe("https://jane.dev");
     expect(profile.allowedHybridLocations).toEqual(["Ankara", "Izmir"]);
     expect(profile.workplacePolicyBypassLocations).toEqual(["Europe"]);
     expect(profile.experienceOverrides.linux).toBe(0);

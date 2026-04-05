@@ -156,5 +156,7 @@ AI-first file navigation docs are in:
 - [docs/README.md](./docs/README.md)
 - [docs/ROOT_FILE_MAP.md](./docs/ROOT_FILE_MAP.md)
 - [docs/SOURCE_FILE_MAP.md](./docs/SOURCE_FILE_MAP.md)
+- [docs/FUNCTION_INDEX.md](./docs/FUNCTION_INDEX.md)
+- [docs/TASK_GUIDE.md](./docs/TASK_GUIDE.md)
 - [docs/TEST_FILE_MAP.md](./docs/TEST_FILE_MAP.md)
 - [docs/PRISMA_FILE_MAP.md](./docs/PRISMA_FILE_MAP.md)

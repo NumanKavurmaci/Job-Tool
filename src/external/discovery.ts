@@ -8,10 +8,26 @@ import type {
   ExternalApplicationFieldType,
   ExternalApplicationPlannedAnswer,
 } from "./types.js";
+import {
+  annotateSemanticFields as annotateSemanticFieldsWithPlatform,
+  resolveSemanticExternalAnswer as resolveSemanticExternalAnswerWithPlatform,
+} from "./semantics.js";
 
 const EXTERNAL_DISCOVERY_EVALUATE_SCRIPT = `(() => {
   const doc = globalThis.document;
   const cleanText = (value) => (value ?? "").replace(/\\s+/g, " ").trim();
+  const removeNestedInputs = (element) => {
+    const clone = element?.cloneNode?.(true);
+    if (!clone || typeof clone.querySelectorAll !== "function") {
+      return cleanText(element?.textContent);
+    }
+    clone.querySelectorAll("input, textarea, select, button").forEach((node) => node.remove());
+    return cleanText(clone.textContent);
+  };
+  const isErrorElement = (element) => {
+    const className = cleanText(element?.getAttribute?.("class")).toLowerCase();
+    return /error|invalid|feedback/.test(className);
+  };
   const dedupePrecursorLinks = (links) => {
     const seen = new Set();
     return links.filter((candidate) => {
@@ -35,9 +51,14 @@ const EXTERNAL_DISCOVERY_EVALUATE_SCRIPT = `(() => {
     while (current) {
       let sibling = current.previousElementSibling;
       while (sibling) {
+        if (isErrorElement(sibling)) {
+          sibling = sibling.previousElementSibling;
+          continue;
+        }
         const candidate = cleanText(
-          sibling.querySelector?.("h1,h2,h3,h4,h5,h6,label,legend")?.textContent ||
-          sibling.textContent,
+          sibling.matches?.("h1,h2,h3,h4,h5,h6,label,legend")
+            ? sibling.textContent
+            : sibling.querySelector?.("h1,h2,h3,h4,h5,h6,label,legend")?.textContent,
         );
         if (candidate) {
           return candidate;
@@ -47,6 +68,34 @@ const EXTERNAL_DISCOVERY_EVALUATE_SCRIPT = `(() => {
       current = current.parentElement;
     }
     return "";
+  };
+  const findImmediateHeadingLabel = (element) => {
+    let sibling = element?.previousElementSibling;
+    while (sibling) {
+      if (isErrorElement(sibling)) {
+        sibling = sibling.previousElementSibling;
+        continue;
+      }
+      const candidate = cleanText(
+        sibling.matches?.("h1,h2,h3,h4,h5,h6,label,legend")
+          ? sibling.textContent
+          : sibling.querySelector?.("h1,h2,h3,h4,h5,h6,label,legend")?.textContent,
+      );
+      if (candidate) {
+        return candidate;
+      }
+      sibling = sibling.previousElementSibling;
+    }
+    return "";
+  };
+  const findCheckboxOptionLabel = (element) => {
+    const inputType = String(element?.getAttribute?.("type") ?? "").toLowerCase();
+    if (!["checkbox", "radio"].includes(inputType)) {
+      return "";
+    }
+    const optionContainer =
+      element?.closest?.("label, li, .option, .consent-form") ?? element?.parentElement;
+    return removeNestedInputs(optionContainer);
   };
   const describeField = (element, index) => {
     const tagName = String(element?.tagName ?? "").toLowerCase();
@@ -73,16 +122,21 @@ const EXTERNAL_DISCOVERY_EVALUATE_SCRIPT = `(() => {
                         : String(element?.getAttribute?.("type") ?? "text").toLowerCase();
     const id = element?.getAttribute?.("id");
     const name = element?.getAttribute?.("name");
+    const ngModel = cleanText(element?.getAttribute?.("ng-model"));
     const labelFromFor = id ? cleanText(doc?.querySelector(\`label[for="\${id}"]\`)?.textContent) : "";
     const wrappingLabel = cleanText(element?.closest?.("label")?.textContent);
+    const checkboxOptionLabel = findCheckboxOptionLabel(element);
+    const immediateHeadingLabel = findImmediateHeadingLabel(element);
     const ariaLabel = cleanText(element?.getAttribute?.("aria-label"));
     const legend = cleanText(element?.closest?.("fieldset")?.querySelector?.("legend")?.textContent);
     const contextualLabel = findContextualLabel(element?.closest?.("[data-block-id]") ?? element?.parentElement ?? element);
-    const previousHeading = cleanText(element?.parentElement?.querySelector?.("h1,h2,h3,h4,h5,h6,p")?.textContent);
+    const previousHeading = cleanText(element?.parentElement?.querySelector?.("h1,h2,h3,h4,h5,h6,label,legend")?.textContent);
     const placeholder = cleanText(element?.getAttribute?.("placeholder"));
     const label =
       labelFromFor ||
       wrappingLabel ||
+      checkboxOptionLabel ||
+      immediateHeadingLabel ||
       ariaLabel ||
       legend ||
       contextualLabel ||
@@ -106,8 +160,16 @@ const EXTERNAL_DISCOVERY_EVALUATE_SCRIPT = `(() => {
               .filter(Boolean)
           : [];
 
+    const selectorHints = [
+      id ? \`[id="\${id}"]\` : "",
+      name ? \`[name="\${name}"]\` : "",
+      ngModel ? \`[ng-model="\${ngModel}"]\` : "",
+      ariaLabel ? \`[aria-label="\${ariaLabel}"]\` : "",
+      placeholder ? \`[placeholder="\${placeholder}"]\` : "",
+    ].filter(Boolean);
+
     return {
-      key: name || id || \`\${tagName}-\${index + 1}\`,
+      key: name || ngModel || id || \`\${tagName}-\${index + 1}\`,
       label,
       inputType,
       required:
@@ -118,6 +180,7 @@ const EXTERNAL_DISCOVERY_EVALUATE_SCRIPT = `(() => {
       placeholder: placeholder || null,
       helpText: cleanText(element?.getAttribute?.("aria-description")) || null,
       accept: cleanText(element?.getAttribute?.("accept")) || null,
+      selectorHints,
     };
   };
 
@@ -131,9 +194,35 @@ const EXTERNAL_DISCOVERY_EVALUATE_SCRIPT = `(() => {
     }
     return !element?.disabled;
   });
+  const customFileFields = Array.from(
+    doc?.querySelectorAll?.(
+      ".file-input-container .button.resume, a.button.resume, button.button.resume, [ng-click*='showFileSelector']",
+    ) ?? [],
+  )
+    .map((element, index) => {
+      const label = cleanText(element?.textContent) || "Upload Resume";
+      const required =
+        cleanText(element?.closest?.(".file-input-container, .apply-button")?.textContent).includes("*") ||
+        cleanText(element?.getAttribute?.("aria-label")).includes("*");
+      return {
+        key: cleanText(element?.getAttribute?.("name")) || \`custom-file-upload-\${index + 1}\`,
+        label,
+        inputType: "file",
+        required,
+        options: [],
+        placeholder: null,
+        helpText: null,
+        accept: null,
+        selectorHints: [
+          ".file-input-container .button.resume",
+          "a.button.resume",
+          "button.button.resume",
+          "[ng-click*='showFileSelector']",
+        ],
+      };
+    });
 
-  const uniqueFields = fieldNodes
-    .map((element, index) => describeField(element, index))
+  const uniqueFields = [...fieldNodes.map((element, index) => describeField(element, index)), ...customFileFields]
     .filter((field, index, all) => all.findIndex((candidate) => candidate.key === field.key) === index);
 
   const genericPrecursorLinks = Array.from(doc?.querySelectorAll?.("a[href], button") ?? [])
@@ -240,6 +329,7 @@ function mapHtmlInputTypeToFieldType(inputType: string, options: string[]): Exte
   return "short_text";
 }
 
+// Opens an external apply URL and returns the normalized discovery model used by the rest of the flow.
 export async function discoverExternalApplication(
   page: Page,
   sourceUrl: string,
@@ -299,6 +389,7 @@ async function waitForExternalDiscoverySignals(page: Page): Promise<void> {
     .catch(() => undefined);
 }
 
+// Re-inspects the current page without changing navigation, mainly after Next/Submit actions.
 export async function inspectExternalApplicationPage(
   page: Page,
   sourceUrl: string,
@@ -318,12 +409,13 @@ export async function inspectExternalApplicationPage(
       placeholder: string | null;
       helpText: string | null;
       accept: string | null;
+      selectorHints?: string[];
     }>;
     precursorLinks: Array<{ label: string; href: string }>;
   };
   /* c8 ignore stop */
 
-  const fields: ExternalApplicationField[] = inspected.fields.map((field) => ({
+  const normalizedFields: ExternalApplicationField[] = inspected.fields.map((field) => ({
     key: field.key,
     label: field.label,
     type: mapHtmlInputTypeToFieldType(field.inputType, field.options),
@@ -332,7 +424,23 @@ export async function inspectExternalApplicationPage(
     placeholder: field.placeholder,
     helpText: field.helpText,
     accept: field.accept,
+    selectorHints: field.selectorHints,
   }));
+  const fields = annotateSemanticFieldsWithPlatform(normalizedFields).filter((field, _, allFields) => {
+    const genericLabel =
+      field.label.trim().toLowerCase() === "please fill out the following information.";
+    if (!genericLabel) {
+      return true;
+    }
+
+    const normalizedKey = field.key.trim().toLowerCase();
+    return !allFields.some(
+      (candidate) =>
+        candidate !== field &&
+        (candidate.label.trim().toLowerCase() === normalizedKey ||
+          candidate.key.trim().toLowerCase() === normalizedKey),
+    );
+  });
 
   return {
     sourceUrl,
@@ -372,6 +480,7 @@ async function inspectExternalApplicationPageWithRetry(
   return inspection;
 }
 
+// Extracts cleaned page text so planners and diagnostics can work on a stable text snapshot.
 export async function extractExternalPageText(page: Page): Promise<string> {
   return page
     .evaluate(EXTERNAL_PAGE_TEXT_EVALUATE_SCRIPT)
@@ -379,6 +488,7 @@ export async function extractExternalPageText(page: Page): Promise<string> {
     .catch(() => "");
 }
 
+// Follows an intermediate precursor/apply link and returns a fresh discovery result from the new page.
 export async function followExternalApplicationLink(
   page: Page,
   sourceUrl: string,
@@ -415,6 +525,7 @@ function looksSyntheticFieldLabel(field: ExternalApplicationField): boolean {
   return /^(input|textarea|select|field)[\s_-]?\d+$/i.test(label);
 }
 
+// Produces a field-by-field answer plan using semantic resolution first and generic strategies second.
 export async function planExternalApplicationAnswers(input: {
   fields: ExternalApplicationField[];
   candidateProfile: CandidateProfile;
@@ -429,15 +540,40 @@ export async function planExternalApplicationAnswers(input: {
   for (const field of input.fields) {
     const question = toInputQuestion(field);
 
+    const semanticAnswer = resolveSemanticExternalAnswerWithPlatform({
+      field,
+      candidateProfile: input.candidateProfile,
+      ...(input.pageContext !== undefined ? { pageContext: input.pageContext } : {}),
+    });
+    if (semanticAnswer) {
+      plans.push({
+        fieldKey: field.key,
+        fieldLabel: field.label,
+        fieldType: field.type,
+        ...(field.semanticKey ? { semanticKey: field.semanticKey } : {}),
+        question,
+        answer: semanticAnswer.answer,
+        source: semanticAnswer.source,
+        confidenceLabel: semanticAnswer.confidenceLabel,
+        ...(semanticAnswer.resolutionStrategy
+          ? { resolutionStrategy: semanticAnswer.resolutionStrategy }
+          : {}),
+        ...(semanticAnswer.notes ? { notes: semanticAnswer.notes } : {}),
+      });
+      continue;
+    }
+
     if (looksSyntheticFieldLabel(field)) {
       plans.push({
         fieldKey: field.key,
         fieldLabel: field.label,
         fieldType: field.type,
+        ...(field.semanticKey ? { semanticKey: field.semanticKey } : {}),
         question,
         answer: null,
         source: "manual",
         confidenceLabel: "manual_review",
+        resolutionStrategy: "heuristic:synthetic-label-skip",
         notes: "Skipped because the field label looks synthetic or trap-like.",
       });
       continue;
@@ -448,10 +584,12 @@ export async function planExternalApplicationAnswers(input: {
         fieldKey: field.key,
         fieldLabel: field.label,
         fieldType: field.type,
+        ...(field.semanticKey ? { semanticKey: field.semanticKey } : {}),
         question,
         answer: input.candidateProfile.sourceMetadata.resumePath ?? null,
         source: "candidate-profile",
         confidenceLabel: input.candidateProfile.sourceMetadata.resumePath ? "high" : "manual_review",
+        resolutionStrategy: "candidate-profile:resume-upload",
         ...(input.candidateProfile.sourceMetadata.resumePath
           ? { notes: "Will use the configured resume file for upload." }
           : { notes: "No resume path was available in the loaded candidate profile." }),
@@ -479,10 +617,12 @@ export async function planExternalApplicationAnswers(input: {
       fieldKey: field.key,
       fieldLabel: field.label,
       fieldType: field.type,
+      ...(field.semanticKey ? { semanticKey: field.semanticKey } : {}),
       question,
       answer: normalizedAnswer,
       source: resolved.source,
       confidenceLabel: resolved.confidenceLabel,
+      resolutionStrategy: "llm-or-default-answer-resolution",
       ...(resolved.notes
         ? {
             notes: Array.isArray(resolved.notes) ? resolved.notes.join(" ") : String(resolved.notes),
