@@ -1210,7 +1210,7 @@ describe("runEasyApplyBatchDryRun", () => {
       openCollection: vi
         .fn()
         .mockResolvedValueOnce(undefined)
-        .mockRejectedValueOnce(new Error("collection reopen failed")),
+        .mockRejectedValue(new Error("collection reopen failed")),
       ensureAuthenticated: vi
         .fn()
         .mockResolvedValueOnce(undefined)
@@ -1250,16 +1250,22 @@ describe("runEasyApplyBatchDryRun", () => {
       }),
     });
 
-    expect(result.status).toBe("partial");
-    expect(result.attemptedCount).toBe(1);
-    expect(result.stopReason).toContain("Failed to recover batch context after failure on https://www.linkedin.com/jobs/view/1");
+    expect(result.status).toBe("completed");
+    expect(result.attemptedCount).toBe(2);
+    expect(result.stopReason).toBe("Processed 2 LinkedIn apply job(s).");
     expect(result.jobs[0]?.result?.recovery).toEqual({
       attempted: true,
       succeeded: false,
       message:
         "Failed to recover batch context after failure on https://www.linkedin.com/jobs/view/1: collection reopen failed",
     });
-    expect(result.jobs).toHaveLength(1);
+    expect(result.jobs[1]?.result?.recovery).toEqual({
+      attempted: true,
+      succeeded: false,
+      message:
+        "Failed to recover batch context after failure on https://www.linkedin.com/jobs/view/2: collection reopen failed",
+    });
+    expect(result.jobs).toHaveLength(2);
   });
 
   it("keeps the batch alive when evaluateJob throws for one listing", async () => {
@@ -1772,6 +1778,71 @@ describe("runEasyApplyBatchInternal", () => {
     expect(result.jobs[2]?.result?.status).toBe("submitted");
   });
 
+  it("restores the collection shell after an approved job so pagination can continue", async () => {
+    const driver = {
+      open: vi.fn(),
+      openCollection: vi.fn().mockResolvedValue(undefined),
+      ensureAuthenticated: vi.fn().mockResolvedValue(undefined),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn().mockResolvedValue(undefined),
+      collectQuestions: vi.fn().mockResolvedValue([]),
+      collectVisibleJobs: vi
+        .fn()
+        .mockResolvedValueOnce([
+          { url: "https://www.linkedin.com/jobs/view/1", alreadyApplied: false },
+        ])
+        .mockResolvedValueOnce([
+          { url: "https://www.linkedin.com/jobs/view/2", alreadyApplied: false },
+        ]),
+      goToNextResultsPage: vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn().mockResolvedValue("submit"),
+      advance: vi.fn(),
+      dismissCompletionModal: vi.fn().mockResolvedValue(true),
+    };
+
+    const evaluateJob = vi
+      .fn()
+      .mockResolvedValueOnce({
+        shouldApply: true,
+        finalDecision: "APPLY",
+        score: 80,
+        reason: "Strong fit.",
+        policyAllowed: true,
+      })
+      .mockResolvedValueOnce({
+        shouldApply: false,
+        finalDecision: "SKIP",
+        score: 10,
+        reason: "Low fit.",
+        policyAllowed: true,
+      });
+
+    await runEasyApplyBatchInternal(
+      {
+        driver,
+        url: "https://www.linkedin.com/jobs/collections/remote-jobs",
+        targetCount: 2,
+        candidateProfile: profile,
+        evaluateJob,
+        resolveAnswer: async () => ({
+          questionType: "contact_info",
+          strategy: "deterministic",
+          answer: "123",
+          confidence: 0.95,
+          confidenceLabel: "high",
+          source: "candidate-profile",
+        }),
+      },
+      "submit",
+    );
+
+    expect(driver.openCollection).toHaveBeenCalledWith(
+      "https://www.linkedin.com/jobs/collections/remote-jobs?currentJobId=1",
+    );
+    expect(driver.goToNextResultsPage).toHaveBeenCalled();
+  });
+
   it("uses dry-run mode to stop at ready_to_submit for approved jobs", async () => {
     const driver = {
       open: vi.fn(),
@@ -1818,6 +1889,130 @@ describe("runEasyApplyBatchInternal", () => {
     expect(result.status).toBe("completed");
     expect(result.jobs[0]?.result?.status).toBe("ready_to_submit");
     expect(driver.advance).not.toHaveBeenCalledWith("submit");
+  });
+
+  it("continues to the next approved job even when recovery after a failed job attempt does not succeed", async () => {
+    const driver = {
+      open: vi.fn(),
+      openCollection: vi.fn()
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error("collection reopen failed")),
+      ensureAuthenticated: vi.fn()
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error("auth refresh failed"))
+        .mockResolvedValueOnce(undefined),
+      isEasyApplyAvailable: vi.fn()
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true),
+      openEasyApply: vi.fn()
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce(undefined),
+      collectQuestions: vi.fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]),
+      collectVisibleJobs: vi.fn().mockResolvedValue([
+        { url: "https://www.linkedin.com/jobs/view/1", alreadyApplied: false },
+        { url: "https://www.linkedin.com/jobs/view/2", alreadyApplied: false },
+      ]),
+      goToNextResultsPage: vi.fn().mockResolvedValue(false),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn().mockResolvedValue("submit"),
+      advance: vi.fn(),
+      dismissCompletionModal: vi.fn().mockResolvedValue(true),
+    };
+
+    const evaluation = {
+      shouldApply: true as const,
+      finalDecision: "APPLY" as const,
+      score: 90,
+      reason: "Excellent fit.",
+      policyAllowed: true,
+    };
+
+    const result = await runEasyApplyBatchInternal(
+      {
+        driver,
+        url: "https://www.linkedin.com/jobs/collections/easy-apply",
+        targetCount: 2,
+        candidateProfile: profile,
+        evaluateJob: async () => evaluation,
+        resolveAnswer: async () => ({
+          questionType: "contact_info",
+          strategy: "deterministic",
+          answer: "123",
+          confidence: 0.95,
+          confidenceLabel: "high",
+          source: "candidate-profile",
+        }),
+      },
+      "submit",
+    );
+
+    expect(result.status).toBe("completed");
+    expect(result.attemptedCount).toBe(2);
+    expect(result.jobs[0]?.result).toEqual(
+      expect.objectContaining({
+        status: "stopped_unknown_action",
+        recovery: expect.objectContaining({
+          attempted: true,
+          succeeded: false,
+        }),
+      }),
+    );
+    expect(result.jobs[1]?.result?.status).toBe("submitted");
+    expect(driver.open).toHaveBeenCalledWith("https://www.linkedin.com/jobs/view/2");
+  });
+
+  it("mentions recovery failures in the partial batch stop reason without aborting immediately", async () => {
+    const driver = {
+      open: vi.fn(),
+      openCollection: vi.fn()
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error("collection reopen failed")),
+      ensureAuthenticated: vi.fn()
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error("auth refresh failed")),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn().mockResolvedValue(undefined),
+      collectQuestions: vi.fn().mockResolvedValue([]),
+      collectVisibleJobs: vi.fn().mockResolvedValue([
+        { url: "https://www.linkedin.com/jobs/view/1", alreadyApplied: false },
+      ]),
+      goToNextResultsPage: vi.fn().mockResolvedValue(false),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn().mockResolvedValue("unknown"),
+      advance: vi.fn(),
+      dismissCompletionModal: vi.fn(),
+    };
+
+    const result = await runEasyApplyBatchInternal(
+      {
+        driver,
+        url: "https://www.linkedin.com/jobs/collections/easy-apply",
+        targetCount: 2,
+        candidateProfile: profile,
+        evaluateJob: async () => ({
+          shouldApply: true,
+          finalDecision: "APPLY",
+          score: 90,
+          reason: "Excellent fit.",
+          policyAllowed: true,
+        }),
+        resolveAnswer: async () => ({
+          questionType: "contact_info",
+          strategy: "deterministic",
+          answer: "123",
+          confidence: 0.95,
+          confidenceLabel: "high",
+          source: "candidate-profile",
+        }),
+      },
+      "submit",
+    );
+
+    expect(result.status).toBe("partial");
+    expect(result.stopReason).toContain("stopped before completion");
+    expect(result.stopReason).toContain("recovery attempt(s) failed");
   });
 });
 

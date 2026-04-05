@@ -423,6 +423,29 @@ async function processApprovedBatchJob(
   );
 }
 
+function buildCollectionJobUrl(collectionUrl: string, jobUrl: string): string {
+  try {
+    const collection = new URL(collectionUrl);
+    const job = new URL(jobUrl);
+    const jobId = job.pathname.match(/\/jobs\/view\/(\d+)/)?.[1];
+    if (!jobId) {
+      return collection.toString();
+    }
+
+    collection.searchParams.set("currentJobId", jobId);
+    return collection.toString();
+  } catch {
+    return collectionUrl;
+  }
+}
+
+async function restoreCollectionContextAfterApprovedJob(
+  input: EasyApplyBatchRunInput,
+  jobUrl: string,
+): Promise<void> {
+  await input.driver.openCollection(buildCollectionJobUrl(input.url, jobUrl));
+}
+
 async function recoverBatchAfterJobFailure(
   input: EasyApplyBatchRunInput,
   failedJobUrl: string,
@@ -871,7 +894,7 @@ export async function runEasyApplyBatchInternal(
   let pagesVisited = 0;
   let skippedCount = 0;
   let attemptedCount = 0;
-  let interruptedReason: string | null = null;
+  let recoveryFailureCount = 0;
 
   await input.driver.ensureAuthenticated(input.url);
   await input.driver.openCollection(input.url);
@@ -980,7 +1003,7 @@ export async function runEasyApplyBatchInternal(
         });
         entry.result = buildJobProcessingFailure(url, error, recovery);
         if (!(recovery?.succeeded ?? false)) {
-          interruptedReason = recovery?.message ?? "Batch recovery failed after job processing error.";
+          recoveryFailureCount += 1;
         }
       }
       await input.observeBatchEvent?.({
@@ -992,19 +1015,14 @@ export async function runEasyApplyBatchInternal(
         evaluation,
         result: entry.result,
       });
+      await restoreCollectionContextAfterApprovedJob(input, url).catch(() => undefined);
 
       attemptedCount += 1;
-      if (interruptedReason) {
-        break;
-      }
       if (attemptedCount >= requestedCount) {
         break;
       }
     }
 
-    if (interruptedReason) {
-      break;
-    }
     if (attemptedCount >= requestedCount) {
       break;
     }
@@ -1045,12 +1063,10 @@ export async function runEasyApplyBatchInternal(
     job.result.status !== "ready_to_submit"
   );
   const stopReason =
-    interruptedReason
-      ? interruptedReason
-      : status === "completed"
+    status === "completed"
       ? `Processed ${attemptedCount} LinkedIn apply job(s).`
       : incompleteApprovedJobs.length > 0
-        ? `Processed ${attemptedCount} approved LinkedIn apply job(s), but ${incompleteApprovedJobs.length} attempt(s) stopped before completion.`
+        ? `Processed ${attemptedCount} approved LinkedIn apply job(s), but ${incompleteApprovedJobs.length} attempt(s) stopped before completion${recoveryFailureCount > 0 ? ` and ${recoveryFailureCount} recovery attempt(s) failed` : ""}.`
         : `Only found and processed ${attemptedCount} matching LinkedIn apply job(s) before pagination ended.`;
 
   return {

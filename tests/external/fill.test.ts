@@ -388,6 +388,172 @@ describe("external fill", () => {
     );
   });
 
+  it("falls back to ArrowDown plus Enter when no city autocomplete option is visible", async () => {
+    const { page, register, actions } = createLocatorRecorder();
+    register(
+      `[name="city"]`,
+      `button:has-text("Next")`,
+    );
+
+    const result = await fillExternalApplicationPage({
+      page: page as never,
+      discovery: {
+        sourceUrl: "https://example.com/form",
+        finalUrl: "https://example.com/form",
+        pageTitle: "Form",
+        platform: "generic",
+        precursorLinks: [],
+        followedPrecursorLink: null,
+        fields: [
+          {
+            key: "city",
+            label: "City of residence",
+            type: "short_text",
+            semanticKey: "location.city",
+            required: true,
+            options: [],
+            placeholder: "City of residence",
+            helpText: null,
+            accept: null,
+          },
+        ],
+      },
+      answerPlan: [
+        {
+          fieldKey: "city",
+          fieldLabel: "City of residence",
+          fieldType: "short_text",
+          semanticKey: "location.city",
+          question: { label: "City of residence", inputType: "short_text" },
+          answer: "Istanbul, Turkey",
+          source: "candidate-profile",
+          confidenceLabel: "high",
+          resolutionStrategy: "semantic:location-city",
+        },
+      ],
+      candidateProfile,
+    });
+
+    expect(result.fieldResults[0]).toEqual(
+      expect.objectContaining({
+        status: "filled",
+      }),
+    );
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        { type: "pressSequentially", selector: `[name="city"]`, value: "Istanbul, Turkey" },
+        { type: "press", selector: `[name="city"]`, value: "ArrowDown" },
+        { type: "press", selector: `[name="city"]`, value: "Enter" },
+      ]),
+    );
+  });
+
+  it("leaves a boolean field unselected when the normalized answer is negative", async () => {
+    const { page, register, actions } = createLocatorRecorder();
+    register(`[name="privacyConsent"]`, `button:has-text("Next")`);
+
+    const result = await fillExternalApplicationPage({
+      page: page as never,
+      discovery: {
+        sourceUrl: "https://example.com/form",
+        finalUrl: "https://example.com/form",
+        pageTitle: "Consent form",
+        platform: "generic",
+        precursorLinks: [],
+        followedPrecursorLink: null,
+        fields: [
+          {
+            key: "privacyConsent",
+            label: "Privacy consent",
+            type: "boolean",
+            required: false,
+            options: ["Yes", "No"],
+            placeholder: null,
+            helpText: null,
+            accept: null,
+          },
+        ],
+      },
+      answerPlan: [
+        {
+          fieldKey: "privacyConsent",
+          fieldLabel: "Privacy consent",
+          fieldType: "boolean",
+          question: { label: "Privacy consent", inputType: "boolean", options: ["Yes", "No"] },
+          answer: "No",
+          source: "candidate-profile",
+          confidenceLabel: "high",
+        },
+      ],
+      candidateProfile,
+    });
+
+    expect(result.fieldResults[0]).toEqual(
+      expect.objectContaining({
+        status: "filled",
+        details: "Left the boolean field unselected.",
+      }),
+    );
+    expect(actions).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "click", selector: `[name="privacyConsent"]` }),
+      ]),
+    );
+  });
+
+  it("selects a self-describing selectable control when the answer is affirmative", async () => {
+    const { page, register, actions } = createLocatorRecorder();
+    register(`label:has-text("I'm actively looking for a job")`, `button:has-text("Next")`);
+
+    const result = await fillExternalApplicationPage({
+      page: page as never,
+      discovery: {
+        sourceUrl: "https://example.com/form",
+        finalUrl: "https://example.com/form",
+        pageTitle: "Availability form",
+        platform: "generic",
+        precursorLinks: [],
+        followedPrecursorLink: null,
+        fields: [
+          {
+            key: "availability",
+            label: "I'm actively looking for a job",
+            type: "single_select",
+            required: true,
+            options: [],
+            placeholder: null,
+            helpText: null,
+            accept: null,
+          },
+        ],
+      },
+      answerPlan: [
+        {
+          fieldKey: "availability",
+          fieldLabel: "I'm actively looking for a job",
+          fieldType: "single_select",
+          question: { label: "I'm actively looking for a job", inputType: "single_select" },
+          answer: "Yes",
+          source: "candidate-profile",
+          confidenceLabel: "high",
+        },
+      ],
+      candidateProfile,
+    });
+
+    expect(result.fieldResults[0]).toEqual(
+      expect.objectContaining({
+        status: "filled",
+        details: "Selected a labeled control.",
+      }),
+    );
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        { type: "click", selector: `label:has-text("I'm actively looking for a job")` },
+      ]),
+    );
+  });
+
   it("uses native selectOption for real select controls discovered via selector hints", async () => {
     const { page, registerNativeSelect, actions } = createLocatorRecorder();
     registerNativeSelect(
@@ -874,6 +1040,64 @@ describe("external fill", () => {
       }),
     );
     expect(actions).toEqual([]);
+  });
+
+  it("auto-checks a required privacy consent field under the consent policy", async () => {
+    const { page, register, actions } = createLocatorRecorder();
+    register(`[name="privacyConsent"]`, `button:has-text("Submit application")`);
+
+    const result = await fillExternalApplicationPage({
+      page: page as never,
+      discovery: {
+        sourceUrl: "https://example.com/form",
+        finalUrl: "https://example.com/form",
+        pageTitle: "Consent form",
+        platform: "generic",
+        precursorLinks: [],
+        followedPrecursorLink: null,
+        fields: [
+          {
+            key: "privacyConsent",
+            label: "I agree to the privacy policy",
+            type: "boolean",
+            semanticKey: "consent.privacy",
+            required: true,
+            options: [],
+            placeholder: null,
+            helpText: null,
+            accept: null,
+          },
+        ],
+      },
+      answerPlan: [
+        {
+          fieldKey: "privacyConsent",
+          fieldLabel: "I agree to the privacy policy",
+          fieldType: "boolean",
+          semanticKey: "consent.privacy",
+          question: { label: "I agree to the privacy policy", inputType: "boolean" },
+          answer: "Yes",
+          source: "policy",
+          confidenceLabel: "high",
+          resolutionStrategy: "semantic:consent.privacy",
+        },
+      ],
+      candidateProfile,
+      submit: true,
+    });
+
+    expect(result.fieldResults[0]).toEqual(
+      expect.objectContaining({
+        status: "filled",
+        details: "Selected the boolean field.",
+      }),
+    );
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        { type: "click", selector: `[name="privacyConsent"]` },
+        { type: "click", selector: `button:has-text("Submit application")` },
+      ]),
+    );
   });
 
   it("normalizes url answers before filling url fields", async () => {
@@ -1801,12 +2025,22 @@ describe("external fill", () => {
     await expect(getExternalPrimaryAction(submit.page as never)).resolves.toBe("submit");
   });
 
+  it("returns unknown when no primary action button is present", async () => {
+    const empty = createLocatorRecorder();
+    await expect(getExternalPrimaryAction(empty.page as never)).resolves.toBe("unknown");
+  });
+
   it("clicks the submit button when asked to advance explicitly", async () => {
     const { page, register, actions } = createLocatorRecorder();
     register(`button:has-text("Submit")`);
 
     await expect(advanceExternalApplicationPage(page as never, "submit")).resolves.toBe(true);
     expect(actions).toContainEqual({ type: "click", selector: `button:has-text("Submit")` });
+  });
+
+  it("returns false when an explicit advance action has no matching button", async () => {
+    const empty = createLocatorRecorder();
+    await expect(advanceExternalApplicationPage(empty.page as never, "next")).resolves.toBe(false);
   });
 
   it("uploads the resume through the live Breezy custom file chooser button", async () => {

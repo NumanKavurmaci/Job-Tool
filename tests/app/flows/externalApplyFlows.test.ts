@@ -115,6 +115,7 @@ describe("external apply flows", () => {
         fields: [],
         precursorLinks: [{ label: "Start application", href: "https://example.com/form" }],
       })
+      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce("This is a precursor page with a start application link.")
       .mockResolvedValueOnce({
         url: "https://example.com/form",
@@ -250,6 +251,7 @@ describe("external apply flows", () => {
         fields: [],
         precursorLinks: [{ label: "Apply now", href: "https://example.com/form" }],
       })
+      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce("Landing page that explains the process but does not contain form fields yet.")
       .mockResolvedValueOnce("Landing page that explains the process but does not contain form fields yet.");
 
@@ -322,6 +324,7 @@ describe("external apply flows", () => {
           { label: "Learn more", href: "https://example.com/about" },
         ],
       })
+      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce("Entry page with two links and no direct fields.")
       .mockResolvedValueOnce({
         url: "https://example.com/form",

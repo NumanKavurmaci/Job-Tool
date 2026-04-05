@@ -351,6 +351,7 @@ describe("external application discovery", () => {
         fields: [],
         precursorLinks: [],
       })
+      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({
         url: "https://apply.workable.com/constructor-1/j/64A61ED04E/",
         title: "Constructor job",
@@ -369,7 +370,7 @@ describe("external application discovery", () => {
     );
 
     expect(waitForTimeout).toHaveBeenCalledWith(500);
-    expect(evaluate).toHaveBeenCalledTimes(2);
+    expect(evaluate).toHaveBeenCalledTimes(3);
     expect(result.precursorLinks).toEqual([
       {
         label: "Apply for this job",
@@ -397,6 +398,68 @@ describe("external application discovery", () => {
     expect(result.precursorLinks).toEqual([]);
   });
 
+  it("ignores waitForFunction failures while continuing discovery", async () => {
+    const goto = vi.fn();
+    const waitForFunction = vi.fn().mockRejectedValue(new Error("timeout"));
+    const evaluate = vi.fn().mockResolvedValue({
+      url: "https://example.com/form",
+      title: "Simple form",
+      fields: [],
+      precursorLinks: [{ label: "Apply now", href: "https://example.com/form/apply" }],
+    });
+
+    const result = await discoverExternalApplication(
+      { goto, waitForFunction, evaluate } as never,
+      "https://example.com/form",
+    );
+
+    expect(result.precursorLinks).toEqual([
+      { label: "Apply now", href: "https://example.com/form/apply" },
+    ]);
+  });
+
+  it("continues retry inspection when embedded application detection throws", async () => {
+    const goto = vi.fn();
+    const waitForFunction = vi.fn().mockResolvedValue(undefined);
+    const waitForTimeout = vi.fn().mockResolvedValue(undefined);
+    const evaluate = vi
+      .fn()
+      .mockResolvedValueOnce({
+        url: "https://example.com/start",
+        title: "Empty shell",
+        fields: [],
+        precursorLinks: [],
+      })
+      .mockRejectedValueOnce(new Error("embed lookup failed"))
+      .mockResolvedValueOnce({
+        url: "https://example.com/start",
+        title: "Recovered shell",
+        fields: [
+          {
+            key: "email",
+            label: "Email",
+            inputType: "email",
+            required: true,
+            options: [],
+            placeholder: null,
+            helpText: null,
+            accept: null,
+          },
+        ],
+        precursorLinks: [],
+      });
+
+    const result = await discoverExternalApplication(
+      { goto, waitForFunction, waitForTimeout, evaluate } as never,
+      "https://example.com/start",
+    );
+
+    expect(waitForTimeout).toHaveBeenCalledWith(500);
+    expect(result.fields).toEqual([
+      expect.objectContaining({ key: "email", type: "email" }),
+    ]);
+  });
+
   it("keeps the final empty inspection after exhausting retry delays", async () => {
     const goto = vi.fn();
     const waitForFunction = vi.fn().mockResolvedValue(undefined);
@@ -416,7 +479,7 @@ describe("external application discovery", () => {
     expect(waitForTimeout).toHaveBeenCalledTimes(2);
     expect(waitForTimeout).toHaveBeenNthCalledWith(1, 500);
     expect(waitForTimeout).toHaveBeenNthCalledWith(2, 1000);
-    expect(evaluate).toHaveBeenCalledTimes(3);
+    expect(evaluate).toHaveBeenCalledTimes(4);
     expect(result.fields).toEqual([]);
     expect(result.precursorLinks).toEqual([]);
   });
@@ -478,6 +541,65 @@ describe("external application discovery", () => {
       label: "Apply for this job",
       href: "https://boards.greenhouse.io/example/jobs/1234567/apply",
     });
+
+    await page.close();
+  });
+
+  it("follows an embedded Greenhouse iframe application when the host page has no direct fields", async () => {
+    const page = await browser.newPage();
+    await page.route("https://fundraiseup.test/careers/4597227005", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/html",
+        body: `
+          <html>
+            <head><title>Backend Developer (Node.js) | Fundraise Up</title></head>
+            <body>
+              <a href="https://fundraiseup.test/careers/4597227005#grnhse_app">Apply Now</a>
+              <iframe
+                id="grnhse_iframe"
+                title="Greenhouse Job Board"
+                src="https://job-boards.greenhouse.io/embed/job_app?for=fundraiseup&token=123"
+              ></iframe>
+            </body>
+          </html>
+        `,
+      });
+    });
+    await page.route("https://job-boards.greenhouse.io/embed/job_app?for=fundraiseup&token=123", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/html",
+        body: `
+          <html>
+            <head><title>Fundraise Up Application</title></head>
+            <body>
+              <form>
+                <label for="first_name">First name</label>
+                <input id="first_name" name="first_name" />
+                <label for="email">Email</label>
+                <input id="email" name="email" type="email" />
+              </form>
+            </body>
+          </html>
+        `,
+      });
+    });
+
+    const result = await discoverExternalApplication(
+      page,
+      "https://fundraiseup.test/careers/4597227005",
+    );
+
+    expect(result.finalUrl).toBe("https://job-boards.greenhouse.io/embed/job_app?for=fundraiseup&token=123");
+    expect(result.followedPrecursorLink).toBe("https://job-boards.greenhouse.io/embed/job_app?for=fundraiseup&token=123");
+    expect(result.platform).toBe("greenhouse");
+    expect(result.fields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "first_name", label: "First name" }),
+        expect.objectContaining({ key: "email", label: "Email", type: "email" }),
+      ]),
+    );
 
     await page.close();
   });
@@ -1220,8 +1342,8 @@ describe("external application discovery", () => {
       }),
       expect.objectContaining({
         fieldKey: "privacyConsent",
-        answer: null,
-        source: "manual",
+        answer: "Yes",
+        source: "policy",
         resolutionStrategy: "semantic:consent.privacy",
       }),
       expect.objectContaining({

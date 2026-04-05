@@ -270,6 +270,17 @@ const EXTERNAL_PAGE_TEXT_EVALUATE_SCRIPT = `(() => {
   return String(globalThis.document?.body?.innerText ?? "").replace(/\\s+/g, " ").trim();
 })()`;
 
+const EXTERNAL_EMBEDDED_APPLICATION_EVALUATE_SCRIPT = `(() => {
+  const cleanText = (value) => String(value ?? "").replace(/\\s+/g, " ").trim();
+  const iframes = Array.from(globalThis.document?.querySelectorAll?.("iframe") ?? []);
+  const embeddedApplicationHref =
+    iframes
+      .map((iframe) => cleanText(iframe?.getAttribute?.("src")))
+      .find((href) => /greenhouse\\.io\\/embed\\/job_app/i.test(href)) ||
+    "";
+  return embeddedApplicationHref || null;
+})()`;
+
 function inferPlatform(url: string): string {
   const lower = url.toLowerCase();
   if (lower.includes("greenhouse")) {
@@ -395,7 +406,7 @@ export async function inspectExternalApplicationPage(
   sourceUrl: string,
 ): Promise<ExternalApplicationDiscovery> {
   /* c8 ignore start -- browser-context DOM traversal is exercised through Playwright, not node unit tests */
-  const inspected = (await page.evaluate(EXTERNAL_DISCOVERY_EVALUATE_SCRIPT)) as {
+  const inspectedRaw = await page.evaluate(EXTERNAL_DISCOVERY_EVALUATE_SCRIPT) as {
     url: string;
     title: string;
     precursorPage?: boolean;
@@ -413,6 +424,20 @@ export async function inspectExternalApplicationPage(
     }>;
     precursorLinks: Array<{ label: string; href: string }>;
   };
+  const inspected =
+    inspectedRaw &&
+    typeof inspectedRaw === "object" &&
+    Array.isArray((inspectedRaw as { fields?: unknown }).fields) &&
+    Array.isArray((inspectedRaw as { precursorLinks?: unknown }).precursorLinks)
+      ? inspectedRaw
+      : {
+          url: sourceUrl,
+          title: "",
+          precursorPage: false,
+          precursorSignals: [],
+          fields: [],
+          precursorLinks: [],
+        };
   /* c8 ignore stop */
 
   const normalizedFields: ExternalApplicationField[] = inspected.fields.map((field) => ({
@@ -460,7 +485,31 @@ async function inspectExternalApplicationPageWithRetry(
   sourceUrl: string,
 ): Promise<ExternalApplicationDiscovery> {
   let inspection = await inspectExternalApplicationPage(page, sourceUrl);
-  if (inspection.fields.length > 0 || inspection.precursorLinks.length > 0) {
+  if (inspection.fields.length > 0) {
+    return inspection;
+  }
+
+  let embeddedApplicationHref: string | null = null;
+  try {
+    const embedValue = await page.evaluate(EXTERNAL_EMBEDDED_APPLICATION_EVALUATE_SCRIPT);
+    embeddedApplicationHref =
+      typeof embedValue === "string" && embedValue.trim() ? embedValue.trim() : null;
+  } catch {
+    embeddedApplicationHref = null;
+  }
+  if (embeddedApplicationHref) {
+    await page.goto(embeddedApplicationHref);
+    await waitForExternalDiscoverySignals(page);
+    inspection = await inspectExternalApplicationPage(page, sourceUrl);
+    if (inspection.fields.length > 0 || inspection.precursorLinks.length > 0) {
+      return {
+        ...inspection,
+        followedPrecursorLink: embeddedApplicationHref,
+      };
+    }
+  }
+
+  if (inspection.precursorLinks.length > 0) {
     return inspection;
   }
 
@@ -482,10 +531,11 @@ async function inspectExternalApplicationPageWithRetry(
 
 // Extracts cleaned page text so planners and diagnostics can work on a stable text snapshot.
 export async function extractExternalPageText(page: Page): Promise<string> {
-  return page
-    .evaluate(EXTERNAL_PAGE_TEXT_EVALUATE_SCRIPT)
-    .then((value) => String(value))
-    .catch(() => "");
+  try {
+    return String(await page.evaluate(EXTERNAL_PAGE_TEXT_EVALUATE_SCRIPT));
+  } catch {
+    return "";
+  }
 }
 
 // Follows an intermediate precursor/apply link and returns a fresh discovery result from the new page.

@@ -594,6 +594,24 @@ describe("external semantics", () => {
     expect(
       resolveSemanticExternalAnswer({
         field: buildField({
+          key: "privacyConsent",
+          label: "I agree to the privacy policy",
+          semanticKey: "consent.privacy",
+          required: true,
+        }),
+        candidateProfile,
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        answer: "Yes",
+        source: "policy",
+        confidenceLabel: "high",
+      }),
+    );
+
+    expect(
+      resolveSemanticExternalAnswer({
+        field: buildField({
           key: "coverLetterUpload",
           label: "Cover letter",
           type: "file",

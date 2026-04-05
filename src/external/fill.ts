@@ -59,6 +59,12 @@ function buildFieldSelectors(field: ExternalApplicationField): string[] {
     pushUnique(selectors, `input[aria-label="${escapeAttributeValue(field.label)}"]`);
     pushUnique(selectors, `textarea[aria-label="${escapeAttributeValue(field.label)}"]`);
     pushUnique(selectors, `select[aria-label="${escapeAttributeValue(field.label)}"]`);
+    pushUnique(selectors, `label:has-text("${escapeAttributeValue(field.label)}")`);
+    pushUnique(selectors, `button:has-text("${escapeAttributeValue(field.label)}")`);
+    pushUnique(selectors, `[role="button"]:has-text("${escapeAttributeValue(field.label)}")`);
+    pushUnique(selectors, `[role="radio"]:has-text("${escapeAttributeValue(field.label)}")`);
+    pushUnique(selectors, `[role="checkbox"]:has-text("${escapeAttributeValue(field.label)}")`);
+    pushUnique(selectors, `[data-testid="${escapeAttributeValue(field.label)}"]`);
     if (field.type === "file") {
       pushUnique(selectors, `input[type="file"][aria-label="${escapeAttributeValue(field.label)}"]`);
     }
@@ -162,6 +168,29 @@ function normalizeBooleanAnswer(answer: string, options: string[]): {
   }
 
   return null;
+}
+
+function shouldAutoAcceptConsent(
+  field: ExternalApplicationField,
+  plan: ExternalApplicationPlannedAnswer | undefined,
+): boolean {
+  if (!field.required) {
+    return false;
+  }
+
+  return (
+    field.semanticKey === "consent.privacy" ||
+    field.semanticKey === "consent.sms" ||
+    /consent|privacy|policy|terms|gdpr|kvkk/i.test(field.label) ||
+    /semantic:consent\./.test(plan?.resolutionStrategy ?? "")
+  );
+}
+
+function isSelfDescribingSelectable(field: ExternalApplicationField): boolean {
+  return (
+    field.options.length === 0 &&
+    /^i['’]?m\b/i.test(field.label.trim())
+  );
 }
 
 function normalizeUrlAnswer(answer: string): string {
@@ -299,7 +328,14 @@ async function fillSingleField(
     const fillValue = field.type === "url" ? normalizeUrlAnswer(answer) : answer;
 
     if (field.type === "boolean") {
-      const booleanAnswer = normalizeBooleanAnswer(answer, field.options);
+      const booleanAnswer =
+        normalizeBooleanAnswer(answer, field.options) ??
+        (shouldAutoAcceptConsent(field, plan)
+          ? {
+              shouldCheck: true,
+              ...(field.options[0] ? { matchedOption: field.options[0] } : {}),
+            }
+          : null);
       if (!booleanAnswer) {
         return {
           fieldKey: field.key,
@@ -335,6 +371,19 @@ async function fillSingleField(
     }
 
     if (field.type === "single_select" || field.type === "multi_select") {
+      if (isSelfDescribingSelectable(field)) {
+        const booleanLike = normalizeBooleanAnswer(answer, ["Yes", "No"]);
+        if (booleanLike?.shouldCheck === false) {
+          return {
+            fieldKey: field.key,
+            fieldLabel: field.label,
+            required: field.required,
+            status: "filled",
+            details: "Left the labeled control unselected.",
+          };
+        }
+      }
+
       const looksLikeReactSelect =
         field.key.startsWith("react-select-") ||
         (field.selectorHints ?? []).some((hint) => hint.includes("react-select-"));
@@ -344,8 +393,14 @@ async function fillSingleField(
       const clickedOption = selectedNativeOption
         ? false
         : await clickVisibleOption(page, answer).catch(() => false);
+      const clickedLabelControl =
+        selectedNativeOption || clickedOption || !isSelfDescribingSelectable(field)
+          ? false
+          : !/^(yes|true|on|agree)$/i.test(answer.trim())
+          ? false
+          : await locator.click().then(() => true).catch(() => false);
 
-      if (!selectedNativeOption && !clickedOption) {
+      if (!selectedNativeOption && !clickedOption && !clickedLabelControl) {
         await locator.fill(answer);
         if (looksLikeReactSelect) {
           await page.waitForTimeout(150);
@@ -365,6 +420,8 @@ async function fillSingleField(
           ? "Selected a native option."
           : clickedOption
           ? "Selected a visible option."
+          : clickedLabelControl
+          ? "Selected a labeled control."
           : "Filled a selectable field.",
       };
     }
@@ -741,6 +798,18 @@ export async function collectExternalSiteFeedback(page: Page): Promise<SiteFeedb
       },
       {
         pattern: /please fill out the following information\.?/i,
+        severity: "error" as const,
+      },
+      {
+        pattern: /please enter a valid option\.?/i,
+        severity: "error" as const,
+      },
+      {
+        pattern: /please complete all (?:required fields and )?consent checkboxes(?: to continue)?\.?/i,
+        severity: "error" as const,
+      },
+      {
+        pattern: /please complete all required fields(?: and consent checkboxes to continue)?\.?/i,
         severity: "error" as const,
       },
     ];

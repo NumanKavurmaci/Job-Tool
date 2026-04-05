@@ -876,11 +876,13 @@ export function resolveSemanticExternalAnswer(args: {
     case "consent.sms":
     case "consent.privacy":
       return {
-        answer: null,
-        source: "manual",
-        confidenceLabel: "manual_review",
+        answer: args.field.required ? "Yes" : null,
+        source: args.field.required ? "policy" : "manual",
+        confidenceLabel: args.field.required ? "high" : "manual_review",
         resolutionStrategy: `semantic:${args.field.semanticKey}`,
-        notes: "Consent-style fields are intentionally left for explicit review unless a policy is configured.",
+        notes: args.field.required
+          ? "Required consent field auto-accepted under the configured privacy-consent policy."
+          : "Consent-style fields are intentionally left for explicit review unless a policy is configured.",
       };
     case "cover_letter.text":
     case "cover_letter.upload":
