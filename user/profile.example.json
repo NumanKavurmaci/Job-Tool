@@ -50,6 +50,14 @@
       "English"
     ],
     "gpa": null,
+    "demographics": {
+      "gender": null,
+      "pronouns": null,
+      "ethnicity": null,
+      "race": null,
+      "veteranStatus": null,
+      "sexualOrientation": null
+    },
     "disability": {
       "hasVisualDisability": false,
       "disabilityPercentage": null,

@@ -94,8 +94,12 @@ function mapExternalHandoffToHistoryStatus(
     return handoff?.status === "failed" ? "FAILED" : null;
   }
 
-  if (handoff.finalStage === "completed" || handoff.finalStage === "final_submit_step") {
+  if (handoff.finalStage === "completed") {
     return handoff.runType === "submit" ? "SUBMITTED" : "READY_TO_SUBMIT";
+  }
+
+  if (handoff.finalStage === "final_submit_step") {
+    return "READY_TO_SUBMIT";
   }
 
   return "FAILED";

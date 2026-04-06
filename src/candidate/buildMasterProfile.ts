@@ -62,6 +62,7 @@ export async function buildMasterProfile(input: {
     regionalAuthorization: manualProfile.regionalAuthorization,
     remotePreference: manualProfile.remotePreference,
     remoteOnly: manualProfile.remoteOnly,
+    demographics: manualProfile.demographics,
     disability: manualProfile.disability,
   };
 }

@@ -73,6 +73,87 @@ function findOptionByKeywords(options: string[], keywords: string[]): string | n
   return null;
 }
 
+function isSensitiveDisclosureField(field: ExternalApplicationField): boolean {
+  const combined = buildCombinedFieldText(field);
+  return includesAny(combined, [
+    "gender",
+    "pronoun",
+    "ethnicity",
+    "race",
+    "racial",
+    "veteran",
+    "disability",
+    "sexual orientation",
+    "lgbt",
+    "demographic",
+    "self identify",
+    "self-identify",
+  ]);
+}
+
+function findSensitiveDisclosureOptOutAnswer(field: ExternalApplicationField): string | null {
+  if (!isSensitiveDisclosureField(field)) {
+    return null;
+  }
+
+  const explicitOptOut =
+    findOptionByKeywords(field.options, [
+      "prefer not to say",
+      "prefer not to disclose",
+      "do not wish to answer",
+      "don't wish to answer",
+      "decline to state",
+      "choose not to self-identify",
+      "choose not to answer",
+      "not specified",
+      "not disclose",
+    ]) ?? null;
+
+  if (explicitOptOut) {
+    return explicitOptOut;
+  }
+
+  if (field.type === "single_select" || field.type === "boolean") {
+    return "I don't wish to answer";
+  }
+
+  return null;
+}
+
+function findDemographicAnswerFromProfile(
+  field: ExternalApplicationField,
+  candidateProfile: CandidateProfile,
+): string | null {
+  const combined = buildCombinedFieldText(field);
+  const demographics = candidateProfile.demographics;
+
+  if (includesAny(combined, ["pronoun"])) {
+    return demographics.pronouns;
+  }
+
+  if (includesAny(combined, ["gender"])) {
+    return demographics.gender;
+  }
+
+  if (includesAny(combined, ["sexual orientation", "orientation", "lgbt"])) {
+    return demographics.sexualOrientation;
+  }
+
+  if (includesAny(combined, ["veteran", "military", "martyr family", "sehit", "gazi"])) {
+    return demographics.veteranStatus;
+  }
+
+  if (includesAny(combined, ["ethnicity", "ethnic"])) {
+    return demographics.ethnicity;
+  }
+
+  if (includesAny(combined, ["race", "racial"])) {
+    return demographics.race;
+  }
+
+  return null;
+}
+
 function parseCompensationNumber(value: string | null | undefined): number | null {
   const normalized = String(value ?? "").replace(/[^0-9.,]/g, "").replace(/,/g, "");
   if (!normalized) {
@@ -590,6 +671,29 @@ export function resolveSemanticExternalAnswer(args: {
   resolutionStrategy?: string;
   notes?: string;
 } | null {
+  const demographicAnswer = findDemographicAnswerFromProfile(args.field, args.candidateProfile);
+  if (demographicAnswer) {
+    return {
+      answer: demographicAnswer,
+      source: "candidate-profile",
+      confidenceLabel: "high",
+      resolutionStrategy: "profile:demographics",
+      notes: "Resolved from the candidate's saved demographics preferences.",
+    };
+  }
+
+  const sensitiveOptOutAnswer = findSensitiveDisclosureOptOutAnswer(args.field);
+  if (sensitiveOptOutAnswer) {
+    return {
+      answer: sensitiveOptOutAnswer,
+      source: "policy",
+      confidenceLabel: "high",
+      resolutionStrategy: "policy:sensitive-disclosure-opt-out",
+      notes:
+        "Sensitive demographic/disclosure field auto-resolved to the form's explicit opt-out answer when available.",
+    };
+  }
+
   switch (args.field.semanticKey) {
     case "salary.amount": {
       const salaryContext = inferSalaryContext(args.field);

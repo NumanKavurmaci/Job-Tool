@@ -241,6 +241,7 @@ function buildExternalApplyMeta(args: {
 
 function determineExternalFinalStage(args: {
   fillPrimaryAction: "next" | "submit" | "unknown";
+  blockingRequiredFieldCount: number;
   postAdvancePageText: string | null;
   postAdvanceDiscovery: Awaited<ReturnType<typeof inspectExternalApplicationPage>> | null;
 }): string {
@@ -249,6 +250,10 @@ function determineExternalFinalStage(args: {
     /thanks for completing this form|thank you for applying/i.test(args.postAdvancePageText)
   ) {
     return "completed";
+  }
+
+  if (args.blockingRequiredFieldCount > 0) {
+    return "form_step";
   }
 
   if (args.postAdvanceDiscovery?.fields.length) {
@@ -395,6 +400,7 @@ async function runExternalApplyCore({
 
         finalStage = determineExternalFinalStage({
           fillPrimaryAction: fillResult.primaryAction,
+          blockingRequiredFieldCount: fillResult.blockingRequiredFields.length,
           postAdvancePageText: postFillPageText,
           postAdvanceDiscovery: postFillDiscovery,
         });
@@ -408,6 +414,7 @@ async function runExternalApplyCore({
           discovery,
           finalStage,
           filledCount,
+          blockingRequiredFields: fillResult.blockingRequiredFields,
           siteFeedback: fillResult.siteFeedback,
         });
 
@@ -622,6 +629,7 @@ interface BuildStopReasonOptions {
   discovery: Awaited<ReturnType<typeof discoverExternalApplication>>;
   finalStage: string;
   filledCount: number;
+  blockingRequiredFields: string[];
   siteFeedback?: { errors: string[]; warnings: string[]; infos: string[] } | null;
 }
 
@@ -630,6 +638,7 @@ function buildStopReason({
   discovery,
   finalStage,
   filledCount,
+  blockingRequiredFields,
   siteFeedback,
 }: BuildStopReasonOptions): string {
   // Keep stop reasons human-readable while still surfacing the most useful site-level feedback.
@@ -640,9 +649,24 @@ function buildStopReason({
     null;
 
   if (discovery.fields.length === 0) {
+    if (discovery.authWall) {
+      const base =
+        discovery.authWallReason ??
+        "The external site appears to require login or account access before the application form is visible.";
+      return firstFeedback ? `${base} Site feedback: ${firstFeedback}` : base;
+    }
     return firstFeedback
       ? `No application fields were discovered on the target page. Site feedback: ${firstFeedback}`
       : "No application fields were discovered on the target page.";
+  }
+
+  if (blockingRequiredFields.length > 0) {
+    const uniqueBlockingFields = [...new Set(blockingRequiredFields)];
+    const fieldSummary = uniqueBlockingFields.join(", ");
+    const base = submit
+      ? `Could not submit because required fields remain unanswered: ${fieldSummary}.`
+      : `Required fields still need answers before submission: ${fieldSummary}.`;
+    return firstFeedback ? `${base} Site feedback: ${firstFeedback}` : base;
   }
 
   if (finalStage === "completed") {

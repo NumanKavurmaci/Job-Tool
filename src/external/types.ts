@@ -57,6 +57,8 @@ export type ExternalApplicationDiscovery = {
   pageTitle: string;
   platform: string;
   fields: ExternalApplicationField[];
+  authWall: boolean;
+  authWallReason: string | null;
   precursorPage: boolean;
   precursorSignals: string[];
   precursorLinks: {

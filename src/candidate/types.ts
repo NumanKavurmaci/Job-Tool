@@ -29,6 +29,15 @@ export interface CandidateDisabilityProfile {
   disclosurePreference: "manual-review" | "disclose" | "prefer-not-to-say";
 }
 
+export interface CandidateDemographicsProfile {
+  gender: string | null;
+  pronouns: string | null;
+  ethnicity: string | null;
+  race: string | null;
+  veteranStatus: string | null;
+  sexualOrientation: string | null;
+}
+
 export interface CandidateSalaryExpectations {
   usd: string | null;
   eur: string | null;
@@ -70,6 +79,7 @@ export interface CandidateProfile {
   willingToRelocate: boolean | null;
   remotePreference: string | null;
   remoteOnly: boolean;
+  demographics: CandidateDemographicsProfile;
   disability: CandidateDisabilityProfile;
   education: CandidateEducation[];
   experience: CandidateExperience[];

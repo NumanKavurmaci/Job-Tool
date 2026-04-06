@@ -17,6 +17,7 @@ const EXTERNAL_DISCOVERY_EVALUATE_SCRIPT = `(() => {
   const doc = globalThis.document;
   const applyTextPattern = /\\b(apply|continue|start|next|begin)\\b/i;
   const cleanText = (value) => (value ?? "").replace(/\\s+/g, " ").trim();
+  const normalizeToken = (value) => cleanText(value).toLowerCase();
   const removeNestedInputs = (element) => {
     const clone = element?.cloneNode?.(true);
     if (!clone || typeof clone.querySelectorAll !== "function") {
@@ -46,6 +47,76 @@ const EXTERNAL_DISCOVERY_EVALUATE_SCRIPT = `(() => {
     } catch {
       return false;
     }
+  };
+  const looksCookieOrConsentContainer = (element) => {
+    const nodes = [
+      element,
+      element?.parentElement,
+      element?.closest?.("[id], [class], [role], [data-testid], [aria-label]"),
+    ].filter(Boolean);
+    const combined = nodes
+      .map((node) =>
+        cleanText(
+          [
+            node?.getAttribute?.("id"),
+            node?.getAttribute?.("class"),
+            node?.getAttribute?.("role"),
+            node?.getAttribute?.("data-testid"),
+            node?.getAttribute?.("aria-label"),
+          ]
+            .filter(Boolean)
+            .join(" "),
+        ),
+      )
+      .join(" ")
+      .toLowerCase();
+    return /cookie|cybot|cookiedialog|cookiebot|privacy-banner/.test(combined);
+  };
+  const looksSearchField = (element, label, placeholder) => {
+    const inputType = normalizeToken(element?.getAttribute?.("type"));
+    const combined = [
+      label,
+      placeholder,
+      element?.getAttribute?.("name"),
+      element?.getAttribute?.("id"),
+      element?.getAttribute?.("aria-label"),
+    ]
+      .map(normalizeToken)
+      .join(" ");
+    return inputType === "search" || /\\bsearch\\b|\\bzoeken\\b|zoekterm/.test(combined);
+  };
+  const isAntiBotField = (element) => {
+    const combined = cleanText(
+      [
+        element?.getAttribute?.("id"),
+        element?.getAttribute?.("name"),
+        element?.getAttribute?.("class"),
+        element?.getAttribute?.("aria-label"),
+      ]
+        .filter(Boolean)
+        .join(" "),
+    ).toLowerCase();
+    return /recaptcha|g-recaptcha|hcaptcha|turnstile|captcha/.test(combined);
+  };
+  const isVisiblyHiddenField = (element) => {
+    if (!element) {
+      return true;
+    }
+    if (element?.hasAttribute?.("hidden")) {
+      return true;
+    }
+    const style = globalThis.getComputedStyle?.(element);
+    if (style) {
+      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+        return true;
+      }
+    }
+    const ariaHidden = cleanText(element?.getAttribute?.("aria-hidden")).toLowerCase();
+    if (ariaHidden === "true") {
+      return true;
+    }
+    const rects = typeof element?.getClientRects === "function" ? element.getClientRects() : [];
+    return rects.length === 0;
   };
   const findContextualLabel = (start) => {
     let current = start;
@@ -101,6 +172,17 @@ const EXTERNAL_DISCOVERY_EVALUATE_SCRIPT = `(() => {
   const describeField = (element, index) => {
     const tagName = String(element?.tagName ?? "").toLowerCase();
     const blockType = cleanText(element?.closest?.("[data-block-type]")?.getAttribute?.("data-block-type")).toUpperCase();
+    const rawInputType = String(element?.getAttribute?.("type") ?? "text").toLowerCase();
+    const rawRole = cleanText(element?.getAttribute?.("role")).toLowerCase();
+    const rawClassName = cleanText(element?.getAttribute?.("class")).toLowerCase();
+    const labelledBy = cleanText(element?.getAttribute?.("aria-labelledby"));
+    const labelledByText = labelledBy
+      ? labelledBy
+          .split(/\s+/)
+          .map((id) => cleanText(doc?.getElementById?.(id)?.textContent))
+          .filter(Boolean)
+          .join(" ")
+      : "";
     const inputType =
       blockType === "INPUT_EMAIL"
         ? "email"
@@ -116,11 +198,13 @@ const EXTERNAL_DISCOVERY_EVALUATE_SCRIPT = `(() => {
                   ? "file"
                   : blockType === "DROPDOWN"
                     ? "select"
+                    : rawRole === "combobox" || rawClassName.includes("select__input")
+                      ? "select"
                     : tagName === "textarea"
                       ? "textarea"
                       : tagName === "select"
                         ? "select"
-                        : String(element?.getAttribute?.("type") ?? "text").toLowerCase();
+                        : rawInputType;
     const id = element?.getAttribute?.("id");
     const name = element?.getAttribute?.("name");
     const ngModel = cleanText(element?.getAttribute?.("ng-model"));
@@ -128,7 +212,7 @@ const EXTERNAL_DISCOVERY_EVALUATE_SCRIPT = `(() => {
     const wrappingLabel = cleanText(element?.closest?.("label")?.textContent);
     const checkboxOptionLabel = findCheckboxOptionLabel(element);
     const immediateHeadingLabel = findImmediateHeadingLabel(element);
-    const ariaLabel = cleanText(element?.getAttribute?.("aria-label"));
+    const ariaLabel = cleanText(element?.getAttribute?.("aria-label")) || labelledByText;
     const legend = cleanText(element?.closest?.("fieldset")?.querySelector?.("legend")?.textContent);
     const contextualLabel = findContextualLabel(element?.closest?.("[data-block-id]") ?? element?.parentElement ?? element);
     const previousHeading = cleanText(element?.parentElement?.querySelector?.("h1,h2,h3,h4,h5,h6,label,legend")?.textContent);
@@ -145,6 +229,18 @@ const EXTERNAL_DISCOVERY_EVALUATE_SCRIPT = `(() => {
       placeholder ||
       name ||
       \`\${tagName}-\${index + 1}\`;
+
+    if (
+      looksCookieOrConsentContainer(element) ||
+      looksSearchField(element, label, placeholder) ||
+      isAntiBotField(element)
+    ) {
+      return null;
+    }
+
+    if ((rawRole === "combobox" || rawClassName.includes("select__input")) && !id && !name) {
+      return null;
+    }
 
     const options =
       tagName === "select"
@@ -175,6 +271,7 @@ const EXTERNAL_DISCOVERY_EVALUATE_SCRIPT = `(() => {
       inputType,
       required:
         Boolean(element?.hasAttribute?.("required")) ||
+        cleanText(element?.getAttribute?.("aria-required")).toLowerCase() === "true" ||
         label.includes("*") ||
         cleanText(element?.closest?.("[aria-required='true']")?.textContent).length > 0,
       options,
@@ -193,7 +290,10 @@ const EXTERNAL_DISCOVERY_EVALUATE_SCRIPT = `(() => {
         return false;
       }
     }
-    return !element?.disabled;
+    if (element?.disabled || isAntiBotField(element) || isVisiblyHiddenField(element)) {
+      return false;
+    }
+    return true;
   });
   const customFileFields = Array.from(
     doc?.querySelectorAll?.(
@@ -223,7 +323,7 @@ const EXTERNAL_DISCOVERY_EVALUATE_SCRIPT = `(() => {
       };
     });
 
-  const uniqueFields = [...fieldNodes.map((element, index) => describeField(element, index)), ...customFileFields]
+  const uniqueFields = [...fieldNodes.map((element, index) => describeField(element, index)).filter(Boolean), ...customFileFields]
     .filter((field, index, all) => all.findIndex((candidate) => candidate.key === field.key) === index);
 
   const genericPrecursorLinks = Array.from(doc?.querySelectorAll?.("a[href], button") ?? [])
@@ -388,6 +488,60 @@ function mapHtmlInputTypeToFieldType(inputType: string, options: string[]): Exte
   return "short_text";
 }
 
+function inferAuthWall(args: {
+  finalUrl: string;
+  pageTitle: string;
+  fields: ExternalApplicationField[];
+  precursorLinks: Array<{ label: string; href: string }>;
+}): { authWall: boolean; authWallReason: string | null } {
+  if (args.fields.length > 0 || args.precursorLinks.length > 0) {
+    return {
+      authWall: false,
+      authWallReason: null,
+    };
+  }
+
+  const combined = `${args.finalUrl} ${args.pageTitle}`.toLowerCase();
+  if (
+    /\/login\b|\/signin\b|\/sign-in\b|\/account\b/.test(combined) ||
+    /\blogin\b|\blog in\b|\bsign in\b|\bsign-in\b|\bcreate account\b|\btalent community\b/.test(combined)
+  ) {
+    return {
+      authWall: true,
+      authWallReason:
+        "The external site appears to require login or account access before the application form is visible.",
+    };
+  }
+
+  return {
+    authWall: false,
+    authWallReason: null,
+  };
+}
+
+function looksNonApplicationField(field: {
+  key: string;
+  label: string;
+  placeholder: string | null;
+  selectorHints?: string[] | undefined;
+}): boolean {
+  const combined = [
+    field.key,
+    field.label,
+    field.placeholder,
+    ...(field.selectorHints ?? []),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  if (/cybot|cookiebot|cookiedialog|privacy-banner/.test(combined)) {
+    return true;
+  }
+
+  return /\bsearch\b|\bzoeken\b|zoekterm|recaptcha|g-recaptcha|hcaptcha|turnstile|captcha/.test(combined);
+}
+
 // Opens an external apply URL and returns the normalized discovery model used by the rest of the flow.
 export async function discoverExternalApplication(
   page: Page,
@@ -528,6 +682,8 @@ export async function inspectExternalApplicationPage(
       : {
           url: sourceUrl,
           title: "",
+          authWall: false,
+          authWallReason: null,
           precursorPage: false,
           precursorSignals: [],
           fields: [],
@@ -547,6 +703,29 @@ export async function inspectExternalApplicationPage(
     selectorHints: field.selectorHints,
   }));
   const fields = annotateSemanticFieldsWithPlatform(normalizedFields).filter((field, _, allFields) => {
+    if (looksNonApplicationField(field)) {
+      return false;
+    }
+
+    const isShadowInputDuplicate =
+      /^input-\d+$/i.test(field.key) &&
+      (field.selectorHints?.length ?? 0) === 0 &&
+      allFields.some((candidate) => {
+        if (candidate === field) {
+          return false;
+        }
+
+        const sameLabel =
+          candidate.label.replace(/\*/g, "").trim().toLowerCase() ===
+          field.label.replace(/\*/g, "").trim().toLowerCase();
+        const candidateHasRealSelector = (candidate.selectorHints?.length ?? 0) > 0;
+        const candidateLooksCanonical = !/^input-\d+$/i.test(candidate.key);
+        return sameLabel && candidateHasRealSelector && candidateLooksCanonical;
+      });
+    if (isShadowInputDuplicate) {
+      return false;
+    }
+
     const genericLabel =
       field.label.trim().toLowerCase() === "please fill out the following information.";
     if (!genericLabel) {
@@ -561,6 +740,12 @@ export async function inspectExternalApplicationPage(
           candidate.key.trim().toLowerCase() === normalizedKey),
     );
   });
+  const authWall = inferAuthWall({
+    finalUrl: inspected.url,
+    pageTitle: inspected.title,
+    fields,
+    precursorLinks: inspected.precursorLinks,
+  });
 
   return {
     sourceUrl,
@@ -568,6 +753,8 @@ export async function inspectExternalApplicationPage(
     pageTitle: inspected.title,
     platform: inferPlatform(inspected.url),
     fields,
+    authWall: authWall.authWall,
+    authWallReason: authWall.authWallReason,
     precursorPage: inspected.precursorPage === true,
     precursorSignals: inspected.precursorSignals ?? [],
     precursorLinks: inspected.precursorLinks,

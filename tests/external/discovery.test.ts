@@ -421,6 +421,170 @@ describe("external application discovery", () => {
     ]);
   });
 
+  it("filters cookie consent and search controls so they do not look like application fields", async () => {
+    const goto = vi.fn();
+    const evaluate = vi.fn().mockResolvedValue({
+      url: "https://example.com/apply",
+      title: "Application page",
+      fields: [
+        {
+          key: "cookie-marketing",
+          label: "Marketing",
+          inputType: "checkbox",
+          required: false,
+          options: [],
+          placeholder: null,
+          helpText: null,
+          accept: null,
+          selectorHints: ['[id="CybotCookiebotDialogBodyLevelButtonMarketing"]'],
+        },
+        {
+          key: "search-box",
+          label: "Zoeken",
+          inputType: "search",
+          required: false,
+          options: [],
+          placeholder: "Uw zoekterm",
+          helpText: null,
+          accept: null,
+        },
+        {
+          key: "email",
+          label: "Email",
+          inputType: "email",
+          required: true,
+          options: [],
+          placeholder: "name@example.com",
+          helpText: null,
+          accept: null,
+        },
+      ],
+      precursorLinks: [],
+    });
+
+    const result = await discoverExternalApplication(
+      { goto, evaluate } as never,
+      "https://example.com/apply",
+    );
+
+    expect(result.fields).toEqual([
+      expect.objectContaining({
+        key: "email",
+        type: "email",
+      }),
+    ]);
+  });
+
+  it("marks login pages as auth walls instead of generic empty forms", async () => {
+    const goto = vi.fn();
+    const evaluate = vi.fn().mockResolvedValue({
+      url: "https://globalcareers-githubinc.icims.com/jobs/5151/login?iis=Job+Board&iisn=LinkedIn",
+      title: "Login to GitHub Careers",
+      fields: [],
+      precursorLinks: [],
+    });
+
+    const result = await discoverExternalApplication(
+      { goto, evaluate } as never,
+      "https://githubinc.jibeapply.com/jobs/5151",
+    );
+
+    expect(result.authWall).toBe(true);
+    expect(result.authWallReason).toContain("require login");
+    expect(result.fields).toEqual([]);
+  });
+
+  it("treats greenhouse-style combobox inputs as select fields and ignores unlabeled shadow inputs", async () => {
+    const goto = vi.fn();
+    const evaluate = vi.fn().mockResolvedValue({
+      url: "https://job-boards.greenhouse.io/example/jobs/1",
+      title: "Application page",
+      fields: [
+        {
+          key: "question_1",
+          label: "Gender*",
+          inputType: "select",
+          required: true,
+          options: [],
+          placeholder: null,
+          helpText: null,
+          accept: null,
+          selectorHints: ['[id="question_1"]'],
+        },
+        {
+          key: "input-22",
+          label: "Gender*",
+          inputType: "text",
+          required: true,
+          options: [],
+          placeholder: null,
+          helpText: null,
+          accept: null,
+          selectorHints: [],
+        },
+      ],
+      precursorLinks: [],
+    });
+
+    const result = await discoverExternalApplication(
+      { goto, evaluate } as never,
+      "https://job-boards.greenhouse.io/example/jobs/1",
+    );
+
+    expect(result.fields).toEqual([
+      expect.objectContaining({
+        key: "question_1",
+        label: "Gender*",
+        type: "single_select",
+      }),
+    ]);
+  });
+
+  it("filters anti-bot captcha controls from discovered fields", async () => {
+    const goto = vi.fn();
+    const evaluate = vi.fn().mockResolvedValue({
+      url: "https://example.com/apply",
+      title: "Application page",
+      fields: [
+        {
+          key: "g-recaptcha-response",
+          label: "Captcha",
+          inputType: "textarea",
+          required: false,
+          options: [],
+          placeholder: null,
+          helpText: null,
+          accept: null,
+          selectorHints: ['[id="g-recaptcha-response-100000"]', '[name="g-recaptcha-response"]'],
+        },
+        {
+          key: "email",
+          label: "Email",
+          inputType: "email",
+          required: true,
+          options: [],
+          placeholder: "name@example.com",
+          helpText: null,
+          accept: null,
+          selectorHints: ['[id="email"]'],
+        },
+      ],
+      precursorLinks: [],
+    });
+
+    const result = await discoverExternalApplication(
+      { goto, evaluate } as never,
+      "https://example.com/apply",
+    );
+
+    expect(result.fields).toEqual([
+      expect.objectContaining({
+        key: "email",
+        type: "email",
+      }),
+    ]);
+  });
+
   it("continues retry inspection when embedded application detection throws", async () => {
     const goto = vi.fn();
     const waitForFunction = vi.fn().mockResolvedValue(undefined);

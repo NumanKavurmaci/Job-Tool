@@ -17,6 +17,29 @@ import { repairAnswerFromSiteFeedback } from "../questions/strategies/aiCorrecti
 export type ExternalFillStatus = "filled" | "skipped" | "failed";
 export type ExternalPrimaryAction = "next" | "submit" | "unknown";
 
+const EXTERNAL_NEXT_BUTTON_LABELS = [
+  "Next",
+  "Continue",
+  "Continue application",
+  "Save and continue",
+  "Proceed",
+  "Review",
+  "Review application",
+  "Volgende",
+  "Verder",
+];
+
+const EXTERNAL_SUBMIT_BUTTON_LABELS = [
+  "Submit",
+  "Submit application",
+  "Apply",
+  "Apply now",
+  "Send application",
+  "Complete application",
+  "Solliciteer",
+  "Versturen",
+];
+
 export type ExternalFieldFillResult = {
   fieldKey: string;
   fieldLabel: string;
@@ -841,17 +864,18 @@ export async function collectExternalSiteFeedback(page: Page): Promise<SiteFeedb
 
 // Detects whether the current step is asking the bot to continue or to submit.
 export async function getExternalPrimaryAction(page: Page): Promise<ExternalPrimaryAction> {
-  const nextSelectors = [
-    `button:has-text("Next")`,
-    `button:has-text("Continue")`,
-    `input[type="submit"][value="Next"]`,
-    `input[type="submit"][value="Continue"]`,
-  ];
-  const submitSelectors = [
-    `button:has-text("Submit")`,
-    `button:has-text("Submit application")`,
-    `input[type="submit"][value="Submit"]`,
-  ];
+  const nextSelectors = EXTERNAL_NEXT_BUTTON_LABELS.flatMap((label) => [
+    `button:has-text("${escapeAttributeValue(label)}")`,
+    `input[type="submit"][value="${escapeAttributeValue(label)}"]`,
+    `input[type="button"][value="${escapeAttributeValue(label)}"]`,
+    `[role="button"]:has-text("${escapeAttributeValue(label)}")`,
+  ]);
+  const submitSelectors = EXTERNAL_SUBMIT_BUTTON_LABELS.flatMap((label) => [
+    `button:has-text("${escapeAttributeValue(label)}")`,
+    `input[type="submit"][value="${escapeAttributeValue(label)}"]`,
+    `input[type="button"][value="${escapeAttributeValue(label)}"]`,
+    `[role="button"]:has-text("${escapeAttributeValue(label)}")`,
+  ]);
 
   if (await findFirstLocator(page, nextSelectors)) {
     return "next";
@@ -868,9 +892,13 @@ export async function advanceExternalApplicationPage(
   page: Page,
   action: Extract<ExternalPrimaryAction, "next" | "submit">,
 ): Promise<boolean> {
-  const selectors = action === "next"
-    ? [`button:has-text("Next")`, `button:has-text("Continue")`, `input[type="submit"][value="Next"]`]
-    : [`button:has-text("Submit")`, `button:has-text("Submit application")`, `input[type="submit"][value="Submit"]`];
+  const labels = action === "next" ? EXTERNAL_NEXT_BUTTON_LABELS : EXTERNAL_SUBMIT_BUTTON_LABELS;
+  const selectors = labels.flatMap((label) => [
+    `button:has-text("${escapeAttributeValue(label)}")`,
+    `input[type="submit"][value="${escapeAttributeValue(label)}"]`,
+    `input[type="button"][value="${escapeAttributeValue(label)}"]`,
+    `[role="button"]:has-text("${escapeAttributeValue(label)}")`,
+  ]);
   const locator = await findFirstLocator(page, selectors);
   if (!locator) {
     return false;

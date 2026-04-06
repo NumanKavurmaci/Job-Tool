@@ -123,6 +123,46 @@ describe("app observability helpers", () => {
     expect(mapEasyApplyStatusToHistoryStatus("stopped_already_applied")).toBe("FAILED");
   });
 
+  it("maps external handoffs conservatively so final submit is not treated as submitted", async () => {
+    const { mapCombinedEasyApplyResultToHistoryStatus } = await import("../../src/app/observability.js");
+
+    expect(
+      mapCombinedEasyApplyResultToHistoryStatus({
+        status: "stopped_external_apply",
+        steps: [],
+        stopReason: "Use company website.",
+        url: "https://example.com/job",
+        externalApplication: {
+          sourceUrl: "https://example.com/job",
+          externalApplyUrl: "https://example.com/apply",
+          canonicalUrl: "https://example.com/apply",
+          runType: "submit",
+          status: "completed",
+          finalStage: "final_submit_step",
+          stopReason: "Reached final submit.",
+        },
+      } as any),
+    ).toBe("READY_TO_SUBMIT");
+
+    expect(
+      mapCombinedEasyApplyResultToHistoryStatus({
+        status: "stopped_external_apply",
+        steps: [],
+        stopReason: "Use company website.",
+        url: "https://example.com/job",
+        externalApplication: {
+          sourceUrl: "https://example.com/job",
+          externalApplyUrl: "https://example.com/apply",
+          canonicalUrl: "https://example.com/apply",
+          runType: "submit",
+          status: "completed",
+          finalStage: "completed",
+          stopReason: "Submitted.",
+        },
+      } as any),
+    ).toBe("SUBMITTED");
+  });
+
   it("persists both evaluation and easy-apply-result history for batch jobs", async () => {
     const { persistBatchJobHistory } = await import("../../src/app/observability.js");
     const deps = {

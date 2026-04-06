@@ -2038,6 +2038,16 @@ describe("external fill", () => {
     expect(actions).toContainEqual({ type: "click", selector: `button:has-text("Submit")` });
   });
 
+  it("detects localized and broader external primary actions", async () => {
+    const next = createLocatorRecorder();
+    next.register(`button:has-text("Verder")`);
+    await expect(getExternalPrimaryAction(next.page as never)).resolves.toBe("next");
+
+    const submit = createLocatorRecorder();
+    submit.register(`button:has-text("Apply now")`);
+    await expect(getExternalPrimaryAction(submit.page as never)).resolves.toBe("submit");
+  });
+
   it("returns false when an explicit advance action has no matching button", async () => {
     const empty = createLocatorRecorder();
     await expect(advanceExternalApplicationPage(empty.page as never, "next")).resolves.toBe(false);

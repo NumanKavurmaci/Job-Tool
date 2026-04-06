@@ -31,6 +31,24 @@ const DisabilitySchema = z
     disclosurePreference: "manual-review",
   });
 
+const DemographicsSchema = z
+  .object({
+    gender: z.string().nullable().default(null),
+    pronouns: z.string().nullable().default(null),
+    ethnicity: z.string().nullable().default(null),
+    race: z.string().nullable().default(null),
+    veteranStatus: z.string().nullable().default(null),
+    sexualOrientation: z.string().nullable().default(null),
+  })
+  .default({
+    gender: null,
+    pronouns: null,
+    ethnicity: null,
+    race: null,
+    veteranStatus: null,
+    sexualOrientation: null,
+  });
+
 const SalaryExpectationsSchema = z
   .object({
     usd: z
@@ -131,11 +149,20 @@ const CandidateProfileFileSchema = z.object({
     .object({
       languages: z.array(z.string()).default([]),
       gpa: z.number().min(0).max(4).nullable().default(null),
+      demographics: DemographicsSchema,
       disability: DisabilitySchema,
     })
     .default({
       languages: [],
       gpa: null,
+      demographics: {
+        gender: null,
+        pronouns: null,
+        ethnicity: null,
+        race: null,
+        veteranStatus: null,
+        sexualOrientation: null,
+      },
       disability: {
         hasVisualDisability: false,
         disabilityPercentage: null,
@@ -205,6 +232,7 @@ export type CandidateProfile = {
   };
   gpa: number | null;
   salaryExpectation: string | null;
+  demographics: z.infer<typeof DemographicsSchema>;
   disability: z.infer<typeof DisabilitySchema>;
 };
 
@@ -234,6 +262,7 @@ function toRuntimeProfile(file: CandidateProfileFile): CandidateProfile {
     salaryExpectations: file.compensation.expectations,
     gpa: file.personal.gpa,
     salaryExpectation: file.compensation.summary,
+    demographics: file.personal.demographics,
     disability: file.personal.disability,
   };
 }

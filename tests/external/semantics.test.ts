@@ -50,6 +50,14 @@ function buildCandidateProfile(overrides: Record<string, unknown> = {}) {
     willingToRelocate: true,
     remotePreference: null,
     remoteOnly: false,
+    demographics: {
+      gender: "Male",
+      pronouns: "he/him/his",
+      ethnicity: "Turkish",
+      race: "White",
+      veteranStatus: "Not a veteran",
+      sexualOrientation: "Prefer not to answer",
+    },
     regionalAuthorization: {
       defaultRequiresSponsorship: true,
       turkeyRequiresSponsorship: false,
@@ -630,5 +638,122 @@ describe("external semantics", () => {
         candidateProfile,
       }),
     ).toBeNull();
+  });
+
+  it("uses explicit opt-out answers for sensitive demographic disclosure fields when no saved answer exists", () => {
+    const candidateProfile = buildCandidateProfile({
+      demographics: {
+        gender: null,
+        pronouns: null,
+        ethnicity: null,
+        race: null,
+        veteranStatus: null,
+        sexualOrientation: null,
+      },
+    });
+
+    expect(
+      resolveSemanticExternalAnswer({
+        field: buildField({
+          key: "gender",
+          label: "Gender",
+          type: "single_select",
+          required: true,
+          options: ["Male", "Female", "I don't wish to answer"],
+        }),
+        candidateProfile,
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        answer: "I don't wish to answer",
+        source: "policy",
+        resolutionStrategy: "policy:sensitive-disclosure-opt-out",
+      }),
+    );
+  });
+
+  it("uses saved demographic answers before falling back to opt-out", () => {
+    const candidateProfile = buildCandidateProfile({
+      demographics: {
+        gender: "Male",
+        pronouns: "he/him/his",
+        ethnicity: "Turkish",
+        race: "White",
+        veteranStatus: "Not a veteran or martyr family member",
+        sexualOrientation: "Prefer not to answer",
+      },
+    });
+
+    expect(
+      resolveSemanticExternalAnswer({
+        field: buildField({
+          key: "gender",
+          label: "Gender",
+          type: "single_select",
+          required: true,
+          options: ["Male", "Female", "I don't wish to answer"],
+        }),
+        candidateProfile,
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        answer: "Male",
+        resolutionStrategy: "profile:demographics",
+      }),
+    );
+
+    expect(
+      resolveSemanticExternalAnswer({
+        field: buildField({
+          key: "pronouns",
+          label: "Pronouns",
+          type: "single_select",
+          required: false,
+          options: ["he/him", "she/her", "they/them"],
+        }),
+        candidateProfile,
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        answer: "he/him/his",
+        resolutionStrategy: "profile:demographics",
+      }),
+    );
+
+    expect(
+      resolveSemanticExternalAnswer({
+        field: buildField({
+          key: "sexualOrientation",
+          label: "Sexual orientation",
+          type: "single_select",
+          required: false,
+          options: ["Straight", "Gay", "Prefer not to answer"],
+        }),
+        candidateProfile,
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        answer: "Prefer not to answer",
+        resolutionStrategy: "profile:demographics",
+      }),
+    );
+
+    expect(
+      resolveSemanticExternalAnswer({
+        field: buildField({
+          key: "veteran",
+          label: "Veteran status",
+          type: "single_select",
+          required: true,
+          options: ["I am a protected veteran", "I am not a protected veteran"],
+        }),
+        candidateProfile,
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        answer: "Not a veteran or martyr family member",
+        resolutionStrategy: "profile:demographics",
+      }),
+    );
   });
 });

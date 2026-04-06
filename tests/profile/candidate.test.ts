@@ -51,6 +51,14 @@ describe("candidate profile loader", () => {
       },
       gpa: null,
       salaryExpectation: null,
+      demographics: {
+        gender: null,
+        pronouns: null,
+        ethnicity: null,
+        race: null,
+        veteranStatus: null,
+        sexualOrientation: null,
+      },
       disability: {
         hasVisualDisability: false,
         disabilityPercentage: null,
@@ -102,6 +110,14 @@ describe("candidate profile loader", () => {
         personal: {
           languages: ["English"],
           gpa: 2.4,
+          demographics: {
+            gender: "Male",
+            pronouns: "he/him/his",
+            ethnicity: "Turkish",
+            race: "White",
+            veteranStatus: "Not a veteran",
+            sexualOrientation: "Prefer not to answer",
+          },
           disability: {
             hasVisualDisability: true,
             disabilityPercentage: 46,
@@ -147,6 +163,10 @@ describe("candidate profile loader", () => {
     expect(profile.experienceOverrides.linux).toBe(0);
     expect(profile.salaryExpectations.eur).toContain("EUR");
     expect(profile.salaryExpectation).toBe("100k+");
+    expect(profile.demographics.gender).toBe("Male");
+    expect(profile.demographics.pronouns).toBe("he/him/his");
+    expect(profile.demographics.ethnicity).toBe("Turkish");
+    expect(profile.demographics.sexualOrientation).toBe("Prefer not to answer");
     expect(profile.disability.hasVisualDisability).toBe(true);
   });
 
@@ -181,6 +201,14 @@ describe("candidate profile loader", () => {
         personal: {
           languages: ["English"],
           gpa: null,
+          demographics: {
+            gender: null,
+            pronouns: null,
+            ethnicity: null,
+            race: null,
+            veteranStatus: null,
+            sexualOrientation: null,
+          },
           disability: {
             hasVisualDisability: false,
             disabilityPercentage: null,

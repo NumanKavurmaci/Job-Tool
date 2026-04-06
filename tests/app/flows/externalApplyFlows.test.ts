@@ -311,6 +311,47 @@ describe("external apply flows", () => {
     expect(deps.prisma.preparedAnswerSet.create).not.toHaveBeenCalled();
   });
 
+  it("reports auth walls with a specific stop reason when the external page requires login", async () => {
+    const goto = vi.fn();
+    const evaluate = vi.fn().mockResolvedValue({
+      url: "https://globalcareers-githubinc.icims.com/jobs/5151/login",
+      title: "Login to GitHub Careers",
+      fields: [],
+      precursorLinks: [],
+    });
+
+    const deps = {
+      loadCandidateMasterProfile: vi.fn().mockResolvedValue(buildCandidateProfile()),
+      prisma: {
+        jobPosting: { findUnique: vi.fn().mockResolvedValue(null) },
+        candidateProfileSnapshot: { create: vi.fn().mockResolvedValue({ id: "snapshot_1" }) },
+        preparedAnswerSet: { create: vi.fn().mockResolvedValue({ id: "prepared_1" }) },
+        systemLog: { create: vi.fn().mockResolvedValue({}) },
+      },
+      withPage: vi.fn(async (fn: (page: unknown) => Promise<unknown>) =>
+        fn(createFlowPage({ goto, evaluate }))),
+      completePrompt: vi.fn(),
+      writeRunReport: vi.fn().mockResolvedValue("artifacts/external-apply-runs/report.json"),
+      logger: {
+        info: vi.fn(),
+        error: vi.fn(),
+      },
+    } as any;
+
+    const result = await runExternalApplyDryRunFlow(
+      {
+        mode: "external-apply",
+        url: "https://githubinc.jibeapply.com/jobs/5151",
+        resumePath: "./user/resume.pdf",
+        dryRun: true,
+      },
+      deps,
+    );
+
+    expect(result.discovery.authWall).toBe(true);
+    expect(result.stopReason).toContain("require login");
+  });
+
   it("falls back to the first discovered precursor link when AI advice is invalid or unavailable", async () => {
     const goto = vi.fn();
     const evaluate = vi
@@ -888,8 +929,8 @@ describe("external apply flows", () => {
     );
 
     expect(result.steps).toHaveLength(1);
-    expect(result.finalStage).toBe("final_submit_step");
-    expect(result.stopReason).toContain("Please fill out this field.");
+    expect(result.finalStage).toBe("form_step");
+    expect(result.stopReason).toContain("Required fields still need answers before submission");
     expect(result.steps[0]?.blockingRequiredFields).toEqual([
       "Please provide more details so we can support you:",
     ]);

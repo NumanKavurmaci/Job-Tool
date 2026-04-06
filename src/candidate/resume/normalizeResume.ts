@@ -99,6 +99,14 @@ export function normalizeResume(
     willingToRelocate: parsed.willingToRelocate,
     remotePreference: parsed.remotePreference,
     remoteOnly: false,
+    demographics: {
+      gender: null,
+      pronouns: null,
+      ethnicity: null,
+      race: null,
+      veteranStatus: null,
+      sexualOrientation: null,
+    },
     disability: {
       hasVisualDisability: false,
       disabilityPercentage: null,
