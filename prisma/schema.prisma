@@ -23,6 +23,7 @@ model JobPosting {
   parseVersion   String?
   firm           Firm?                 @relation(fields: [firmId], references: [id], onDelete: SetNull)
   decisions      ApplicationDecision[]
+  recommendations JobRecommendation[]
   preparedAnswerSets PreparedAnswerSet[]
   reviewHistory  JobReviewHistory[]
   systemLogs     SystemLog[]
@@ -59,6 +60,32 @@ model ApplicationDecision {
   policyAllowed Boolean
   reasons       String
   createdAt     DateTime                @default(now())
+}
+
+enum RecommendationStatus {
+  RECOMMENDED
+  NOT_RECOMMENDED
+  DISMISSED
+  ARCHIVED
+}
+
+model JobRecommendation {
+  id                   String                 @id @default(cuid())
+  jobPostingId         String                 @unique
+  jobPosting           JobPosting             @relation(fields: [jobPostingId], references: [id], onDelete: Cascade)
+  source               String
+  score                Int
+  decision             ApplicationDecisionType
+  policyAllowed        Boolean
+  summary              String
+  reasons              String
+  recommendationStatus RecommendationStatus   @default(RECOMMENDED)
+  detailsJson          String?
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+
+  @@index([recommendationStatus, updatedAt])
+  @@index([decision, updatedAt])
 }
 
 model CandidateProfileSnapshot {

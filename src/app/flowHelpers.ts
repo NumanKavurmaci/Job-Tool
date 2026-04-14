@@ -11,6 +11,7 @@ import { shouldBypassWorkplacePolicy } from "../policy/policyEngine.js";
 import {
   jobPostingNeedsMetadataRefresh,
   persistJobAnalysisRecord,
+  persistJobRecommendationRecord,
   refreshJobPostingMetadata,
 } from "../utils/jobPersistence.js";
 import { LINKEDIN_EVALUATION_SESSION_OPTIONS, PARSE_VERSION } from "./constants.js";
@@ -49,11 +50,16 @@ export function createBatchJobEvaluator(args: {
   scoreThreshold: number;
   useAiScoreAdjustment: boolean;
   allowExternalLinkedInApply?: boolean;
+  source?: string;
+  systemScope?: string;
+  persistRecommendations?: boolean;
   scoringProfile: Awaited<ReturnType<AppDeps["loadCandidateProfile"]>>;
   evaluationPage?: Page;
   deps: AppDeps;
 }) {
   const deps = args.deps;
+  const reviewSource = args.source ?? "easy-apply-batch";
+  const systemScope = args.systemScope ?? "linkedin.batch";
 
   if (args.disableAiEvaluation) {
     return async (_url: string) => ({
@@ -120,9 +126,9 @@ export function createBatchJobEvaluator(args: {
       await persistSystemEvent(
         {
           level: "WARN",
-          scope: "linkedin.batch",
+          scope: systemScope,
           message: "Skipping duplicate job review.",
-          runType: "easy-apply-batch",
+          runType: reviewSource,
           jobUrl: url,
           details: {
             previousStatus: latestReview.status,
@@ -159,14 +165,14 @@ export function createBatchJobEvaluator(args: {
           "Retrying previously approved Easy Apply job",
         );
         await persistSystemEvent(
-          {
-            level: "INFO",
-            scope: "linkedin.batch",
-            message: "Retrying previously approved Easy Apply job.",
-            runType: "easy-apply-batch",
-            jobUrl: url,
-            details: {
-              previousStatus: latestReview.status,
+        {
+          level: "INFO",
+          scope: systemScope,
+          message: "Retrying previously approved Easy Apply job.",
+          runType: reviewSource,
+          jobUrl: url,
+          details: {
+            previousStatus: latestReview.status,
               previousDecision: latestReview.decision,
               easyApplyAvailable: true,
             },
@@ -205,9 +211,9 @@ export function createBatchJobEvaluator(args: {
     await persistSystemEvent(
       {
         level: "INFO",
-        scope: "linkedin.batch",
+        scope: systemScope,
         message: "Batch job context extracted.",
-        runType: "easy-apply-batch",
+        runType: reviewSource,
         jobUrl: url,
         details: diagnostics,
       },
@@ -263,9 +269,9 @@ export function createBatchJobEvaluator(args: {
     await persistSystemEvent(
       {
         level: "INFO",
-        scope: "linkedin.batch",
+        scope: systemScope,
         message: "Batch job evaluation completed.",
-        runType: "easy-apply-batch",
+        runType: reviewSource,
         jobUrl: url,
         details: {
           finalDecision,
@@ -295,11 +301,35 @@ export function createBatchJobEvaluator(args: {
       parseVersion: PARSE_VERSION,
     });
 
+    if (args.persistRecommendations) {
+      await persistJobRecommendationRecord({
+        prisma: deps.prisma as never,
+        logger: deps.logger,
+        jobPostingId: persisted.jobPosting.id,
+        source: reviewSource,
+        score: score.totalScore,
+        decision: finalDecision,
+        policyAllowed: policy.allowed,
+        summary: reason,
+        reasons: !policy.allowed ? policy.reasons : [reason],
+        details: {
+          scoreThreshold: args.scoreThreshold,
+          shouldApply: finalDecision === "APPLY",
+          parseVersion: PARSE_VERSION,
+          aiAdjustment: score.aiAdjustment ?? 0,
+          aiReasoning: score.aiReasoning ?? null,
+          aiConfidence: score.aiConfidence ?? null,
+          scoringSource: score.scoringSource ?? "deterministic",
+          diagnostics,
+        },
+      });
+    }
+
     await persistJobHistory(
       {
         jobPostingId: persisted.jobPosting.id,
         jobUrl: url,
-        source: "easy-apply-batch",
+        source: reviewSource,
         status: finalDecision === "APPLY" ? "EVALUATED" : "SKIPPED",
         score: score.totalScore,
         threshold: args.scoreThreshold,

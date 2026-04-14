@@ -48,6 +48,9 @@ type PersistencePrisma = {
       }>
     >;
   };
+  jobRecommendation?: {
+    upsert(args: Record<string, unknown>): Promise<{ id: string }>;
+  };
 };
 
 type PersistenceLogger = Pick<pino.Logger, "warn">;
@@ -303,6 +306,67 @@ export async function persistJobAnalysisRecord(args: {
         error: error instanceof Error ? error.message : String(error),
       },
       "Failed to persist job analysis record",
+    );
+    throw error;
+  }
+}
+
+export async function persistJobRecommendationRecord(args: {
+  prisma: PersistencePrisma;
+  logger: PersistenceLogger;
+  jobPostingId: string;
+  source: string;
+  score: number;
+  decision: ApplicationDecisionType;
+  policyAllowed: boolean;
+  summary: string;
+  reasons: string[];
+  recommendationStatus?: "RECOMMENDED" | "NOT_RECOMMENDED" | "DISMISSED" | "ARCHIVED";
+  details?: Record<string, unknown>;
+}) {
+  if (!args.prisma.jobRecommendation?.upsert) {
+    return null;
+  }
+
+  try {
+    return await args.prisma.jobRecommendation.upsert({
+      where: {
+        jobPostingId: args.jobPostingId,
+      },
+      update: {
+        source: args.source,
+        score: args.score,
+        decision: args.decision,
+        policyAllowed: args.policyAllowed,
+        summary: args.summary,
+        reasons: JSON.stringify(args.reasons),
+        recommendationStatus:
+          args.recommendationStatus ??
+          (args.decision === "APPLY" ? "RECOMMENDED" : "NOT_RECOMMENDED"),
+        ...(args.details ? { detailsJson: JSON.stringify(args.details) } : {}),
+      },
+      create: {
+        jobPostingId: args.jobPostingId,
+        source: args.source,
+        score: args.score,
+        decision: args.decision,
+        policyAllowed: args.policyAllowed,
+        summary: args.summary,
+        reasons: JSON.stringify(args.reasons),
+        recommendationStatus:
+          args.recommendationStatus ??
+          (args.decision === "APPLY" ? "RECOMMENDED" : "NOT_RECOMMENDED"),
+        ...(args.details ? { detailsJson: JSON.stringify(args.details) } : {}),
+      },
+    });
+  } catch (error) {
+    args.logger.warn(
+      {
+        jobPostingId: args.jobPostingId,
+        source: args.source,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      "Failed to persist job recommendation record",
     );
     throw error;
   }

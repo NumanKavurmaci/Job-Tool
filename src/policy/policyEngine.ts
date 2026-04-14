@@ -62,6 +62,17 @@ const EUROPE_REGION_LABELS = new Set([
   "emea",
 ]);
 
+const EARLY_CAREER_ROLE_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
+  { pattern: /\bintern(ship)?\b/i, label: "internship" },
+  { pattern: /\bbootcamp\b/i, label: "bootcamp" },
+  { pattern: /\btrainee\b/i, label: "trainee" },
+  { pattern: /\bapprentice(ship)?\b/i, label: "apprenticeship" },
+  { pattern: /\bgraduate program\b/i, label: "graduate program" },
+  { pattern: /\bnew grad\b/i, label: "new grad" },
+  { pattern: /\bentry[- ]level\b/i, label: "entry-level" },
+  { pattern: /\bstudent\b/i, label: "student program" },
+];
+
 function trimOrNull(value: string | null | undefined): string | null {
   const normalized = value?.trim();
   return normalized ? normalized : null;
@@ -128,6 +139,18 @@ function includesRoleKeyword(haystack: string, keywords: string[]): string | nul
     const pattern = new RegExp(`\\b${escapeRegex(normalizedKeyword)}\\b`, "i");
     if (pattern.test(normalizedHaystack)) {
       return keyword;
+    }
+  }
+
+  return null;
+}
+
+function detectEarlyCareerRole(haystack: string): string | null {
+  const normalizedHaystack = normalizePolicyText(haystack);
+
+  for (const { pattern, label } of EARLY_CAREER_ROLE_PATTERNS) {
+    if (pattern.test(normalizedHaystack)) {
+      return label;
     }
   }
 
@@ -310,6 +333,11 @@ function collectRoleReasons(
   );
   if (disallowedRoleKeyword) {
     reasons.push(`Role family excluded by profile: ${disallowedRoleKeyword}.`);
+  }
+
+  const earlyCareerRole = detectEarlyCareerRole(combinedRole);
+  if (earlyCareerRole) {
+    reasons.push(`Role family excluded by policy: ${earlyCareerRole}.`);
   }
 
   if (isPureJavaRole(job, profile)) {

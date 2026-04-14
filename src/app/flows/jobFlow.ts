@@ -1,12 +1,15 @@
 import { AppError, serializeError } from "../../utils/errors.js";
-import { persistJobAnalysisRecord } from "../../utils/jobPersistence.js";
+import {
+  persistJobAnalysisRecord,
+  persistJobRecommendationRecord,
+} from "../../utils/jobPersistence.js";
 import { shouldBypassWorkplacePolicy } from "../../policy/policyEngine.js";
 import { LINKEDIN_BROWSER_SESSION_OPTIONS, PARSE_VERSION } from "../constants.js";
 import type { AppDeps } from "../deps.js";
 import { persistJobHistory, persistRunArtifact, persistSystemEvent } from "../observability.js";
 
 export async function runJobFlow(
-  mode: "score" | "decide",
+  mode: "score" | "decide" | "explore",
   url: string,
   deps: AppDeps,
   options?: {
@@ -94,6 +97,7 @@ export async function runJobFlow(
 
   let saved;
   let savedDecision;
+  let recommendation = null;
   try {
     const persisted = await persistJobAnalysisRecord({
       prisma: deps.prisma as never,
@@ -110,6 +114,27 @@ export async function runJobFlow(
     });
     saved = persisted.jobPosting;
     savedDecision = persisted.applicationDecision;
+    if (mode === "explore") {
+      recommendation = await persistJobRecommendationRecord({
+        prisma: deps.prisma as never,
+        logger: deps.logger,
+        jobPostingId: saved.id,
+        source: "explore",
+        score: score.totalScore,
+        decision: finalDecision,
+        policyAllowed: policy.allowed,
+        summary: finalReasons.join(" "),
+        reasons: finalReasons,
+        details: {
+          breakdown: score.breakdown,
+          parseVersion: PARSE_VERSION,
+          aiAdjustment: score.aiAdjustment ?? 0,
+          aiReasoning: score.aiReasoning ?? null,
+          aiConfidence: score.aiConfidence ?? null,
+          scoringSource: score.scoringSource ?? "deterministic",
+        },
+      });
+    }
   } catch (error) {
     await persistSystemEvent(
       {
@@ -180,6 +205,7 @@ export async function runJobFlow(
     finalDecision,
     finalReasons,
     applicationDecision: savedDecision,
+    ...(recommendation ? { recommendation } : {}),
   };
 
   const reportPath = await persistRunArtifact({

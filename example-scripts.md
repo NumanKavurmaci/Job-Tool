@@ -132,6 +132,33 @@ try {
 '@ | npx tsx -
 ```
 
+## Explore Batch
+
+Evaluate a LinkedIn collection and save recommendations only:
+
+```powershell
+$env:LLM_PROVIDER='local'
+$env:LOCAL_LLM_BASE_URL='http://127.0.0.1:1234/v1'
+$env:LOCAL_LLM_MODEL='openai/gpt-oss-20b'
+@'
+import { main, appDeps } from "./src/index.ts";
+try {
+  const result = await main([
+    "explore-batch",
+    "https://www.linkedin.com/jobs/collections/top-applicant",
+    "--count",
+    "50",
+    "--score-threshold",
+    "45",
+    "--ai-score-adjustment",
+  ], appDeps);
+  console.log(JSON.stringify(result, null, 2));
+} finally {
+  await appDeps.prisma.$disconnect();
+}
+'@ | npx tsx -
+```
+
 ## Notes
 
 - `easy-apply-dry-run` can be used with a single job URL or a collection URL.

@@ -26,6 +26,9 @@ function createDeps() {
         create: vi.fn().mockResolvedValue({ id: "decision_1" }),
         findMany: vi.fn().mockResolvedValue([]),
       },
+      jobRecommendation: {
+        upsert: vi.fn().mockResolvedValue({ id: "recommendation_1" }),
+      },
       jobReviewHistory: {
         findFirst: vi.fn(),
         create: vi.fn().mockResolvedValue({}),
@@ -444,6 +447,61 @@ describe("app flow helpers", () => {
         message: "Batch job evaluation completed.",
         jobUrl: "https://example.com/job",
         detailsJson: expect.stringContaining("\"applicationType\":null"),
+      }),
+    });
+  });
+
+  it("persists recommendations when the evaluator is used by explore mode", async () => {
+    const deps = createDeps();
+    deps.prisma.jobReviewHistory.findFirst.mockResolvedValue(null);
+    deps.extractJobText.mockResolvedValue({
+      rawText: "raw",
+      title: "Job",
+      company: "Acme",
+      companyLogoUrl: null,
+      companyLinkedinUrl: null,
+      location: "Remote",
+      platform: "linkedin",
+      applicationType: "easy_apply",
+    });
+    deps.formatJobForLLM.mockReturnValue("prompt");
+    deps.parseJob.mockResolvedValue({ parsed: { title: "Job" } });
+    deps.normalizeParsedJob.mockReturnValue({ platform: "linkedin" });
+    deps.scoreJob.mockReturnValue({ totalScore: 81 });
+    deps.evaluatePolicy.mockReturnValue({ allowed: true, reasons: [] });
+
+    const evaluate = createBatchJobEvaluator({
+      disableAiEvaluation: false,
+      scoreThreshold: 60,
+      useAiScoreAdjustment: false,
+      source: "explore-batch",
+      systemScope: "explore.batch",
+      persistRecommendations: true,
+      scoringProfile: {} as any,
+      evaluationPage: { fake: true } as any,
+      deps,
+    });
+
+    await evaluate("https://example.com/job");
+
+    expect(deps.prisma.jobRecommendation.upsert).toHaveBeenCalledWith({
+      where: { jobPostingId: "job_1" },
+      update: expect.objectContaining({
+        source: "explore-batch",
+        score: 81,
+        decision: "APPLY",
+      }),
+      create: expect.objectContaining({
+        jobPostingId: "job_1",
+        source: "explore-batch",
+        score: 81,
+        decision: "APPLY",
+      }),
+    });
+    expect(deps.prisma.systemLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        scope: "explore.batch",
+        message: "Batch job context extracted.",
       }),
     });
   });

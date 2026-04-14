@@ -23,10 +23,29 @@ import {
   runBuildProfileFlow,
 } from "./flows/profileFlows.js";
 import { persistSystemEvent } from "./observability.js";
+import { runExploreBatchFlow } from "./flows/exploreFlows.js";
 
 function renderCliSummary(
   result: Awaited<ReturnType<typeof main>>,
 ): string | null {
+  if ("explore" in result) {
+    return (
+      [
+        "Explore batch finished",
+        `Status: ${result.explore.status}`,
+        `Requested: ${result.explore.requestedCount}`,
+        `Evaluated: ${result.explore.evaluatedCount}`,
+        `Recommended: ${result.explore.recommendedCount}`,
+        `Skipped: ${result.explore.skippedCount}`,
+        `Pages visited: ${result.explore.pagesVisited}`,
+        `Reason: ${result.explore.stopReason}`,
+        ...("reportPath" in result && typeof result.reportPath === "string"
+          ? [`Report: ${result.reportPath}`]
+          : []),
+      ].join("\n") + "\n"
+    );
+  }
+
   if (!("easyApply" in result)) {
     return null;
   }
@@ -119,6 +138,8 @@ export async function main(
     result = args.dryRun
       ? await runExternalApplyDryRunFlow(args, deps)
       : await runExternalApplyFlow(args, deps);
+  } else if (args.mode === "explore-batch") {
+    result = await runExploreBatchFlow(args, deps);
   } else {
     result = await runJobFlow(args.mode, args.url, deps, {
       useAiScoreAdjustment: args.useAiScoreAdjustment,

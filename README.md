@@ -9,6 +9,7 @@ It can:
 - extract job data from supported platforms
 - parse job descriptions with OpenAI or LM Studio
 - score jobs against a candidate profile
+- explore LinkedIn collections and save AI-backed recommendations without applying
 - prepare reusable answers for application questions
 - evaluate LinkedIn jobs before attempting them
 - walk through LinkedIn Easy Apply and external application flows without blindly submitting
@@ -34,6 +35,8 @@ That lets the system decide whether a role is a fit, prepare safe answers, and o
 - site-feedback capture from LinkedIn and external application flows
 - AI fallback for unresolved questions
 - AI-guided one-shot correction retries when a site rejects a field value
+- `explore` mode for single-job recommendation snapshots
+- `explore-batch` mode for collection-based recommendation discovery
 - `easy-apply` mode for native LinkedIn Easy Apply only
 - `apply` mode for LinkedIn apply plus optional external continuation
 - Prisma + SQLite persistence
@@ -71,6 +74,8 @@ npm run dev -- decide "https://job-link-here"
 
 ```bash
 npm run dev -- decide "https://job-link-here"
+npm run dev -- explore "https://job-link-here"
+npm run dev -- explore-batch "https://www.linkedin.com/jobs/collections/top-applicant" --count 25
 npm run dev -- score "https://job-link-here"
 npm run dev -- build-profile --resume "./cv.pdf" --linkedin "https://linkedin.com/in/your-handle"
 npm run dev -- answer-questions --resume "./cv.pdf" --questions "./questions.json"
@@ -90,6 +95,10 @@ npm run dev -- external-apply "https://example.com/apply"
 
 `easy-apply` means LinkedIn Easy Apply only.
 
+`explore` evaluates one job and saves a recommendation snapshot without entering any apply flow.
+
+`explore-batch` evaluates jobs from a LinkedIn collection, saves recommendation records in the database, and never enters Easy Apply or external apply flows.
+
 `easy-apply-batch` is the Easy Apply-only batch command and defaults to [LinkedIn Easy Apply jobs](https://www.linkedin.com/jobs/collections/easy-apply) when no URL is provided.
 
 `apply` is the all-apply surface for LinkedIn jobs. It can detect external handoff cases, continue into the external site, capture site feedback, and retry one corrected value when the site rejects an answer.
@@ -100,6 +109,11 @@ All batch commands support:
 - `--count <number>` to control how many approved jobs are processed
 - `--score-threshold <number>` to control the minimum score required before a job is attempted
 - `--disable-ai-evaluation` to skip pre-application AI evaluation and process matching jobs directly
+
+`explore-batch` uses:
+- `--count <number>` to control how many jobs are evaluated
+- `--score-threshold <number>` to control which jobs become recommendations
+- `--disable-ai-evaluation` to bypass extraction/scoring and mark each discovered job as recommended
 
 `external-apply --dry-run` discovers the page, plans answers, fills what it can, captures site feedback, and stops before the terminal submission.
 

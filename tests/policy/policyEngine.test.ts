@@ -445,6 +445,47 @@ describe("evaluatePolicy", () => {
     expect(result.reasons).toContain("Role family excluded by profile: ios.");
   });
 
+  it("rejects internship roles even when the profile does not mention them", () => {
+    const result = evaluatePolicy(
+      makeJob({
+        title: "Software Engineer Intern",
+        seniority: "internship",
+        platform: "linkedin",
+        applicationType: "easy_apply",
+      }),
+      profile,
+    );
+
+    expect(result.allowed).toBe(false);
+    expect(result.reasons).toContain("Role family excluded by policy: internship.");
+  });
+
+  it("rejects bootcamp and trainee-style programs", () => {
+    const bootcampResult = evaluatePolicy(
+      makeJob({
+        title: "A!Tech Bootcamp",
+        seniority: "entry-level",
+        platform: "linkedin",
+        applicationType: "easy_apply",
+      }),
+      profile,
+    );
+    const traineeResult = evaluatePolicy(
+      makeJob({
+        title: "Backend Engineer",
+        seniority: "trainee",
+        platform: "linkedin",
+        applicationType: "easy_apply",
+      }),
+      profile,
+    );
+
+    expect(bootcampResult.allowed).toBe(false);
+    expect(bootcampResult.reasons).toContain("Role family excluded by policy: bootcamp.");
+    expect(traineeResult.allowed).toBe(false);
+    expect(traineeResult.reasons).toContain("Role family excluded by policy: trainee.");
+  });
+
   it("rejects pure Java roles without target stack overlap", () => {
     const result = evaluatePolicy(
       makeJob({
@@ -480,6 +521,23 @@ describe("evaluatePolicy", () => {
       result.reasons.some((reason) =>
         reason.includes("pure Java role without target stack overlap"),
       ),
+    ).toBe(false);
+  });
+
+  it("does not block regular mid-level backend roles", () => {
+    const result = evaluatePolicy(
+      makeJob({
+        title: "Backend Engineer",
+        seniority: "mid",
+        platform: "linkedin",
+        applicationType: "easy_apply",
+      }),
+      profile,
+    );
+
+    expect(result.allowed).toBe(true);
+    expect(
+      result.reasons.some((reason) => reason.startsWith("Role family excluded by policy:")),
     ).toBe(false);
   });
 

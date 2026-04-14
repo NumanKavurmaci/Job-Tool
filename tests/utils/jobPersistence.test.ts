@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   persistDetectedAppliedJobRecord,
   persistJobAnalysisRecord,
+  persistJobRecommendationRecord,
 } from "../../src/utils/jobPersistence.js";
 
 function createArgs() {
@@ -21,6 +22,9 @@ function createArgs() {
         { id: "decision_2", decision: "SKIP", jobPostingId: "job_2" },
         { id: "decision_1", decision: "SKIP", jobPostingId: "job_1" },
       ]),
+    },
+    jobRecommendation: {
+      upsert: vi.fn().mockResolvedValue({ id: "recommendation_1" }),
     },
   };
 
@@ -188,5 +192,40 @@ describe("job persistence", () => {
       }),
     });
     expect(args.prisma.firm.update).toHaveBeenCalled();
+  });
+
+  it("upserts explore recommendations independently from application decisions", async () => {
+    const args = createArgs();
+
+    const result = await persistJobRecommendationRecord({
+      prisma: args.prisma as never,
+      logger: args.logger as never,
+      jobPostingId: "job_1",
+      source: "explore-batch",
+      score: 82,
+      decision: "APPLY",
+      policyAllowed: true,
+      summary: "Strong fit.",
+      reasons: ["Strong fit."],
+      details: { scoreThreshold: 40 },
+    });
+
+    expect(result).toEqual({ id: "recommendation_1" });
+    expect(args.prisma.jobRecommendation.upsert).toHaveBeenCalledWith({
+      where: { jobPostingId: "job_1" },
+      update: expect.objectContaining({
+        source: "explore-batch",
+        score: 82,
+        decision: "APPLY",
+        recommendationStatus: "RECOMMENDED",
+      }),
+      create: expect.objectContaining({
+        jobPostingId: "job_1",
+        source: "explore-batch",
+        score: 82,
+        decision: "APPLY",
+        recommendationStatus: "RECOMMENDED",
+      }),
+    });
   });
 });

@@ -44,6 +44,7 @@ async function loadIndexModule(readFileMock?: ReturnType<typeof vi.fn>) {
   const writeRunReportMock = vi.fn().mockResolvedValue("artifacts/batch-runs/report.json");
   const upsertMock = vi.fn().mockResolvedValue({ id: "job_1", company: "Adapter Company" });
   const createDecisionMock = vi.fn().mockResolvedValue({ id: "decision_1" });
+  const createRecommendationMock = vi.fn().mockResolvedValue({ id: "recommendation_1" });
   const disconnectMock = vi.fn();
   const infoMock = vi.fn();
   const warnMock = vi.fn();
@@ -85,6 +86,7 @@ async function loadIndexModule(readFileMock?: ReturnType<typeof vi.fn>) {
       writeRunReportMock,
       upsertMock,
       createDecisionMock,
+      createRecommendationMock,
       disconnectMock,
       infoMock,
       warnMock,
@@ -119,6 +121,7 @@ async function loadIndexModule(readFileMock?: ReturnType<typeof vi.fn>) {
         },
         jobPosting: { upsert: upsertMock, count: jobPostingCountMock },
         applicationDecision: { create: createDecisionMock, findMany: findDecisionMock },
+        jobRecommendation: { upsert: createRecommendationMock },
         candidateProfileSnapshot: { create: createSnapshotMock },
         preparedAnswerSet: { create: createPreparedAnswerSetMock },
         systemLog: { create: createSystemLogMock },
@@ -1706,6 +1709,326 @@ describe("phase 5 index flows", () => {
         category: "job-runs",
         prefix: "decide",
       }),
+    );
+  });
+
+  it("runs explore-batch without entering any apply flow and persists recommendations", async () => {
+    const { module, mocks, deps } = await loadIndexModule();
+    mocks.loadCandidateProfileMock.mockResolvedValue({
+      yearsOfExperience: 3,
+      preferredRoles: [],
+      preferredTechStack: [],
+      excludedRoles: [],
+      preferredLocations: [],
+      excludedLocations: [],
+      remotePreference: "remote",
+      remoteOnly: false,
+      visaRequirement: "not-required",
+      languages: [],
+      salaryExpectation: null,
+      salaryExpectations: { usd: null, eur: null, try: null },
+      gpa: null,
+      linkedinUrl: null,
+      workAuthorizationStatus: "authorized",
+      requiresSponsorship: false,
+      willingToRelocate: false,
+      disability: {
+        hasVisualDisability: false,
+        disabilityPercentage: null,
+        requiresAccommodation: null,
+        accommodationNotes: null,
+        disclosurePreference: "manual-review",
+      },
+    });
+    const pageRuntime = mockWithPageSuccess(mocks.withPageMock);
+    mocks.createEasyApplyDriverMock.mockResolvedValue({
+      ensureAuthenticated: vi.fn().mockResolvedValue(undefined),
+      openCollection: vi.fn().mockResolvedValue(undefined),
+      collectVisibleJobs: vi.fn().mockResolvedValue([
+        {
+          url: "https://www.linkedin.com/jobs/view/1",
+          alreadyApplied: false,
+        },
+      ]),
+      goToNextResultsPage: vi.fn().mockResolvedValue(false),
+    });
+    mocks.extractJobTextMock.mockResolvedValue({
+      rawText: "Raw body",
+      title: "Adapter Title",
+      company: "Adapter Company",
+      companyLogoUrl: null,
+      companyLinkedinUrl: null,
+      location: "Remote",
+      platform: "linkedin",
+      applicationType: "easy_apply",
+    });
+    mocks.formatJobForLLMMock.mockReturnValue("Formatted prompt");
+    mocks.parseJobMock.mockResolvedValue({
+      parsed: {
+        title: "Adapter Title",
+        company: "Adapter Company",
+        location: "Remote",
+        platform: "linkedin",
+      },
+      provider: "local",
+      model: "openai/gpt-oss-20b",
+      rawText: "{}",
+    });
+    mocks.normalizeParsedJobMock.mockReturnValue({
+      title: "Adapter Title",
+      company: "Adapter Company",
+      location: "Remote",
+      remoteType: "remote",
+      seniority: "mid",
+      mustHaveSkills: [],
+      niceToHaveSkills: [],
+      technologies: ["TypeScript"],
+      yearsRequired: 3,
+      platform: "linkedin",
+      applicationType: "easy_apply",
+      visaSponsorship: "unknown",
+      workAuthorization: "authorized",
+      openQuestionsCount: 0,
+    });
+    mocks.scoreJobMock.mockReturnValue({
+      totalScore: 78,
+      breakdown: { skill: 30, seniority: 18, location: 15, tech: 15 },
+    });
+    mocks.evaluatePolicyMock.mockReturnValue({ allowed: true, reasons: [] });
+
+    const result = await module.main(
+      [
+        "explore-batch",
+        "https://www.linkedin.com/jobs/collections/top-applicant",
+        "--count",
+        "1",
+      ],
+      deps,
+    );
+
+    expect(result.explore.recommendedCount).toBe(1);
+    expect(result.explore.skippedCount).toBe(0);
+    expect(result.reportPath).toBe("artifacts/batch-runs/report.json");
+    expect(mocks.runEasyApplyBatchMock).not.toHaveBeenCalled();
+    expect(mocks.runEasyApplyBatchDryRunMock).not.toHaveBeenCalled();
+    expect(mocks.createRecommendationMock).toHaveBeenCalled();
+    expect(pageRuntime.newEvaluationPageMock).toHaveBeenCalledTimes(1);
+    expect(mocks.writeRunReportMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: "batch-runs",
+        prefix: "explore-batch",
+      }),
+    );
+  });
+
+  it("keeps explore skippedCount aligned with evaluated non-recommendations only", async () => {
+    const { module, mocks, deps } = await loadIndexModule();
+    mocks.loadCandidateProfileMock.mockResolvedValue({
+      yearsOfExperience: 3,
+      preferredRoles: [],
+      preferredTechStack: [],
+      excludedRoles: [],
+      preferredLocations: [],
+      excludedLocations: [],
+      remotePreference: "remote",
+      remoteOnly: false,
+      visaRequirement: "not-required",
+      languages: [],
+      salaryExpectation: null,
+      salaryExpectations: { usd: null, eur: null, try: null },
+      gpa: null,
+      linkedinUrl: null,
+      workAuthorizationStatus: "authorized",
+      requiresSponsorship: false,
+      willingToRelocate: false,
+      disability: {
+        hasVisualDisability: false,
+        disabilityPercentage: null,
+        requiresAccommodation: null,
+        accommodationNotes: null,
+        disclosurePreference: "manual-review",
+      },
+    });
+    mockWithPageSuccess(mocks.withPageMock);
+    mocks.createEasyApplyDriverMock.mockResolvedValue({
+      ensureAuthenticated: vi.fn().mockResolvedValue(undefined),
+      openCollection: vi.fn().mockResolvedValue(undefined),
+      collectVisibleJobs: vi.fn().mockResolvedValue([
+        { url: "https://www.linkedin.com/jobs/view/1", alreadyApplied: true },
+        { url: "https://www.linkedin.com/jobs/view/2", alreadyApplied: false },
+      ]),
+      goToNextResultsPage: vi.fn().mockResolvedValue(false),
+    });
+    mocks.extractJobTextMock.mockResolvedValue({
+      rawText: "Raw body",
+      title: "Adapter Title",
+      company: "Adapter Company",
+      companyLogoUrl: null,
+      companyLinkedinUrl: null,
+      location: "Remote",
+      platform: "linkedin",
+      applicationType: "easy_apply",
+    });
+    mocks.formatJobForLLMMock.mockReturnValue("Formatted prompt");
+    mocks.parseJobMock.mockResolvedValue({
+      parsed: {
+        title: "Adapter Title",
+        company: "Adapter Company",
+        location: "Remote",
+        platform: "linkedin",
+      },
+      provider: "local",
+      model: "openai/gpt-oss-20b",
+      rawText: "{}",
+    });
+    mocks.normalizeParsedJobMock.mockReturnValue({
+      title: "Adapter Title",
+      company: "Adapter Company",
+      location: "Remote",
+      remoteType: "remote",
+      seniority: "mid",
+      mustHaveSkills: [],
+      niceToHaveSkills: [],
+      technologies: ["TypeScript"],
+      yearsRequired: 3,
+      platform: "linkedin",
+      applicationType: "easy_apply",
+      visaSponsorship: "unknown",
+      workAuthorization: "authorized",
+      openQuestionsCount: 0,
+    });
+    mocks.scoreJobMock.mockReturnValue({
+      totalScore: 20,
+      breakdown: { skill: 10, seniority: 10 },
+    });
+    mocks.evaluatePolicyMock.mockReturnValue({ allowed: true, reasons: [] });
+
+    const result = await module.main(
+      [
+        "explore-batch",
+        "https://www.linkedin.com/jobs/collections/top-applicant",
+        "--count",
+        "1",
+      ],
+      deps,
+    );
+
+    expect(result.explore.evaluatedCount).toBe(1);
+    expect(result.explore.recommendedCount).toBe(0);
+    expect(result.explore.skippedCount).toBe(1);
+  });
+
+  it("continues explore-batch when one job evaluation fails", async () => {
+    const { module, mocks, deps } = await loadIndexModule();
+    mocks.loadCandidateProfileMock.mockResolvedValue({
+      yearsOfExperience: 3,
+      preferredRoles: [],
+      preferredTechStack: [],
+      excludedRoles: [],
+      preferredLocations: [],
+      excludedLocations: [],
+      remotePreference: "remote",
+      remoteOnly: false,
+      visaRequirement: "not-required",
+      languages: [],
+      salaryExpectation: null,
+      salaryExpectations: { usd: null, eur: null, try: null },
+      gpa: null,
+      linkedinUrl: null,
+      workAuthorizationStatus: "authorized",
+      requiresSponsorship: false,
+      willingToRelocate: false,
+      disability: {
+        hasVisualDisability: false,
+        disabilityPercentage: null,
+        requiresAccommodation: null,
+        accommodationNotes: null,
+        disclosurePreference: "manual-review",
+      },
+    });
+    mockWithPageSuccess(mocks.withPageMock);
+
+    let invocation = 0;
+    mocks.createEasyApplyDriverMock.mockResolvedValue({
+      ensureAuthenticated: vi.fn().mockResolvedValue(undefined),
+      openCollection: vi.fn().mockResolvedValue(undefined),
+      collectVisibleJobs: vi.fn().mockResolvedValue([
+        { url: "https://www.linkedin.com/jobs/view/1", alreadyApplied: false },
+        { url: "https://www.linkedin.com/jobs/view/2", alreadyApplied: false },
+      ]),
+      goToNextResultsPage: vi.fn().mockResolvedValue(false),
+    });
+    mocks.extractJobTextMock.mockImplementation(async () => {
+      invocation += 1;
+      if (invocation === 1) {
+        throw new Error("Local LLM request timed out after 120000ms.");
+      }
+
+      return {
+        rawText: "Raw body",
+        title: "Adapter Title",
+        company: "Adapter Company",
+        companyLogoUrl: null,
+        companyLinkedinUrl: null,
+        location: "Remote",
+        platform: "linkedin",
+        applicationType: "easy_apply",
+      };
+    });
+    mocks.formatJobForLLMMock.mockReturnValue("Formatted prompt");
+    mocks.parseJobMock.mockResolvedValue({
+      parsed: {
+        title: "Adapter Title",
+        company: "Adapter Company",
+        location: "Remote",
+        platform: "linkedin",
+      },
+      provider: "local",
+      model: "openai/gpt-oss-20b",
+      rawText: "{}",
+    });
+    mocks.normalizeParsedJobMock.mockReturnValue({
+      title: "Adapter Title",
+      company: "Adapter Company",
+      location: "Remote",
+      remoteType: "remote",
+      seniority: "mid",
+      mustHaveSkills: [],
+      niceToHaveSkills: [],
+      technologies: ["TypeScript"],
+      yearsRequired: 3,
+      platform: "linkedin",
+      applicationType: "easy_apply",
+      visaSponsorship: "unknown",
+      workAuthorization: "authorized",
+      openQuestionsCount: 0,
+    });
+    mocks.scoreJobMock.mockReturnValue({
+      totalScore: 44,
+      breakdown: { skill: 22, seniority: 22 },
+    });
+    mocks.evaluatePolicyMock.mockReturnValue({ allowed: true, reasons: [] });
+
+    const result = await module.main(
+      [
+        "explore-batch",
+        "https://www.linkedin.com/jobs/collections/top-applicant",
+        "--count",
+        "2",
+      ],
+      deps,
+    );
+
+    expect(result.explore.evaluatedCount).toBe(2);
+    expect(result.explore.recommendedCount).toBe(1);
+    expect(result.explore.failedCount).toBe(1);
+    expect(result.explore.jobs[0]?.evaluation.reason).toContain("Job evaluation failed:");
+    expect(result.explore.jobs[1]?.evaluation.finalDecision).toBe("APPLY");
+    expect(mocks.warnMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: "https://www.linkedin.com/jobs/view/1",
+      }),
+      "Explore batch evaluation failed for job",
     );
   });
 

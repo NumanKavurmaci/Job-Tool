@@ -7,10 +7,18 @@ import {
 } from "./constants.js";
 
 export type CliArgs =
-  | { mode: "score" | "decide"; url: string; useAiScoreAdjustment: boolean }
+  | { mode: "score" | "decide" | "explore"; url: string; useAiScoreAdjustment: boolean }
   | { mode: "easy-apply"; url: string; resumePath: string; dryRun?: boolean }
   | { mode: "apply"; url: string; resumePath: string; dryRun?: boolean }
   | { mode: "external-apply"; url: string; resumePath: string; dryRun?: boolean }
+  | {
+      mode: "explore-batch";
+      url: string;
+      count: number;
+      disableAiEvaluation: boolean;
+      scoreThreshold: number;
+      useAiScoreAdjustment: boolean;
+    }
   | {
       mode: "easy-apply-batch";
       url: string;
@@ -109,7 +117,7 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
 
   if (!first) {
     throw new Error(
-      'Usage: npm run dev -- <job-url> | npm run dev -- score "<job-url>" | npm run dev -- decide "<job-url>" | npm run dev -- build-profile --resume "./cv.pdf" --linkedin "https://linkedin.com/in/..." | npm run dev -- answer-questions --resume "./cv.pdf" --linkedin "https://linkedin.com/in/..." --questions "./questions.json" | npm run dev -- easy-apply "<linkedin-job-url>" --dry-run | npm run dev -- apply "<linkedin-job-or-collection-url>" --dry-run --count 3 | npm run dev -- external-apply "<external-application-url>" --dry-run',
+      'Usage: npm run dev -- <job-url> | npm run dev -- score "<job-url>" | npm run dev -- decide "<job-url>" | npm run dev -- explore "<job-url>" | npm run dev -- explore-batch "<linkedin-collection-url>" --count 25 | npm run dev -- build-profile --resume "./cv.pdf" --linkedin "https://linkedin.com/in/..." | npm run dev -- answer-questions --resume "./cv.pdf" --linkedin "https://linkedin.com/in/..." --questions "./questions.json" | npm run dev -- easy-apply "<linkedin-job-url>" --dry-run | npm run dev -- apply "<linkedin-job-or-collection-url>" --dry-run --count 3 | npm run dev -- external-apply "<external-application-url>" --dry-run',
     );
   }
 
@@ -136,11 +144,35 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
     if (!questionsPath) {
       throw new Error("--questions is required for answer-questions.");
     }
-    return {
-      mode: "answer-questions",
-      resumePath,
+      return {
+        mode: "answer-questions",
+        resumePath,
       ...(linkedinUrl ? { linkedinUrl } : {}),
       questionsPath,
+    };
+  }
+
+  if (normalizedFirst === "explore-batch") {
+    const positionalArgs = getPositionalTailArgs();
+    const count = getIntegerFlag("--count") ?? 25;
+    const scoreThreshold =
+      getIntegerFlag("--score-threshold") ?? DEFAULT_SCORE_THRESHOLD;
+    const disableAiEvaluation = hasFlag("--disable-ai-evaluation");
+    const url = positionalArgs[0] ?? DEFAULT_LINKEDIN_EASY_APPLY_URL;
+
+    if (!isLinkedInCollectionUrl(url)) {
+      throw new Error(
+        "explore-batch requires a LinkedIn collection URL or the default collection.",
+      );
+    }
+
+    return {
+      mode: "explore-batch",
+      url,
+      count,
+      disableAiEvaluation,
+      scoreThreshold,
+      useAiScoreAdjustment,
     };
   }
 
@@ -378,7 +410,7 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
     };
   }
 
-  if ((first === "score" || first === "decide") && tail[0]) {
+  if ((first === "score" || first === "decide" || first === "explore") && tail[0]) {
     return { mode: first, url: tail[0], useAiScoreAdjustment };
   }
 

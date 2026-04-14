@@ -14,6 +14,11 @@ describe("app cli", () => {
       url: "https://example.com/job",
       useAiScoreAdjustment: false,
     });
+    expect(parseCliArgs(["explore", "https://example.com/job"])).toEqual({
+      mode: "explore",
+      url: "https://example.com/job",
+      useAiScoreAdjustment: false,
+    });
   });
 
   it("defaults a bare URL to decide mode", () => {
@@ -120,6 +125,28 @@ describe("app cli", () => {
     });
   });
 
+  it("parses explore batch commands without any apply or resume arguments", () => {
+    expect(
+      parseCliArgs([
+        "explore-batch",
+        "https://www.linkedin.com/jobs/collections/top-applicant",
+        "--count",
+        "7",
+        "--score-threshold",
+        "65",
+        "--disable-ai-evaluation",
+        "--ai-score-adjustment",
+      ]),
+    ).toEqual({
+      mode: "explore-batch",
+      url: "https://www.linkedin.com/jobs/collections/top-applicant",
+      count: 7,
+      disableAiEvaluation: true,
+      scoreThreshold: 65,
+      useAiScoreAdjustment: true,
+    });
+  });
+
   it("parses LinkedIn apply commands separately from easy-apply", () => {
     expect(parseCliArgs(["apply", "https://www.linkedin.com/jobs/view/1", "--dry-run"])).toEqual({
       mode: "apply",
@@ -170,5 +197,8 @@ describe("app cli", () => {
     expect(() =>
       parseCliArgs(["easy-apply-batch", "https://www.linkedin.com/jobs/view/1"]),
     ).toThrow("easy-apply-batch requires a LinkedIn collection URL or the default collection.");
+    expect(() =>
+      parseCliArgs(["explore-batch", "https://www.linkedin.com/jobs/view/1"]),
+    ).toThrow("explore-batch requires a LinkedIn collection URL or the default collection.");
   });
 });
