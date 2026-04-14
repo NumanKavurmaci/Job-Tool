@@ -10,7 +10,7 @@ It helps you:
 - ✍️ prepare answers for application questions
 - 🛡️ automate LinkedIn and external apply flows with safety gates
 
-> This repository is proprietary and not licensed for public or commercial use. See [PROPRIETARY.md](./PROPRIETARY.md).
+> Source-available under the [PolyForm Noncommercial 1.0.0](./LICENSE) license. Personal and non-commercial use are allowed. Commercial use is not allowed.
 
 ## ✨ What It Does
 
@@ -171,3 +171,9 @@ The docs in [docs/README.md](./docs/README.md) are the source of truth for navig
 - [docs/TASK_GUIDE.md](./docs/TASK_GUIDE.md)
 - [docs/TEST_FILE_MAP.md](./docs/TEST_FILE_MAP.md)
 - [docs/PRISMA_FILE_MAP.md](./docs/PRISMA_FILE_MAP.md)
+
+## 📄 License
+
+This project is source-available under the [PolyForm Noncommercial 1.0.0](./LICENSE) license.
+You can inspect, study, and use it for personal or other non-commercial purposes.
+Commercial use is not permitted without separate permission from the copyright holder.
