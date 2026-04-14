@@ -1,76 +1,72 @@
 # Job Tool
 
-Job Tool is a TypeScript project for evaluating jobs, preparing applications, and automating LinkedIn application workflows with strong safety checks.
+🚀 `Job Tool` is a TypeScript-powered job evaluation and application workflow engine.
 
-This repository is proprietary and not licensed for public or commercial use; see [PROPRIETARY.md](./PROPRIETARY.md).
+It helps you:
 
-It can:
+- 🔎 read and parse job postings
+- 🧠 score jobs against a reusable candidate profile
+- ⭐ explore LinkedIn collections and save recommendations
+- ✍️ prepare answers for application questions
+- 🛡️ automate LinkedIn and external apply flows with safety gates
 
-- extract job data from supported platforms
-- parse job descriptions with OpenAI or LM Studio
-- score jobs against a candidate profile
-- explore LinkedIn collections and save AI-backed recommendations without applying
-- prepare reusable answers for application questions
-- evaluate LinkedIn jobs before attempting them
-- walk through LinkedIn Easy Apply and external application flows without blindly submitting
+> This repository is proprietary and not licensed for public or commercial use. See [PROPRIETARY.md](./PROPRIETARY.md).
 
-## Core Idea
+## ✨ What It Does
 
-The project combines three main inputs:
+Job Tool combines three inputs:
 
-- job postings
+- job posting data
 - a reusable candidate profile
-- resume-based candidate data
+- resume-based candidate information
 
-That lets the system decide whether a role is a fit, prepare safe answers, and only attempt applications that pass the configured gates.
+That lets the system decide whether a role is a fit, explain why, prepare application answers, and only continue when the configured rules allow it.
 
-## Main Features
+## 🧩 Highlights
 
 - adapter-based job extraction
 - OpenAI and local LM Studio support
-- user-profile-based scoring and policy rules
+- profile-aware scoring and policy filtering
 - resume ingestion and candidate master profile building
 - LinkedIn Easy Apply question classification and answer preparation
 - external application discovery, answer planning, and form filling
-- site-feedback capture from LinkedIn and external application flows
-- AI fallback for unresolved questions
-- AI-guided one-shot correction retries when a site rejects a field value
+- site-feedback capture and one-shot AI correction retries
 - `explore` mode for single-job recommendation snapshots
 - `explore-batch` mode for collection-based recommendation discovery
-- `easy-apply` mode for native LinkedIn Easy Apply only
+- `easy-apply` mode for LinkedIn Easy Apply only
 - `apply` mode for LinkedIn apply plus optional external continuation
 - Prisma + SQLite persistence
-- JSON artifacts, structured logs, and review-history tracking
-- automated tests with coverage enforcement
+- structured logs, JSON artifacts, and review history tracking
+- test coverage with focused local and integration checks
 
-## Quick Start
+## 🛠️ Quick Start
 
-1. Install dependencies:
+### 1. Install dependencies
 
 ```bash
 npm install
 ```
 
-2. Copy and fill your environment file:
+### 2. Create your local environment file
 
 ```bash
 cp .env.example .env
 ```
 
-3. Generate Prisma client and apply the database schema:
+### 3. Generate Prisma client and apply the schema
 
 ```bash
 npx prisma generate
 npx prisma migrate dev
 ```
 
-4. Run the project:
+### 4. Run a first command
 
 ```bash
 npm run dev -- decide "https://job-link-here"
 ```
 
-## Common Commands
+## ⚡ Common Commands
 
 ```bash
 npm run dev -- decide "https://job-link-here"
@@ -91,48 +87,47 @@ npm run dev -- external-apply "https://example.com/apply" --dry-run
 npm run dev -- external-apply "https://example.com/apply"
 ```
 
-## Command Semantics
+## 🧠 Command Guide
 
-`easy-apply` means LinkedIn Easy Apply only.
+- `easy-apply`: LinkedIn Easy Apply only
+- `explore`: evaluates one job and saves a recommendation snapshot without applying
+- `explore-batch`: evaluates jobs from a LinkedIn collection and saves recommendation records without entering any apply flow
+- `easy-apply-batch`: Easy Apply-only batch mode; defaults to [LinkedIn Easy Apply jobs](https://www.linkedin.com/jobs/collections/easy-apply) if no URL is provided
+- `apply`: LinkedIn apply flow with optional external continuation
+- `apply-batch`: batch version of the full LinkedIn apply flow
 
-`explore` evaluates one job and saves a recommendation snapshot without entering any apply flow.
+### Batch flags
 
-`explore-batch` evaluates jobs from a LinkedIn collection, saves recommendation records in the database, and never enters Easy Apply or external apply flows.
+- `--count <number>` controls how many jobs are processed
+- `--score-threshold <number>` controls the minimum score required
+- `--disable-ai-evaluation` skips AI evaluation and processes matching jobs directly
 
-`easy-apply-batch` is the Easy Apply-only batch command and defaults to [LinkedIn Easy Apply jobs](https://www.linkedin.com/jobs/collections/easy-apply) when no URL is provided.
+### Explore flags
 
-`apply` is the all-apply surface for LinkedIn jobs. It can detect external handoff cases, continue into the external site, capture site feedback, and retry one corrected value when the site rejects an answer.
+- `--count <number>` controls how many jobs are evaluated
+- `--score-threshold <number>` controls which jobs become recommendations
+- `--disable-ai-evaluation` marks discovered jobs as recommended without extraction/scoring
 
-`apply-batch` is the all-apply batch command for LinkedIn collection URLs.
+### External apply behavior
 
-All batch commands support:
-- `--count <number>` to control how many approved jobs are processed
-- `--score-threshold <number>` to control the minimum score required before a job is attempted
-- `--disable-ai-evaluation` to skip pre-application AI evaluation and process matching jobs directly
+- `external-apply --dry-run` explores the site, plans answers, fills what it can, captures feedback, and stops before final submit
+- `external-apply` follows the same flow but may trigger the final submit action when the form is ready
 
-`explore-batch` uses:
-- `--count <number>` to control how many jobs are evaluated
-- `--score-threshold <number>` to control which jobs become recommendations
-- `--disable-ai-evaluation` to bypass extraction/scoring and mark each discovered job as recommended
+### Legacy aliases
 
-`external-apply --dry-run` discovers the page, plans answers, fills what it can, captures site feedback, and stops before the terminal submission.
-
-`external-apply` runs the same flow but is allowed to trigger the final external form submit action when the page reaches a submit step.
-
-Legacy aliases still parse:
 - `easy-apply-dry-run`
 - `apply-dry-run`
 - `external-apply-dry-run`
 
-## Testing
+## ✅ Testing
 
-Default test suite:
+### Full default suite
 
 ```bash
 npm test
 ```
 
-Focused local checks:
+### Focused local checks
 
 ```bash
 npm run type-check
@@ -141,7 +136,7 @@ npx vitest run tests/external/fill.test.ts
 npx vitest run tests/questions/aiCorrection.test.ts
 ```
 
-Live LM Studio integration tests:
+### Live LM Studio tests
 
 ```bash
 npm run test:local-llm
@@ -149,24 +144,26 @@ npm run test:local-llm
 
 The default suite does not require LM Studio or OpenAI access.
 
-## LinkedIn Notes
+## 🔐 LinkedIn Notes
 
-- The LinkedIn flow uses saved browser session state by default at `.auth/linkedin-session.json`.
-- If LinkedIn shows a checkpoint or security verification page, the run stops with a specific auth error instead of a vague failure.
-- The manual LinkedIn recovery window is configurable with `LINKEDIN_MANUAL_AUTH_WINDOW_MS` and now defaults to 2 minutes.
-- Dry run still stops before the final submit action.
-- Site-visible feedback is captured in run results and can trigger a one-shot AI repair attempt for rejected field values.
+- saved browser session state is used from `.auth/linkedin-session.json`
+- checkpoint or security pages stop the run with a specific auth error
+- `LINKEDIN_MANUAL_AUTH_WINDOW_MS` controls the manual recovery window and defaults to 2 minutes
+- dry run always stops before final submit
+- site-visible feedback can trigger a one-shot AI repair attempt
 
-## Documentation
+## 📚 Documentation
 
-The docs in [docs/README.md](./docs/README.md) are the source of truth for file navigation and responsibility mapping.
+The docs in [docs/README.md](./docs/README.md) are the source of truth for navigation and responsibility mapping.
 
-User-local profile data lives under [user/](./user):
-- [user/profile.example.json](./user/profile.example.json) is the tracked generic starter file
-- `user/profile.json` is the local personal override loaded first when present
-- `user/resume.pdf` or another supported resume file can act as the default resume
+### User-local profile files
 
-AI-first file navigation docs are in:
+- [user/profile.example.json](./user/profile.example.json): tracked starter profile
+- `user/profile.json`: local personal override loaded first when present
+- `user/resume.pdf`: optional default resume file
+
+### AI-first navigation docs
+
 - [docs/README.md](./docs/README.md)
 - [docs/ROOT_FILE_MAP.md](./docs/ROOT_FILE_MAP.md)
 - [docs/SOURCE_FILE_MAP.md](./docs/SOURCE_FILE_MAP.md)
