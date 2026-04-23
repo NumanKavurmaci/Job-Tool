@@ -452,6 +452,45 @@ describe("normalizeParsedJob", () => {
     expect(result.remoteType).toBe(expected);
   });
 
+  it("prefers hybrid when the body also contains a negative remote disclaimer", () => {
+    const result = normalizeParsedJob(
+      {
+        title: "Full Stack Engineer",
+        company: "CEIBA TELE ICU",
+        location: "Istanbul / Maslak",
+        platform: "linkedin",
+        seniority: null,
+        mustHaveSkills: ["TypeScript", "Node.js"],
+        niceToHaveSkills: [],
+        technologies: ["TypeScript", "Node.js"],
+        yearsRequired: 2,
+        remoteType: "remote",
+        visaSponsorship: null,
+        workAuthorization: null,
+      },
+      {
+        rawText: [
+          "Location: Istanbul / Maslak",
+          "Workplace Type: hybrid",
+          "Fully remote work is not available for this role.",
+        ].join("\n"),
+        title: "Full Stack Engineer",
+        company: "CEIBA TELE ICU",
+        location: "Istanbul / Maslak",
+        platform: "linkedin",
+        applicationType: "external",
+        applyUrl: "https://www.linkedin.com/jobs/view/4397794253/",
+        currentUrl: "https://www.linkedin.com/jobs/view/4397794253/",
+        descriptionText:
+          "Workplace Type: hybrid. Fully remote work is not available for this role.",
+        requirementsText: "TypeScript and Node.js experience.",
+        benefitsText: null,
+      },
+    );
+
+    expect(result.remoteType).toBe("hybrid");
+  });
+
   it("rounds valid years and discards invalid years", () => {
     const rounded = normalizeParsedJob(
       {

@@ -1062,6 +1062,62 @@ describe("LinkedInAdapter", () => {
     expect(result.requirementsText).toContain("Strong TypeScript experience.");
     expect(result.rawText).toContain("Application Type: external");
   });
+
+  it("does not misclassify external apply jobs as easy apply when similar-job cards contain easy apply badges", async () => {
+    const { LinkedInAdapter } = await import("../../src/adapters/LinkedInAdapter.js");
+    const page = createMockPage({
+      currentUrl: "https://www.linkedin.com/jobs/view/4397794253/",
+      title: "Full Stack Engineer | CEIBA TELE ICU | LinkedIn",
+      selectors: {
+        ".job-details-jobs-unified-top-card__job-title": {
+          text: "Full Stack Engineer",
+        },
+        ".job-details-jobs-unified-top-card__company-name": {
+          text: "CEIBA TELE ICU",
+        },
+        ".job-details-jobs-unified-top-card__bullet": {
+          text: "Istanbul / Maslak",
+        },
+        ".job-details-fit-level-preferences button": {
+          text: "Hybrid",
+        },
+        "a[aria-label*='Apply on company website']": {
+          text: "Apply",
+          attributes: {
+            "aria-label": "Apply on company website",
+            href: "https://www.linkedin.com/safety/go/?url=https%3A%2F%2Fexample.com%2Fapply",
+          },
+        },
+        "[data-testid='expandable-text-box']": {
+          text: [
+            "Work Arrangement:",
+            "Ceiba embraces a hybrid work structure that combines office collaboration with flexibility.",
+            "Fully remote work is not available for this role.",
+            "Employment Type: Hybrid",
+            "Location: Istanbul / Maslak",
+          ].join("\n"),
+        },
+        body: {
+          text: [
+            "Full Stack Engineer",
+            "CEIBA TELE ICU",
+            "Hybrid",
+            "Apply on company website",
+            "Developer n11",
+            "Easy Apply",
+            "Junior Software Test Engineer",
+            "Easy Apply",
+          ].join("\n"),
+        },
+      },
+    });
+
+    const result = await new LinkedInAdapter().extract(page as never, page.url());
+
+    expect(result.location).toBe("Istanbul / Maslak");
+    expect(result.rawText).toContain("Workplace Type: hybrid");
+    expect(result.applicationType).toBe("external");
+  });
 });
 
 describe("GreenhouseAdapter", () => {
@@ -1097,6 +1153,27 @@ describe("GreenhouseAdapter", () => {
     expect(result.descriptionText).toBe("Greenhouse description");
     expect(result.requirementsText).toBe("Node.js, TypeScript");
     expect(result.benefitsText).toBe("Bonus, equity");
+  });
+
+  it("does not match non-greenhouse urls", () => {
+    expect(new GreenhouseAdapter().canHandle("https://company.example.com/jobs/1")).toBe(
+      false,
+    );
+  });
+
+  it("falls back to the page title when greenhouse selectors are missing", async () => {
+    const page = createMockPage({
+      currentUrl: "https://boards.greenhouse.io/company/jobs/2",
+      title: "Fallback Greenhouse Title",
+      selectors: {
+        body: { text: "Greenhouse raw body" },
+      },
+    });
+
+    const result = await new GreenhouseAdapter().extract(page as never, page.url());
+
+    expect(result.title).toBe("Fallback Greenhouse Title");
+    expect(result.applyUrl).toBe("https://boards.greenhouse.io/company/jobs/2");
   });
 });
 
@@ -1134,5 +1211,24 @@ describe("LeverAdapter", () => {
     expect(result.descriptionText).toBe("Lever description");
     expect(result.requirementsText).toBe("Portfolio required");
     expect(result.benefitsText).toBe("Flexible PTO");
+  });
+
+  it("does not match unrelated urls", () => {
+    expect(new LeverAdapter().canHandle("https://company.example.com/jobs/1")).toBe(false);
+  });
+
+  it("falls back to the page title when lever headline selectors are missing", async () => {
+    const page = createMockPage({
+      currentUrl: "https://jobs.lever.co/company/2",
+      title: "Fallback Lever Title",
+      selectors: {
+        body: { text: "Lever raw body" },
+      },
+    });
+
+    const result = await new LeverAdapter().extract(page as never, page.url());
+
+    expect(result.title).toBe("Fallback Lever Title");
+    expect(result.applyUrl).toBe("https://jobs.lever.co/company/2");
   });
 });

@@ -1,13 +1,18 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_CANDIDATE_PROFILE,
   loadCandidateProfile,
 } from "../../src/profile/candidate.js";
 
 describe("candidate profile loader", () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.doUnmock("node:fs/promises");
+  });
+
   it("falls back to the tracked example profile when the local user profile is missing", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "job-tool-profile-"));
     const profile = await loadCandidateProfile(path.join(tempDir, "missing.json"));
@@ -242,5 +247,42 @@ describe("candidate profile loader", () => {
     await writeFile(profilePath, "{invalid json", "utf8");
 
     await expect(loadCandidateProfile(profilePath)).rejects.toThrow();
+  });
+
+  it("returns the internal default profile when both local and example profiles are missing", async () => {
+    const missingError = Object.assign(new Error("missing"), { code: "ENOENT" });
+    const readFileMock = vi
+      .fn()
+      .mockRejectedValueOnce(missingError)
+      .mockRejectedValueOnce(missingError);
+
+    vi.doMock("node:fs/promises", () => ({
+      readFile: readFileMock,
+    }));
+
+    const module = await import("../../src/profile/candidate.js");
+    const result = await module.loadCandidateProfile("C:/missing/profile.json");
+
+    expect(result).toEqual(module.DEFAULT_CANDIDATE_PROFILE);
+    expect(readFileMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("rethrows unexpected example-profile errors during fallback", async () => {
+    const missingError = Object.assign(new Error("missing"), { code: "ENOENT" });
+    const parseError = new Error("broken example");
+    const readFileMock = vi
+      .fn()
+      .mockRejectedValueOnce(missingError)
+      .mockRejectedValueOnce(parseError);
+
+    vi.doMock("node:fs/promises", () => ({
+      readFile: readFileMock,
+    }));
+
+    const module = await import("../../src/profile/candidate.js");
+
+    await expect(module.loadCandidateProfile("C:/missing/profile.json")).rejects.toThrow(
+      "broken example",
+    );
   });
 });

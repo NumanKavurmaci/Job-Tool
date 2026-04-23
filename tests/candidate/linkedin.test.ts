@@ -11,4 +11,14 @@ describe("normalizeLinkedinUrl", () => {
   it("returns null for empty values", () => {
     expect(normalizeLinkedinUrl("   ")).toBeNull();
   });
+
+  it("leaves non-linkedin urls untouched", () => {
+    expect(normalizeLinkedinUrl("https://example.com/profile?id=123")).toBe(
+      "https://example.com/profile?id=123",
+    );
+  });
+
+  it("returns invalid urls as trimmed input", () => {
+    expect(normalizeLinkedinUrl(" not-a-real-url ")).toBe("not-a-real-url");
+  });
 });

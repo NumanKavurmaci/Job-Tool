@@ -112,4 +112,52 @@ describe("generateShortAnswer", () => {
     expect(result.text).toContain("backend");
     expect(completePromptMock).toHaveBeenCalled();
   });
+
+  it("uses the default character limit and unknown placeholders when optional fields are missing", async () => {
+    completePromptMock.mockResolvedValue({
+      text: "x".repeat(400),
+    });
+
+    const { generateShortAnswer } = await import("../../src/materials/generateShortAnswer.js");
+    const result = await generateShortAnswer({
+      question: "Tell us about yourself.",
+      candidateProfile: {
+        fullName: null,
+        email: null,
+        phone: null,
+        location: null,
+        linkedinUrl: null,
+        githubUrl: null,
+        portfolioUrl: null,
+        summary: null,
+        yearsOfExperienceTotal: 0,
+        currentTitle: null,
+        preferredRoles: [],
+        preferredTechStack: [],
+        skills: [],
+        languages: [],
+        workAuthorization: null,
+        requiresSponsorship: null,
+        willingToRelocate: null,
+        remotePreference: "remote",
+        remoteOnly: true,
+        disability: {
+          hasVisualDisability: false,
+          disabilityPercentage: null,
+          requiresAccommodation: null,
+          accommodationNotes: null,
+          disclosurePreference: "manual-review",
+        },
+        education: [],
+        experience: [],
+        projects: [],
+        resumeText: "resume text",
+        sourceMetadata: {},
+      },
+    });
+
+    expect(result.text.length).toBe(280);
+    expect(completePromptMock).toHaveBeenCalledWith(expect.stringContaining("Name: Unknown"));
+    expect(completePromptMock).toHaveBeenCalledWith(expect.stringContaining("Title: Unknown"));
+  });
 });

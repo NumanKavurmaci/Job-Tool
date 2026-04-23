@@ -81,6 +81,23 @@ const LINKEDIN_COMPANY_URL_SELECTORS = [
   "a[href*='linkedin.com/company/'][componentkey]",
   "a[href*='linkedin.com/company/']",
 ];
+const LINKEDIN_EASY_APPLY_SELECTORS = [
+  "button[aria-label*='Easy Apply']",
+  "button[aria-label*='Easy apply']",
+  "a[aria-label*='Easy Apply']",
+  "a[href*='/apply/'][href*='openSDUIApplyFlow=true']",
+  "[data-control-name='jobdetails_topcard_inapply']",
+  "button.jobs-apply-button",
+];
+const LINKEDIN_EXTERNAL_APPLY_SELECTORS = [
+  "a[aria-label*='Apply on company website']",
+  "button[aria-label*='Apply on company website']",
+  "button[aria-label*='company website']",
+  "a[aria-label*='company website']",
+  "button#jobs-apply-button-id[role='link']",
+  "a[href*='linkedin.com/safety/go']",
+  "a[target='_blank'][href*='linkedin.com/safety/go']",
+];
 const LINKEDIN_LOCATION_SELECTORS = [
   ".job-details-jobs-unified-top-card__bullet",
   ".topcard__flavor--bullet",
@@ -458,6 +475,35 @@ async function getTextsBySelectors(page: Page, selectors: string[]): Promise<str
   }
 
   return uniqueText(values);
+}
+
+async function detectLinkedInApplicationType(
+  page: Page,
+  pageBodyText: string,
+): Promise<"easy_apply" | "external" | "unknown"> {
+  const externalSignals = uniqueText([
+    await getTextBySelectors(page, LINKEDIN_EXTERNAL_APPLY_SELECTORS),
+    await getAttributeBySelectors(page, LINKEDIN_EXTERNAL_APPLY_SELECTORS, "aria-label"),
+    await getAttributeBySelectors(page, LINKEDIN_EXTERNAL_APPLY_SELECTORS, "href"),
+  ]).join(" ");
+  if (/company website|external apply|linkedin\.com\/safety\/go/i.test(externalSignals)) {
+    return "external";
+  }
+
+  const easyApplySignals = uniqueText([
+    await getTextBySelectors(page, LINKEDIN_EASY_APPLY_SELECTORS),
+    await getAttributeBySelectors(page, LINKEDIN_EASY_APPLY_SELECTORS, "aria-label"),
+  ]).join(" ");
+  if (/easy apply/i.test(easyApplySignals)) {
+    return "easy_apply";
+  }
+
+  const bodyLower = pageBodyText.toLowerCase();
+  if (bodyLower.includes("company website") || bodyLower.includes("company site")) {
+    return "external";
+  }
+
+  return "unknown";
 }
 
 async function expandLinkedInAboutSection(page: Page): Promise<void> {
@@ -838,28 +884,7 @@ export class LinkedInAdapter implements JobAdapter {
     ]));
     const descriptionText = aboutSections.descriptionText ?? aboutText;
 
-    const easyApplyText = [
-      pageBodyText,
-      await getTextBySelectors(page, [
-        "button[aria-label*='Easy Apply']",
-        "button[aria-label*='Easy apply']",
-        "button.jobs-apply-button",
-        ".jobs-apply-button",
-        "[data-control-name='jobdetails_topcard_inapply']",
-      ]),
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase();
-
-    const bodyLower = pageBodyText.toLowerCase();
-    const applicationType = easyApplyText.includes("easy apply")
-      ? "easy_apply"
-      : bodyLower.includes("company website") ||
-          bodyLower.includes("company site") ||
-          bodyLower.includes("external apply")
-        ? "external"
-        : "unknown";
+    const applicationType = await detectLinkedInApplicationType(page, pageBodyText);
 
     const focusedRawText = compactText(
       [

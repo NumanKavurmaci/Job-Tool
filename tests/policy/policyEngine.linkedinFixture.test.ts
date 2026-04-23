@@ -136,6 +136,7 @@ describe("policyEngine linkedin html regression", () => {
           attributes: { src: companyLogoUrl },
         },
         "a[href*='linkedin.com/jobs/view'] span": { text: "Hybrid\nFull-time" },
+        "button[aria-label*='Easy Apply']": { text: "Easy Apply" },
         "[data-testid='expandable-text-box']": { text: aboutText },
         body: {
           text: [

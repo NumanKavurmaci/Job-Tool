@@ -80,16 +80,14 @@ function inferRemoteTypeFromText(
     return "unknown";
   }
 
-  if (
-    normalized.includes("fully remote") ||
-    normalized.includes("100% remote") ||
-    normalized.includes("work from home") ||
-    normalized.includes("remote-first") ||
-    normalized.includes("remote role") ||
-    normalized.includes("remote position")
-  ) {
-    return "remote";
-  }
+  const hasNegativeRemoteSignal =
+    /fully remote work is not available/.test(normalized) ||
+    /remote work is not available/.test(normalized) ||
+    /this is not a remote role/.test(normalized) ||
+    /not a remote role/.test(normalized) ||
+    /\bnot remote\b/.test(normalized) ||
+    /\bno remote work\b/.test(normalized) ||
+    /\bremote unavailable\b/.test(normalized);
 
   if (normalized.includes("hybrid")) {
     return "hybrid";
@@ -102,6 +100,21 @@ function inferRemoteTypeFromText(
     normalized.includes("office-based")
   ) {
     return "onsite";
+  }
+
+  if (hasNegativeRemoteSignal) {
+    return "unknown";
+  }
+
+  if (
+    normalized.includes("fully remote") ||
+    normalized.includes("100% remote") ||
+    normalized.includes("work from home") ||
+    normalized.includes("remote-first") ||
+    normalized.includes("remote role") ||
+    normalized.includes("remote position")
+  ) {
+    return "remote";
   }
 
   if (normalized.includes("remote")) {

@@ -55,4 +55,23 @@ describe("resolveProvider", () => {
       model: "openai/gpt-oss-20b",
     });
   });
+
+  it("throws for unsupported configured providers", async () => {
+    vi.resetModules();
+    vi.doMock("../../src/config/env.js", () => ({
+      env: {
+        LLM_PROVIDER: "unsupported-provider",
+        OPENAI_MODEL: "gpt-4.1-mini",
+        LOCAL_LLM_MODEL: "openai/gpt-oss-20b",
+      },
+    }));
+    const module = await import("../../src/llm/providers/resolveProvider.js");
+
+    expect(() => module.getConfiguredProviderInfo()).toThrow(
+      "Unsupported LLM provider: unsupported-provider",
+    );
+    expect(() => module.resolveProvider()).toThrow(
+      "Unsupported LLM provider: unsupported-provider",
+    );
+  });
 });
