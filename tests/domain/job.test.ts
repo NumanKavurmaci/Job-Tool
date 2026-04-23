@@ -491,6 +491,55 @@ describe("normalizeParsedJob", () => {
     expect(result.remoteType).toBe("hybrid");
   });
 
+  it("overrides a noisy remote parsed guess when LinkedIn raw text explicitly says hybrid in Istanbul", () => {
+    const result = normalizeParsedJob(
+      {
+        title: "Full Stack Engineer",
+        company: "CEIBA TELE ICU",
+        location: null,
+        platform: "linkedin",
+        seniority: "mid",
+        mustHaveSkills: ["JavaScript", "TypeScript", "Node.js", "Java", "React"],
+        niceToHaveSkills: ["PostgreSQL", "Docker"],
+        technologies: ["JavaScript", "TypeScript", "Node.js", "Java", "React", "AWS"],
+        yearsRequired: 2,
+        remoteType: "remote",
+        visaSponsorship: null,
+        workAuthorization: null,
+      },
+      {
+        rawText: [
+          "Title: Full Stack Engineer",
+          "Company: CEIBA TELE ICU",
+          "Location: Istanbul / Maslak",
+          "Workplace Type: hybrid",
+          "Application Type: easy_apply",
+          "Description:",
+          "Ceiba embraces a hybrid work structure that combines office collaboration with flexibility.",
+          "Fully remote work is not available for this role.",
+          "Employment Type: Hybrid",
+          "Location: Istanbul / Maslak",
+        ].join("\n"),
+        title: "Full Stack Engineer",
+        company: "CEIBA TELE ICU",
+        location: "Istanbul / Maslak",
+        platform: "linkedin",
+        applicationType: "easy_apply",
+        applyUrl: "https://www.linkedin.com/jobs/view/4397794253",
+        currentUrl: "https://www.linkedin.com/jobs/view/4397794253",
+        descriptionText:
+          "Ceiba embraces a hybrid work structure that combines office collaboration with flexibility. Fully remote work is not available for this role.",
+        requirementsText:
+          "Minimum 2 years of full stack development experience. Proficiency in JavaScript and TypeScript.",
+        benefitsText: null,
+      },
+    );
+
+    expect(result.location).toBe("Istanbul / Maslak");
+    expect(result.remoteType).toBe("hybrid");
+    expect(result.applicationType).toBe("easy_apply");
+  });
+
   it("rounds valid years and discards invalid years", () => {
     const rounded = normalizeParsedJob(
       {

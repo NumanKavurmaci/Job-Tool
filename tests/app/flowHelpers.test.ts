@@ -381,6 +381,170 @@ describe("app flow helpers", () => {
     );
   });
 
+  it("re-evaluates previously approved LinkedIn jobs instead of reusing a stale apply decision", async () => {
+    const deps = createDeps();
+    deps.prisma.jobReviewHistory.findFirst.mockResolvedValue({
+      createdAt: new Date("2026-04-23T19:57:51.195Z"),
+      status: "EVALUATED",
+      decision: "APPLY",
+      score: 62,
+      policyAllowed: true,
+    });
+    deps.createEasyApplyDriver.mockResolvedValue({
+      ensureAuthenticated: vi.fn().mockResolvedValue(undefined),
+      open: vi.fn().mockResolvedValue(undefined),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      isAlreadyApplied: vi.fn().mockResolvedValue(false),
+    });
+    deps.extractJobText.mockResolvedValue({
+      rawText: [
+        "Location: Istanbul / Maslak",
+        "Workplace Type: hybrid",
+        "Application Type: easy_apply",
+        "Fully remote work is not available for this role.",
+      ].join("\n"),
+      title: "Full Stack Engineer",
+      company: "CEIBA TELE ICU",
+      companyLogoUrl: null,
+      companyLinkedinUrl: "https://www.linkedin.com/company/ceiba-teleicu/life/",
+      location: "Istanbul / Maslak",
+      platform: "linkedin",
+      applicationType: "easy_apply",
+      applyUrl: "https://www.linkedin.com/jobs/view/4397794253",
+      currentUrl: "https://www.linkedin.com/jobs/view/4397794253",
+      descriptionText:
+        "Ceiba embraces a hybrid work structure. Fully remote work is not available for this role.",
+      requirementsText: "Strong Node.js, JavaScript, and React experience.",
+      benefitsText: null,
+    });
+    deps.formatJobForLLM.mockReturnValue("prompt");
+    deps.parseJob.mockResolvedValue({ parsed: { title: "Full Stack Engineer" } });
+    deps.normalizeParsedJob.mockReturnValue({
+      title: "Full Stack Engineer",
+      company: "CEIBA TELE ICU",
+      location: "Istanbul / Maslak",
+      remoteType: "hybrid",
+      seniority: "mid",
+      mustHaveSkills: ["TypeScript", "Node.js", "React"],
+      niceToHaveSkills: [],
+      technologies: ["TypeScript", "Node.js", "React", "Java"],
+      yearsRequired: 2,
+      platform: "linkedin",
+      applicationType: "easy_apply",
+      visaSponsorship: "unknown",
+      workAuthorization: "unknown",
+      openQuestionsCount: 0,
+    });
+    deps.scoreJob.mockReturnValue({ totalScore: 62 });
+    deps.evaluatePolicy.mockReturnValue({
+      allowed: false,
+      reasons: ["Hybrid roles are only allowed in configured locations."],
+    });
+
+    const evaluate = createBatchJobEvaluator({
+      disableAiEvaluation: false,
+      scoreThreshold: 40,
+      useAiScoreAdjustment: false,
+      scoringProfile: createScoringProfile(),
+      evaluationPage: { fake: true } as any,
+      deps,
+    });
+
+    await expect(
+      evaluate("https://www.linkedin.com/jobs/view/4397794253"),
+    ).resolves.toMatchObject({
+      shouldApply: false,
+      finalDecision: "SKIP",
+      score: 62,
+      policyAllowed: false,
+      reason: "Hybrid roles are only allowed in configured locations.",
+      diagnostics: expect.objectContaining({
+        location: "Istanbul / Maslak",
+        applicationType: "easy_apply",
+      }),
+    });
+    expect(deps.createEasyApplyDriver).not.toHaveBeenCalled();
+    expect(deps.extractJobText).toHaveBeenCalledWith(
+      { fake: true },
+      "https://www.linkedin.com/jobs/view/4397794253",
+    );
+  });
+
+  it("re-evaluates duplicate LinkedIn skips instead of trusting stale remote metadata", async () => {
+    const deps = createDeps();
+    deps.prisma.jobReviewHistory.findFirst.mockResolvedValue({
+      createdAt: new Date("2026-04-23T19:57:51.195Z"),
+      status: "SKIPPED",
+      decision: "SKIP",
+      score: 62,
+      policyAllowed: true,
+    });
+    deps.extractJobText.mockResolvedValue({
+      rawText: [
+        "Location: Istanbul / Maslak",
+        "Workplace Type: hybrid",
+        "Application Type: easy_apply",
+        "Fully remote work is not available for this role.",
+      ].join("\n"),
+      title: "Full Stack Engineer",
+      company: "CEIBA TELE ICU",
+      companyLogoUrl: null,
+      companyLinkedinUrl: "https://www.linkedin.com/company/ceiba-teleicu/life/",
+      location: "Istanbul / Maslak",
+      platform: "linkedin",
+      applicationType: "easy_apply",
+      applyUrl: "https://www.linkedin.com/jobs/view/4397794253",
+      currentUrl: "https://www.linkedin.com/jobs/view/4397794253",
+      descriptionText:
+        "Ceiba embraces a hybrid work structure. Fully remote work is not available for this role.",
+      requirementsText: "Strong Node.js, JavaScript, and React experience.",
+      benefitsText: null,
+    });
+    deps.formatJobForLLM.mockReturnValue("prompt");
+    deps.parseJob.mockResolvedValue({ parsed: { title: "Full Stack Engineer" } });
+    deps.normalizeParsedJob.mockReturnValue({
+      title: "Full Stack Engineer",
+      company: "CEIBA TELE ICU",
+      location: "Istanbul / Maslak",
+      remoteType: "hybrid",
+      seniority: "mid",
+      mustHaveSkills: ["TypeScript", "Node.js", "React"],
+      niceToHaveSkills: [],
+      technologies: ["TypeScript", "Node.js", "React", "Java"],
+      yearsRequired: 2,
+      platform: "linkedin",
+      applicationType: "easy_apply",
+      visaSponsorship: "unknown",
+      workAuthorization: "unknown",
+      openQuestionsCount: 0,
+    });
+    deps.scoreJob.mockReturnValue({ totalScore: 62 });
+    deps.evaluatePolicy.mockReturnValue({
+      allowed: false,
+      reasons: ["Hybrid roles are only allowed in configured locations."],
+    });
+
+    const evaluate = createBatchJobEvaluator({
+      disableAiEvaluation: false,
+      scoreThreshold: 40,
+      useAiScoreAdjustment: false,
+      scoringProfile: createScoringProfile(),
+      evaluationPage: { fake: true } as any,
+      deps,
+    });
+
+    await expect(
+      evaluate("https://www.linkedin.com/jobs/view/4397794253"),
+    ).resolves.toMatchObject({
+      shouldApply: false,
+      finalDecision: "SKIP",
+      policyAllowed: false,
+      reason: "Hybrid roles are only allowed in configured locations.",
+    });
+    expect(deps.extractJobText).toHaveBeenCalledTimes(1);
+    expect(deps.prisma.jobPosting.findUnique).not.toHaveBeenCalled();
+  });
+
   it("evaluates a job on the provided evaluation page with optional AI score adjustment", async () => {
     const deps = createDeps();
     deps.prisma.jobReviewHistory.findFirst.mockResolvedValue(null);

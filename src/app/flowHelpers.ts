@@ -60,6 +60,7 @@ export function createBatchJobEvaluator(args: {
   const deps = args.deps;
   const reviewSource = args.source ?? "easy-apply-batch";
   const systemScope = args.systemScope ?? "linkedin.batch";
+  const isLinkedInJobUrl = (url: string) => /linkedin\.com\/jobs\/view\//i.test(url);
 
   if (args.disableAiEvaluation) {
     return async (_url: string) => ({
@@ -95,8 +96,13 @@ export function createBatchJobEvaluator(args: {
       jobUrl: url,
       logger: deps.logger,
     });
+    const requiresFreshLinkedInEvaluation = isLinkedInJobUrl(url);
 
-    if (latestReview && shouldSkipDuplicateBatchReview(latestReview)) {
+    if (
+      latestReview &&
+      shouldSkipDuplicateBatchReview(latestReview) &&
+      !requiresFreshLinkedInEvaluation
+    ) {
       const existingJobPosting = deps.prisma.jobPosting.findUnique
         ? await deps.prisma.jobPosting.findUnique({
             where: { url },
@@ -148,7 +154,11 @@ export function createBatchJobEvaluator(args: {
       };
     }
 
-    if (latestReview && shouldRetryPendingApprovedReview(latestReview)) {
+    if (
+      latestReview &&
+      shouldRetryPendingApprovedReview(latestReview) &&
+      !requiresFreshLinkedInEvaluation
+    ) {
       const pendingState = await retryApprovedJobIfStillOpen(evaluationPage, url);
 
       if (!pendingState.alreadyApplied && pendingState.easyApplyAvailable) {
