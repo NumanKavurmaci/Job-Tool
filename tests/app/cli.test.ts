@@ -100,6 +100,12 @@ describe("app cli", () => {
       resumePath: expect.any(String),
       dryRun: true,
     });
+    expect(parseCliArgs(["external-apply-dry-run", "https://tally.so/r/31yWVM"])).toEqual({
+      mode: "external-apply",
+      url: "https://tally.so/r/31yWVM",
+      resumePath: expect.any(String),
+      dryRun: true,
+    });
   });
 
   it("parses explicit batch commands for LinkedIn apply flows", () => {

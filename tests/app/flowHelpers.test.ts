@@ -597,22 +597,7 @@ describe("app flow helpers", () => {
         platform: "linkedin",
       }),
     });
-    expect(deps.prisma.systemLog.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        scope: "linkedin.batch",
-        message: "Batch job context extracted.",
-        jobUrl: "https://example.com/job",
-        detailsJson: expect.stringContaining("\"companyInfoRead\":true"),
-      }),
-    });
-    expect(deps.prisma.systemLog.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        scope: "linkedin.batch",
-        message: "Batch job evaluation completed.",
-        jobUrl: "https://example.com/job",
-        detailsJson: expect.stringContaining("\"applicationType\":null"),
-      }),
-    });
+    expect(deps.prisma.systemLog.create).not.toHaveBeenCalled();
   });
 
   it("persists recommendations when the evaluator is used by explore mode", async () => {
@@ -662,12 +647,7 @@ describe("app flow helpers", () => {
         decision: "APPLY",
       }),
     });
-    expect(deps.prisma.systemLog.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        scope: "explore.batch",
-        message: "Batch job context extracted.",
-      }),
-    });
+    expect(deps.prisma.systemLog.create).not.toHaveBeenCalled();
   });
 
   it("allows linkedin external jobs during apply-batch style evaluation", async () => {
@@ -1075,10 +1055,6 @@ describe("app flow helpers", () => {
         applicationType: "easy_apply",
       },
     });
-    expect(deps.prisma.systemLog.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        detailsJson: expect.stringContaining('"location":"Istanbul, Türkiye"'),
-      }),
-    });
+    expect(deps.prisma.systemLog.create).not.toHaveBeenCalled();
   });
 });

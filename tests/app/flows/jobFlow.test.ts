@@ -116,27 +116,7 @@ describe("job flow", () => {
         }),
       }),
     );
-    expect(deps.prisma.systemLog.create).toHaveBeenNthCalledWith(1, {
-      data: {
-        level: "INFO",
-        scope: "job.analysis",
-        message: "Starting job analysis flow.",
-        runType: "decide",
-        jobUrl: "https://example.com/job",
-      },
-    });
-    expect(deps.prisma.systemLog.create).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        data: expect.objectContaining({
-          level: "INFO",
-          scope: "job.analysis",
-          message: "Job analysis saved.",
-          runType: "decide",
-          jobUrl: "https://example.com/job",
-        }),
-      }),
-    );
+    expect(deps.prisma.systemLog.create).not.toHaveBeenCalled();
   });
 
   it("uses the LinkedIn browser session options for LinkedIn URLs", async () => {

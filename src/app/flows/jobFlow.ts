@@ -3,9 +3,9 @@ import {
   persistJobAnalysisRecord,
   persistJobRecommendationRecord,
 } from "../../utils/jobPersistence.js";
-import { shouldBypassWorkplacePolicy } from "../../policy/policyEngine.js";
 import { LINKEDIN_BROWSER_SESSION_OPTIONS, PARSE_VERSION } from "../constants.js";
 import type { AppDeps } from "../deps.js";
+import { analyzeExtractedJob, resolveDecisionOutcome } from "../jobEvaluation.js";
 import { persistJobHistory, persistRunArtifact, persistSystemEvent } from "../observability.js";
 
 export async function runJobFlow(
@@ -37,52 +37,44 @@ export async function runJobFlow(
 
   deps.logger.info(
     {
-      adapterPlatform: extracted.platform,
-      rawTextLength: extracted.rawText.length,
-      title: extracted.title,
-      company: extracted.company,
-      location: extracted.location,
+      diagnostics: {
+        adapterPlatform: extracted.platform,
+        rawTextLength: extracted.rawText.length,
+        title: extracted.title,
+        company: extracted.company,
+        location: extracted.location,
+      },
     },
     "Job content extracted",
   );
 
-  const hasStructuredLocation = Boolean(extracted.location);
-  const llmInput = deps.formatJobForLLM(extracted, {
-    omitLocation: hasStructuredLocation,
+  const analysis = await analyzeExtractedJob({
+    extracted,
+    scoringProfile: profile,
+    deps,
+    ...(options?.useAiScoreAdjustment ? { useAiScoreAdjustment: true } : {}),
   });
-  const parseResult = await deps.parseJob(llmInput, {
-    excludeLocation: hasStructuredLocation,
-  });
-  const parsed = parseResult.parsed;
-  const normalized = deps.normalizeParsedJob(parsed, extracted);
-  const score = options?.useAiScoreAdjustment
-    ? await deps.scoreJobWithAi({
-        job: normalized,
-        profile,
-        completePrompt: deps.completePrompt,
-        logger: deps.logger,
-      })
-    : deps.scoreJob(normalized, profile);
-  const policy = deps.evaluatePolicy(normalized, profile);
+  const parsed = analysis.parsed;
+  const normalized = analysis.normalized;
+  const score = analysis.score;
+  const policy = analysis.policy;
   const decision = deps.decideJob(score);
-  const forceApplyForConfiguredRegion =
-    shouldBypassWorkplacePolicy(normalized, profile) && policy.allowed;
-  const finalDecision =
-    forceApplyForConfiguredRegion ? "APPLY" : policy.allowed ? decision.decision : "SKIP";
-  const finalReasons = forceApplyForConfiguredRegion
-    ? [
-        "Configured workplace-policy bypass matched this job location, so the role was forced to APPLY.",
-      ]
-    : policy.allowed
-      ? [decision.reason]
-      : policy.reasons;
+  const outcome = resolveDecisionOutcome({
+    normalized,
+    scoringProfile: profile,
+    policy,
+    decision,
+    score,
+  });
+  const finalDecision = outcome.finalDecision;
+  const finalReasons = outcome.finalReasons;
 
   deps.logger.info(
     {
       parsed,
       normalized,
-      provider: parseResult.provider,
-      model: parseResult.model,
+      provider: analysis.parseResult.provider,
+      model: analysis.parseResult.model,
     },
     "Job parsed and normalized",
   );

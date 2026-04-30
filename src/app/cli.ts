@@ -51,17 +51,13 @@ export type CliArgs =
       questionsPath: string;
     };
 
+type LinkedInBatchMode = "easy-apply-batch" | "apply-batch" | "explore-batch";
+type LinkedInSingleMode = "easy-apply" | "apply";
+
 export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
   const [first] = args;
   const tail = args.slice(1);
-  const normalizedFirst =
-    first === "easy-apply-dry-run"
-      ? "easy-apply"
-      : first === "apply-dry-run"
-        ? "apply"
-      : first === "external-apply-dry-run"
-        ? "external-apply"
-        : first;
+  const normalizedFirst = normalizeCommandName(first);
   const valueFlags = new Set([
     "--resume",
     "--linkedin",
@@ -153,129 +149,71 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
   }
 
   if (normalizedFirst === "explore-batch") {
-    const positionalArgs = getPositionalTailArgs();
-    const count = getIntegerFlag("--count") ?? 25;
-    const scoreThreshold =
-      getIntegerFlag("--score-threshold") ?? DEFAULT_SCORE_THRESHOLD;
-    const disableAiEvaluation = hasFlag("--disable-ai-evaluation");
-    const url = positionalArgs[0] ?? DEFAULT_LINKEDIN_EASY_APPLY_URL;
-
-    if (!isLinkedInCollectionUrl(url)) {
-      throw new Error(
-        "explore-batch requires a LinkedIn collection URL or the default collection.",
-      );
-    }
-
-    return {
-      mode: "explore-batch",
-      url,
-      count,
-      disableAiEvaluation,
-      scoreThreshold,
+    return parseExploreBatchCommand({
+      positionalArgs: getPositionalTailArgs(),
+      getIntegerFlag,
+      hasFlag,
       useAiScoreAdjustment,
-    };
+    });
   }
 
-  if (normalizedFirst === "easy-apply" && (dryRun || hasFlag("--count") || isLinkedInCollectionUrl(getPositionalTailArgs()[0] ?? DEFAULT_LINKEDIN_EASY_APPLY_URL) || first === "easy-apply-dry-run")) {
-    const resumePath = getFlag("--resume") ?? DEFAULT_RESUME_PATH;
-    const positionalArgs = getPositionalTailArgs();
-    const countFromFlag = getIntegerFlag("--count");
-    const scoreThreshold =
-      getIntegerFlag("--score-threshold") ?? DEFAULT_SCORE_THRESHOLD;
-    const disableAiEvaluation = hasFlag("--disable-ai-evaluation");
-    const trailingPositional = positionalArgs.at(-1);
-    const positionalCount =
-      !countFromFlag && trailingPositional && /^\d+$/.test(trailingPositional)
-        ? Number.parseInt(trailingPositional, 10)
-        : undefined;
-    const count = countFromFlag ?? positionalCount ?? 1;
-    const url =
-      (positionalCount ? positionalArgs.slice(0, -1) : positionalArgs)[0] ??
-      DEFAULT_LINKEDIN_EASY_APPLY_URL;
-    const normalizedUrl = count === 1 ? resolveLinkedInSingleJobUrl(url) : url;
-
-    if (!resumePath) {
-      throw new Error(
-        `--resume is required for easy-apply${dryRun ? " --dry-run" : ""} when no default CV is available.`,
-      );
-    }
-
-    if (isLinkedInCollectionUrl(normalizedUrl) || count > 1) {
-      return {
-        mode: "easy-apply-batch",
-        url: normalizedUrl,
-        resumePath,
-        count,
-        disableAiEvaluation,
-        scoreThreshold,
-        useAiScoreAdjustment,
-        dryRun,
-      };
-    }
-
-    return {
-      mode: "easy-apply",
-      url: normalizedUrl,
-      resumePath,
+  if (
+    normalizedFirst === "easy-apply" &&
+    looksLikeImplicitLinkedInBatch({
       dryRun,
-    };
+      hasCountFlag: hasFlag("--count"),
+      positionalArgs: getPositionalTailArgs(),
+      originalCommand: first,
+    })
+  ) {
+    return parseLinkedInFamilyCommand({
+      family: "easy-apply",
+      resumePath: getRequiredResumePath({
+        requestedMode: "easy-apply",
+        dryRun,
+        getFlag,
+      }),
+      positionalArgs: getPositionalTailArgs(),
+      getIntegerFlag,
+      hasFlag,
+      useAiScoreAdjustment,
+      dryRun,
+    });
   }
 
-  if (normalizedFirst === "apply" && (dryRun || hasFlag("--count") || isLinkedInCollectionUrl(getPositionalTailArgs()[0] ?? DEFAULT_LINKEDIN_EASY_APPLY_URL) || first === "apply-dry-run")) {
-    const resumePath = getFlag("--resume") ?? DEFAULT_RESUME_PATH;
-    const positionalArgs = getPositionalTailArgs();
-    const countFromFlag = getIntegerFlag("--count");
-    const scoreThreshold =
-      getIntegerFlag("--score-threshold") ?? DEFAULT_SCORE_THRESHOLD;
-    const disableAiEvaluation = hasFlag("--disable-ai-evaluation");
-    const trailingPositional = positionalArgs.at(-1);
-    const positionalCount =
-      !countFromFlag && trailingPositional && /^\d+$/.test(trailingPositional)
-        ? Number.parseInt(trailingPositional, 10)
-        : undefined;
-    const count = countFromFlag ?? positionalCount ?? 1;
-    const url =
-      (positionalCount ? positionalArgs.slice(0, -1) : positionalArgs)[0] ??
-      DEFAULT_LINKEDIN_EASY_APPLY_URL;
-    const normalizedUrl = count === 1 ? resolveLinkedInSingleJobUrl(url) : url;
-
-    if (!resumePath) {
-      throw new Error(
-        `--resume is required for apply${dryRun ? " --dry-run" : ""} when no default CV is available.`,
-      );
-    }
-
-    if (isLinkedInCollectionUrl(normalizedUrl) || count > 1) {
-      return {
-        mode: "apply-batch",
-        url: normalizedUrl,
-        resumePath,
-        count,
-        disableAiEvaluation,
-        scoreThreshold,
-        useAiScoreAdjustment,
-        dryRun,
-      };
-    }
-
-    return {
-      mode: "apply",
-      url: normalizedUrl,
-      resumePath,
+  if (
+    normalizedFirst === "apply" &&
+    looksLikeImplicitLinkedInBatch({
       dryRun,
-    };
+      hasCountFlag: hasFlag("--count"),
+      positionalArgs: getPositionalTailArgs(),
+      originalCommand: first,
+    })
+  ) {
+    return parseLinkedInFamilyCommand({
+      family: "apply",
+      resumePath: getRequiredResumePath({
+        requestedMode: "apply",
+        dryRun,
+        getFlag,
+      }),
+      positionalArgs: getPositionalTailArgs(),
+      getIntegerFlag,
+      hasFlag,
+      useAiScoreAdjustment,
+      dryRun,
+    });
   }
 
   if (normalizedFirst === "external-apply") {
-    const resumePath = getFlag("--resume") ?? DEFAULT_RESUME_PATH;
+    const resumePath = getRequiredResumePath({
+      requestedMode: "external-apply",
+      dryRun,
+      getFlag,
+    });
     const positionalArgs = getPositionalTailArgs();
     const url = positionalArgs[0];
 
-    if (!resumePath) {
-      throw new Error(
-        `--resume is required for external-apply${dryRun ? " --dry-run" : ""} when no default CV is available.`,
-      );
-    }
     if (!url) {
       throw new Error("--url is required for external-apply.");
     }
@@ -289,123 +227,67 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
   }
 
   if (normalizedFirst === "apply") {
-    const resumePath = getFlag("--resume") ?? DEFAULT_RESUME_PATH;
-    const positionalArgs = getPositionalTailArgs();
-    const url = positionalArgs[0];
-    const normalizedUrl = url ? resolveLinkedInSingleJobUrl(url) : url;
-    if (!resumePath) {
-      throw new Error(
-        `--resume is required for apply${dryRun ? " --dry-run" : ""} when no default CV is available.`,
-      );
-    }
-    if (!normalizedUrl) {
-      throw new Error("--url is required for apply.");
-    }
-    if (isLinkedInCollectionUrl(normalizedUrl)) {
-      throw new Error(
-        "apply requires a single LinkedIn job URL, not a collection URL.",
-      );
-    }
-    return { mode: "apply", url: normalizedUrl, resumePath, dryRun };
+    return parseExplicitLinkedInSingleCommand({
+      mode: "apply",
+      resumePath: getRequiredResumePath({
+        requestedMode: "apply",
+        dryRun,
+        getFlag,
+      }),
+      positionalArgs: getPositionalTailArgs(),
+      dryRun,
+    });
   }
 
   if (normalizedFirst === "easy-apply") {
-    const resumePath = getFlag("--resume") ?? DEFAULT_RESUME_PATH;
-    const positionalArgs = getPositionalTailArgs();
-    const url = positionalArgs[0];
-    const normalizedUrl = url ? resolveLinkedInSingleJobUrl(url) : url;
-    if (!resumePath) {
-      throw new Error(
-        `--resume is required for easy-apply${dryRun ? " --dry-run" : ""} when no default CV is available.`,
-      );
-    }
-    if (!normalizedUrl) {
-      throw new Error("--url is required for easy-apply.");
-    }
-    if (isLinkedInCollectionUrl(normalizedUrl)) {
-      throw new Error(
-        "easy-apply requires a single LinkedIn job URL, not a collection URL.",
-      );
-    }
-    return { mode: "easy-apply", url: normalizedUrl, resumePath, dryRun };
+    return parseExplicitLinkedInSingleCommand({
+      mode: "easy-apply",
+      resumePath: getRequiredResumePath({
+        requestedMode: "easy-apply",
+        dryRun,
+        getFlag,
+      }),
+      positionalArgs: getPositionalTailArgs(),
+      dryRun,
+    });
   }
 
   if (normalizedFirst === "easy-apply-batch") {
-    const resumePath = getFlag("--resume") ?? DEFAULT_RESUME_PATH;
-    const positionalArgs = getPositionalTailArgs();
-    const countFromFlag = getIntegerFlag("--count");
-    const scoreThreshold =
-      getIntegerFlag("--score-threshold") ?? DEFAULT_SCORE_THRESHOLD;
-    const disableAiEvaluation = hasFlag("--disable-ai-evaluation");
-    const trailingPositional = positionalArgs.at(-1);
-    const positionalCount =
-      !countFromFlag && trailingPositional && /^\d+$/.test(trailingPositional)
-        ? Number.parseInt(trailingPositional, 10)
-        : undefined;
-    const count = countFromFlag ?? positionalCount ?? 1;
-    const url =
-      (positionalCount ? positionalArgs.slice(0, -1) : positionalArgs)[0] ??
-      DEFAULT_LINKEDIN_EASY_APPLY_URL;
-
-    if (!resumePath) {
-      throw new Error(
-        "--resume is required for easy-apply-batch when no default CV is available.",
-      );
-    }
-    if (!isLinkedInCollectionUrl(url)) {
-      throw new Error(
-        "easy-apply-batch requires a LinkedIn collection URL or the default collection.",
-      );
-    }
-
+    const batchOptions = readLinkedInBatchOptions({
+      positionalArgs: getPositionalTailArgs(),
+      getIntegerFlag,
+      hasFlag,
+      useAiScoreAdjustment,
+    });
+    assertLinkedInCollectionMode("easy-apply-batch", batchOptions.url);
     return {
       mode: "easy-apply-batch",
-      url,
-      resumePath,
-      count,
-      disableAiEvaluation,
-      scoreThreshold,
-      useAiScoreAdjustment,
+      ...batchOptions,
+      resumePath: getRequiredResumePath({
+        requestedMode: "easy-apply-batch",
+        dryRun,
+        getFlag,
+      }),
       dryRun,
     };
   }
 
   if (normalizedFirst === "apply-batch") {
-    const resumePath = getFlag("--resume") ?? DEFAULT_RESUME_PATH;
-    const positionalArgs = getPositionalTailArgs();
-    const countFromFlag = getIntegerFlag("--count");
-    const scoreThreshold =
-      getIntegerFlag("--score-threshold") ?? DEFAULT_SCORE_THRESHOLD;
-    const disableAiEvaluation = hasFlag("--disable-ai-evaluation");
-    const trailingPositional = positionalArgs.at(-1);
-    const positionalCount =
-      !countFromFlag && trailingPositional && /^\d+$/.test(trailingPositional)
-        ? Number.parseInt(trailingPositional, 10)
-        : undefined;
-    const count = countFromFlag ?? positionalCount ?? 1;
-    const url =
-      (positionalCount ? positionalArgs.slice(0, -1) : positionalArgs)[0] ??
-      DEFAULT_LINKEDIN_EASY_APPLY_URL;
-
-    if (!resumePath) {
-      throw new Error(
-        "--resume is required for apply-batch when no default CV is available.",
-      );
-    }
-    if (!isLinkedInCollectionUrl(url)) {
-      throw new Error(
-        "apply-batch requires a LinkedIn collection URL or the default collection.",
-      );
-    }
-
+    const batchOptions = readLinkedInBatchOptions({
+      positionalArgs: getPositionalTailArgs(),
+      getIntegerFlag,
+      hasFlag,
+      useAiScoreAdjustment,
+    });
+    assertLinkedInCollectionMode("apply-batch", batchOptions.url);
     return {
       mode: "apply-batch",
-      url,
-      resumePath,
-      count,
-      disableAiEvaluation,
-      scoreThreshold,
-      useAiScoreAdjustment,
+      ...batchOptions,
+      resumePath: getRequiredResumePath({
+        requestedMode: "apply-batch",
+        dryRun,
+        getFlag,
+      }),
       dryRun,
     };
   }
@@ -415,4 +297,162 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
   }
 
   return { mode: "decide", url: first, useAiScoreAdjustment };
+}
+
+function normalizeCommandName(command?: string): string | undefined {
+  if (command === "easy-apply-dry-run") {
+    return "easy-apply";
+  }
+  if (command === "apply-dry-run") {
+    return "apply";
+  }
+  if (command === "external-apply-dry-run") {
+    return "external-apply";
+  }
+  return command;
+}
+
+function getRequiredResumePath(args: {
+  requestedMode: string;
+  dryRun: boolean;
+  getFlag: (name: string) => string | undefined;
+}) {
+  const resumePath = args.getFlag("--resume") ?? DEFAULT_RESUME_PATH;
+  if (!resumePath) {
+    throw new Error(
+      `--resume is required for ${args.requestedMode}${args.dryRun ? " --dry-run" : ""} when no default CV is available.`,
+    );
+  }
+  return resumePath;
+}
+
+function looksLikeImplicitLinkedInBatch(args: {
+  dryRun: boolean;
+  hasCountFlag: boolean;
+  positionalArgs: string[];
+  originalCommand?: string;
+}) {
+  return (
+    args.dryRun ||
+    args.hasCountFlag ||
+    isLinkedInCollectionUrl(args.positionalArgs[0] ?? DEFAULT_LINKEDIN_EASY_APPLY_URL) ||
+    args.originalCommand === "easy-apply-dry-run" ||
+    args.originalCommand === "apply-dry-run"
+  );
+}
+
+function readLinkedInBatchShape(args: {
+  positionalArgs: string[];
+  getIntegerFlag: (name: string) => number | undefined;
+}) {
+  const countFromFlag = args.getIntegerFlag("--count");
+  const trailingPositional = args.positionalArgs.at(-1);
+  const positionalCount =
+    !countFromFlag && trailingPositional && /^\d+$/.test(trailingPositional)
+      ? Number.parseInt(trailingPositional, 10)
+      : undefined;
+  const count = countFromFlag ?? positionalCount ?? 1;
+  const url =
+    (positionalCount ? args.positionalArgs.slice(0, -1) : args.positionalArgs)[0] ??
+    DEFAULT_LINKEDIN_EASY_APPLY_URL;
+
+  return {
+    count,
+    url,
+    scoreThreshold:
+      args.getIntegerFlag("--score-threshold") ?? DEFAULT_SCORE_THRESHOLD,
+  };
+}
+
+function readLinkedInBatchOptions(args: {
+  positionalArgs: string[];
+  getIntegerFlag: (name: string) => number | undefined;
+  hasFlag: (name: string) => boolean;
+  useAiScoreAdjustment: boolean;
+}) {
+  const batchShape = readLinkedInBatchShape(args);
+  return {
+    url: batchShape.url,
+    count: batchShape.count,
+    disableAiEvaluation: args.hasFlag("--disable-ai-evaluation"),
+    scoreThreshold: batchShape.scoreThreshold,
+    useAiScoreAdjustment: args.useAiScoreAdjustment,
+  };
+}
+
+function parseExploreBatchCommand(args: {
+  positionalArgs: string[];
+  getIntegerFlag: (name: string) => number | undefined;
+  hasFlag: (name: string) => boolean;
+  useAiScoreAdjustment: boolean;
+}) {
+  const batchOptions = readLinkedInBatchOptions(args);
+  assertLinkedInCollectionMode("explore-batch", batchOptions.url);
+
+  return {
+    mode: "explore-batch" as const,
+    ...batchOptions,
+  };
+}
+
+function assertLinkedInCollectionMode(mode: LinkedInBatchMode, url: string) {
+  if (!isLinkedInCollectionUrl(url)) {
+    throw new Error(
+      `${mode} requires a LinkedIn collection URL or the default collection.`,
+    );
+  }
+}
+
+function parseExplicitLinkedInSingleCommand(args: {
+  mode: LinkedInSingleMode;
+  resumePath: string;
+  positionalArgs: string[];
+  dryRun: boolean;
+}) {
+  const url = args.positionalArgs[0];
+  const normalizedUrl = url ? resolveLinkedInSingleJobUrl(url) : url;
+  if (!normalizedUrl) {
+    throw new Error(`--url is required for ${args.mode}.`);
+  }
+  if (isLinkedInCollectionUrl(normalizedUrl)) {
+    throw new Error(
+      `${args.mode} requires a single LinkedIn job URL, not a collection URL.`,
+    );
+  }
+
+  return { mode: args.mode, url: normalizedUrl, resumePath: args.resumePath, dryRun: args.dryRun };
+}
+
+function parseLinkedInFamilyCommand(args: {
+  family: LinkedInSingleMode;
+  resumePath: string;
+  positionalArgs: string[];
+  getIntegerFlag: (name: string) => number | undefined;
+  hasFlag: (name: string) => boolean;
+  useAiScoreAdjustment: boolean;
+  dryRun: boolean;
+}) {
+  const batchShape = readLinkedInBatchShape(args);
+  const normalizedUrl =
+    batchShape.count === 1 ? resolveLinkedInSingleJobUrl(batchShape.url) : batchShape.url;
+
+  if (isLinkedInCollectionUrl(normalizedUrl) || batchShape.count > 1) {
+    return {
+      mode: `${args.family}-batch` as const,
+      url: normalizedUrl,
+      resumePath: args.resumePath,
+      count: batchShape.count,
+      disableAiEvaluation: args.hasFlag("--disable-ai-evaluation"),
+      scoreThreshold: batchShape.scoreThreshold,
+      useAiScoreAdjustment: args.useAiScoreAdjustment,
+      dryRun: args.dryRun,
+    };
+  }
+
+  return {
+    mode: args.family,
+    url: normalizedUrl,
+    resumePath: args.resumePath,
+    dryRun: args.dryRun,
+  };
 }

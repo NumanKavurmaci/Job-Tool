@@ -36,6 +36,15 @@ import {
   runExternalApplyDryRunFlow,
   runExternalApplyFlow,
 } from "./externalApplyFlows.js";
+import {
+  buildLinkedInBatchRunMeta,
+  buildLinkedInSingleRunMeta,
+  getBatchCompletionLabel,
+  getBatchPersistenceSource,
+  getEasyApplyRunType,
+  type EasyApplyRunType,
+} from "./linkedinRunMeta.js";
+import { persistEasyApplySurveyAnswers } from "./linkedinSurveyPersistence.js";
 
 type EasyApplyArgs = Extract<CliArgs, { mode: "easy-apply" }>;
 type EasyApplyBatchArgs = Extract<CliArgs, { mode: "easy-apply-batch" }>;
@@ -44,13 +53,6 @@ type ApplyBatchArgs = Extract<CliArgs, { mode: "apply-batch" }>;
 type LinkedInApplyArgs = EasyApplyArgs | ApplyArgs;
 type LinkedInApplyBatchArgs = EasyApplyBatchArgs | ApplyBatchArgs;
 type LinkedInApplyFlowArgs = LinkedInApplyArgs | LinkedInApplyBatchArgs;
-type EasyApplyRunType =
-  | "easy-apply"
-  | "easy-apply-dry-run"
-  | "easy-apply-batch"
-  | "apply"
-  | "apply-dry-run"
-  | "apply-batch";
 
 interface LinkedInApplyFlowOptions {
   enableExternalApplyHandoff?: boolean;
@@ -73,104 +75,6 @@ function isBatchDryRunArgs(
   args: LinkedInApplyFlowArgs,
 ): args is LinkedInApplyBatchArgs {
   return args.mode === "easy-apply-batch" || args.mode === "apply-batch";
-}
-
-function collectAnsweredQuestions(steps: EasyApplyStepReport[]): EasyApplyAnsweredQuestion[] {
-  return steps.flatMap((step) => step.questions ?? []);
-}
-
-function buildPreparedSurveyPayload(steps: EasyApplyStepReport[]) {
-  const answeredQuestions = collectAnsweredQuestions(steps);
-  if (answeredQuestions.length === 0) {
-    return null;
-  }
-
-  return {
-    questions: answeredQuestions.map((entry) => entry.question),
-    answers: answeredQuestions.map((entry, index) => ({
-      order: index,
-      question: entry.question,
-      resolved: entry.resolved,
-      filled: entry.filled,
-      ...(entry.details ? { details: entry.details } : {}),
-    })),
-  };
-}
-
-async function createCandidateProfileSnapshotForSurvey(args: {
-  profile: Awaited<ReturnType<AppDeps["loadCandidateMasterProfile"]>>;
-  deps: AppDeps;
-}) {
-  return args.deps.prisma.candidateProfileSnapshot.create({
-    data: {
-      fullName: args.profile.fullName,
-      linkedinUrl: args.profile.linkedinUrl ?? null,
-      resumePath: args.profile.sourceMetadata.resumePath ?? null,
-      profileJson: JSON.stringify(args.profile),
-    },
-  });
-}
-
-async function persistEasyApplySurveyAnswers(args: {
-  results: Array<{ url: string; steps: EasyApplyStepReport[] }>;
-  profile: Awaited<ReturnType<AppDeps["loadCandidateMasterProfile"]>>;
-  runType: EasyApplyRunType;
-  deps: AppDeps;
-}) {
-  const payloads = args.results
-    .map((result) => ({
-      url: result.url,
-      payload: buildPreparedSurveyPayload(result.steps),
-    }))
-    .filter((entry): entry is { url: string; payload: NonNullable<ReturnType<typeof buildPreparedSurveyPayload>> } => entry.payload != null);
-
-  if (payloads.length === 0) {
-    return [];
-  }
-
-  const snapshot = await createCandidateProfileSnapshotForSurvey({
-    profile: args.profile,
-    deps: args.deps,
-  });
-
-  const preparedAnswerSets = [];
-  for (const entry of payloads) {
-    const jobPostingId = args.deps.prisma.jobPosting.findUnique
-      ? (await args.deps.prisma.jobPosting.findUnique({
-          where: { url: entry.url },
-          select: { id: true },
-        }))?.id ?? null
-      : null;
-    const preparedAnswerSet = await args.deps.prisma.preparedAnswerSet.create({
-      data: {
-        ...(jobPostingId ? { jobPostingId } : {}),
-        candidateProfileId: snapshot.id,
-        questionsJson: JSON.stringify(entry.payload.questions),
-        answersJson: JSON.stringify({
-          sourceUrl: entry.url,
-          runType: args.runType,
-          answers: entry.payload.answers,
-        }),
-      },
-    });
-    preparedAnswerSets.push(preparedAnswerSet);
-  }
-
-  await persistSystemEvent(
-    {
-      level: "INFO",
-      scope: "linkedin.easy_apply",
-      message: "Easy Apply survey answers saved.",
-      runType: args.runType,
-      details: {
-        candidateProfileSnapshotId: snapshot.id,
-        preparedAnswerSetCount: preparedAnswerSets.length,
-      },
-    },
-    args.deps,
-  );
-
-  return preparedAnswerSets;
 }
 
 async function persistDetectedAppliedJob(args: {
@@ -259,129 +163,6 @@ async function persistDetectedAppliedJob(args: {
     },
     args.deps,
   );
-}
-
-function getEasyApplyRunType(args: LinkedInApplyFlowArgs): EasyApplyRunType {
-  if (args.dryRun) {
-    return args.mode === "apply" || args.mode === "apply-batch"
-      ? "apply-dry-run"
-      : "easy-apply-dry-run";
-  }
-
-  if (args.mode === "apply-batch") {
-    return "apply-batch";
-  }
-  if (args.mode === "apply") {
-    return "apply";
-  }
-
-  return args.mode === "easy-apply-batch" ? "easy-apply-batch" : "easy-apply";
-}
-
-function getBatchPersistenceSource(
-  args: EasyApplyBatchArgs | ApplyBatchArgs,
-): "easy-apply-batch" | "apply-batch" {
-  return args.mode === "apply-batch" ? "apply-batch" : "easy-apply-batch";
-}
-
-function getBatchCompletionLabel(args: EasyApplyBatchArgs | ApplyBatchArgs): string {
-  return args.mode === "apply-batch"
-    ? "LinkedIn Apply batch finished"
-    : "LinkedIn Easy Apply batch finished";
-}
-
-function buildLinkedInSingleRunMeta(args: {
-  mode: "easy-apply" | "apply";
-  dryRun: boolean;
-  url: string;
-  durationMs: number;
-  result: EasyApplyRunResult;
-}) {
-  const siteFeedbackCount =
-    (args.result.siteFeedback?.errors.length ?? 0) +
-    (args.result.siteFeedback?.warnings.length ?? 0) +
-    (args.result.siteFeedback?.infos.length ?? 0);
-
-  return {
-    durationMs: args.durationMs,
-    finishedAt: new Date().toISOString(),
-    summary: `${args.mode}${args.dryRun ? " dry run" : ""} finished with status ${args.result.status} after ${args.durationMs}ms.`,
-    keyEvents: [
-      "Opened LinkedIn job page.",
-      args.result.externalApplyUrl
-        ? "Detected an external application path on LinkedIn."
-        : `Completed ${args.result.steps.length} LinkedIn form step(s).`,
-      args.result.externalApplication
-        ? `External handoff finished with status ${args.result.externalApplication.status}.`
-        : "No external handoff was used.",
-      siteFeedbackCount > 0
-        ? `Captured ${siteFeedbackCount} site feedback message(s).`
-        : "No site feedback was captured.",
-    ],
-    metrics: {
-      stepCount: args.result.steps.length,
-      siteFeedbackCount,
-      usedExternalHandoff: Boolean(args.result.externalApplication),
-      externalHandoffStatus: args.result.externalApplication?.status ?? null,
-    },
-    urls: {
-      jobUrl: args.url,
-      ...(args.result.externalApplyUrl
-        ? { externalApplyUrl: args.result.externalApplyUrl }
-        : {}),
-      ...(args.result.externalApplication?.canonicalUrl
-        ? { canonicalExternalUrl: args.result.externalApplication.canonicalUrl }
-        : {}),
-    },
-    stopReason: args.result.stopReason,
-  };
-}
-
-function buildLinkedInBatchRunMeta(args: {
-  mode: "easy-apply-batch" | "apply-batch";
-  dryRun: boolean;
-  collectionUrl: string;
-  durationMs: number;
-  result: Awaited<ReturnType<typeof ensureBatchJobProcessingResults>>["result"];
-}) {
-  const externalHandoffs = args.result.jobs.filter(
-    (job) => job.result?.externalApplication != null,
-  ).length;
-  const failureCount = args.result.jobs.filter(
-    (job) =>
-      job.result?.status === "stopped_unknown_action" ||
-      job.result?.status === "stopped_manual_review",
-  ).length;
-
-  return {
-    durationMs: args.durationMs,
-    finishedAt: new Date().toISOString(),
-    summary: `${args.mode}${args.dryRun ? " dry run" : ""} evaluated ${args.result.evaluatedCount} job(s), attempted ${args.result.attemptedCount}, and finished ${args.result.status} after ${args.durationMs}ms.`,
-    keyEvents: [
-      "Opened LinkedIn collection.",
-      `Visited ${args.result.pagesVisited} page(s) and evaluated ${args.result.evaluatedCount} job(s).`,
-      `Attempted ${args.result.attemptedCount} approved job(s) and skipped ${args.result.skippedCount}.`,
-      externalHandoffs > 0
-        ? `Used external handoff for ${externalHandoffs} job(s).`
-        : "No external handoffs were used.",
-      failureCount > 0
-        ? `${failureCount} attempted job(s) ended with a failure-style stop.`
-        : "No attempted job ended with a failure-style stop.",
-    ],
-    metrics: {
-      requestedCount: args.result.requestedCount,
-      attemptedCount: args.result.attemptedCount,
-      evaluatedCount: args.result.evaluatedCount,
-      skippedCount: args.result.skippedCount,
-      pagesVisited: args.result.pagesVisited,
-      externalHandoffs,
-      failureCount,
-    },
-    urls: {
-      collectionUrl: args.collectionUrl,
-    },
-    stopReason: args.result.stopReason,
-  };
 }
 
 async function continueExternalApplyFromLinkedIn(args: {

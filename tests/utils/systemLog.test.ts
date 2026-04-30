@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { writeSystemLog } from "../../src/utils/systemLog.js";
 
 describe("systemLog", () => {
-  it("persists system logs to the database", async () => {
+  it("persists warning system logs to the database", async () => {
     const create = vi.fn().mockResolvedValue(undefined);
     const warn = vi.fn();
 
@@ -12,7 +12,7 @@ describe("systemLog", () => {
       } as never,
       logger: { warn } as never,
       entry: {
-        level: "INFO",
+        level: "WARN",
         scope: "linkedin.batch",
         message: "Batch started.",
         runType: "easy-apply-dry-run",
@@ -23,7 +23,7 @@ describe("systemLog", () => {
 
     expect(create).toHaveBeenCalledWith({
       data: {
-        level: "INFO",
+        level: "WARN",
         scope: "linkedin.batch",
         message: "Batch started.",
         runType: "easy-apply-dry-run",
@@ -59,7 +59,7 @@ describe("systemLog", () => {
     );
   });
 
-  it("persists guaranteed observability events with minimal optional fields", async () => {
+  it("skips routine info events unless they are explicitly marked as durable", async () => {
     const create = vi.fn().mockResolvedValue(undefined);
     const warn = vi.fn();
 
@@ -90,21 +90,43 @@ describe("systemLog", () => {
       },
     });
 
+    expect(create).toHaveBeenCalledTimes(1);
     expect(create).toHaveBeenNthCalledWith(1, {
+      data: {
+        level: "ERROR",
+        scope: "cli",
+        message: "CLI execution failed.",
+        runType: "cli",
+      },
+    });
+  });
+
+  it("persists durable info events when explicitly requested", async () => {
+    const create = vi.fn().mockResolvedValue(undefined);
+    const warn = vi.fn();
+
+    await writeSystemLog({
+      prisma: {
+        systemLog: { create },
+      } as never,
+      logger: { warn } as never,
+      entry: {
+        level: "INFO",
+        scope: "job.analysis",
+        message: "Starting job analysis flow.",
+        runType: "decide",
+        jobUrl: "https://example.com/job",
+        persistToDb: true,
+      },
+    });
+
+    expect(create).toHaveBeenCalledWith({
       data: {
         level: "INFO",
         scope: "job.analysis",
         message: "Starting job analysis flow.",
         runType: "decide",
         jobUrl: "https://example.com/job",
-      },
-    });
-    expect(create).toHaveBeenNthCalledWith(2, {
-      data: {
-        level: "ERROR",
-        scope: "cli",
-        message: "CLI execution failed.",
-        runType: "cli",
       },
     });
   });

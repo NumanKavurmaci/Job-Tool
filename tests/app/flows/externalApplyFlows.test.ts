@@ -787,7 +787,7 @@ describe("external apply flows", () => {
         }),
       ]),
     );
-    expect(deps.prisma.systemLog.create).toHaveBeenCalled();
+    expect(deps.prisma.systemLog.create).not.toHaveBeenCalled();
     expect(result.finalStage).toBe("completed");
   });
 

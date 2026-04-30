@@ -7,7 +7,6 @@ import {
   shouldRetryPendingApprovedReview,
   shouldSkipDuplicateBatchReview,
 } from "../utils/jobHistory.js";
-import { shouldBypassWorkplacePolicy } from "../policy/policyEngine.js";
 import {
   jobPostingNeedsMetadataRefresh,
   persistJobAnalysisRecord,
@@ -16,6 +15,7 @@ import {
 } from "../utils/jobPersistence.js";
 import { LINKEDIN_EVALUATION_SESSION_OPTIONS, PARSE_VERSION } from "./constants.js";
 import type { AppDeps } from "./deps.js";
+import { analyzeExtractedJob, buildJobDiagnostics, resolveDecisionOutcome } from "./jobEvaluation.js";
 import { persistJobHistory, persistSystemEvent } from "./observability.js";
 
 export async function loadMasterProfileForArgs(
@@ -120,7 +120,7 @@ export function createBatchJobEvaluator(args: {
       if (existingJobPosting && jobPostingNeedsMetadataRefresh(existingJobPosting)) {
         const extracted = await deps.extractJobText(evaluationPage, url);
         await refreshJobPostingMetadata({
-          prisma: deps.prisma as never,
+          prisma: deps.prisma,
           logger: deps.logger,
           url,
           extracted,
@@ -201,23 +201,7 @@ export function createBatchJobEvaluator(args: {
     }
 
     const extracted = await deps.extractJobText(evaluationPage, url);
-    const diagnostics = {
-      title: extracted.title ?? null,
-      company: extracted.company ?? null,
-      location: extracted.location ?? null,
-      companyLinkedinUrl: extracted.companyLinkedinUrl ?? null,
-      applicationType: extracted.applicationType ?? null,
-      companyInfoRead: Boolean(
-        extracted.company || extracted.companyLinkedinUrl || extracted.companyLogoUrl,
-      ),
-      metadataRead: Boolean(
-        extracted.title ||
-          extracted.company ||
-          extracted.location ||
-          extracted.companyLinkedinUrl ||
-          extracted.companyLogoUrl,
-      ),
-    };
+    const diagnostics = buildJobDiagnostics(extracted);
     await persistSystemEvent(
       {
         level: "INFO",
@@ -229,41 +213,27 @@ export function createBatchJobEvaluator(args: {
       },
       deps,
     );
-    const hasStructuredLocation = Boolean(extracted.location);
-    const llmInput = deps.formatJobForLLM(extracted, {
-      omitLocation: hasStructuredLocation,
-    });
-    const parseResult = await deps.parseJob(llmInput, {
-      excludeLocation: hasStructuredLocation,
-    });
-    const normalized = deps.normalizeParsedJob(parseResult.parsed, extracted);
-    const score = args.useAiScoreAdjustment
-      ? await deps.scoreJobWithAi({
-          job: normalized,
-          profile: args.scoringProfile,
-          completePrompt: deps.completePrompt,
-          logger: deps.logger,
-        })
-      : deps.scoreJob(normalized, args.scoringProfile);
-    const policy = deps.evaluatePolicy(
-      normalized,
-      args.scoringProfile,
-      args.allowExternalLinkedInApply != null
+    const analysis = await analyzeExtractedJob({
+      extracted,
+      scoringProfile: args.scoringProfile,
+      deps,
+      ...(args.useAiScoreAdjustment ? { useAiScoreAdjustment: true } : {}),
+      ...(args.allowExternalLinkedInApply != null
         ? { allowExternalLinkedInApply: args.allowExternalLinkedInApply }
-        : undefined,
-    );
-    const meetsThreshold = score.totalScore >= args.scoreThreshold;
-    const forceApplyForConfiguredRegion =
-      shouldBypassWorkplacePolicy(normalized, args.scoringProfile) && policy.allowed;
-    const finalDecision: "APPLY" | "SKIP" =
-      forceApplyForConfiguredRegion || (policy.allowed && meetsThreshold) ? "APPLY" : "SKIP";
-    const reason = forceApplyForConfiguredRegion
-      ? "Configured workplace-policy bypass matched this job location, so the role will be applied."
-      : !policy.allowed
-      ? policy.reasons.join(" ")
-      : meetsThreshold
-        ? `Score ${score.totalScore} meets the configured threshold of ${args.scoreThreshold}.`
-        : `Score ${score.totalScore} is below the configured threshold of ${args.scoreThreshold}.`;
+        : {}),
+    });
+    const normalized = analysis.normalized;
+    const score = analysis.score;
+    const policy = analysis.policy;
+    const outcome = resolveDecisionOutcome({
+      normalized,
+      scoringProfile: args.scoringProfile,
+      policy,
+      score,
+      scoreThreshold: args.scoreThreshold,
+    });
+    const finalDecision = outcome.finalDecision;
+    const reason = outcome.reason;
 
     deps.logger.info(
       {
@@ -298,22 +268,22 @@ export function createBatchJobEvaluator(args: {
     );
 
     const persisted = await persistJobAnalysisRecord({
-      prisma: deps.prisma as never,
+      prisma: deps.prisma,
       logger: deps.logger,
       url,
       extracted,
-      parsed: parseResult.parsed,
+      parsed: analysis.parsed,
       normalized,
       score: score.totalScore,
       finalDecision,
       policyAllowed: policy.allowed,
-      reasons: !policy.allowed ? policy.reasons : [reason],
+      reasons: outcome.finalReasons,
       parseVersion: PARSE_VERSION,
     });
 
     if (args.persistRecommendations) {
       await persistJobRecommendationRecord({
-        prisma: deps.prisma as never,
+        prisma: deps.prisma,
         logger: deps.logger,
         jobPostingId: persisted.jobPosting.id,
         source: reviewSource,
@@ -321,7 +291,7 @@ export function createBatchJobEvaluator(args: {
         decision: finalDecision,
         policyAllowed: policy.allowed,
         summary: reason,
-        reasons: !policy.allowed ? policy.reasons : [reason],
+        reasons: outcome.finalReasons,
         details: {
           scoreThreshold: args.scoreThreshold,
           shouldApply: finalDecision === "APPLY",
@@ -345,7 +315,7 @@ export function createBatchJobEvaluator(args: {
         threshold: args.scoreThreshold,
         decision: finalDecision,
         policyAllowed: policy.allowed,
-        reasons: !policy.allowed ? policy.reasons : [reason],
+        reasons: outcome.finalReasons,
         summary: reason,
         ...(normalized.platform ? { platform: normalized.platform } : {}),
         details: {

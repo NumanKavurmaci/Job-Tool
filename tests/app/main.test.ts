@@ -1673,13 +1673,11 @@ describe("phase 5 index flows", () => {
         decision: "APPLY",
       }),
     });
-    expect(mocks.createSystemLogMock).toHaveBeenCalledWith({
+    expect(mocks.createSystemLogMock).not.toHaveBeenCalledWith({
       data: expect.objectContaining({
         level: "INFO",
         scope: "job.analysis",
         message: "Starting job analysis flow.",
-        runType: "decide",
-        jobUrl: "https://jobs.example.com/1",
       }),
     });
     expect(mocks.infoMock).toHaveBeenCalledWith(
@@ -2083,8 +2081,8 @@ describe("phase 5 index flows", () => {
       pagesVisited: 1,
       jobs: [
         {
-          url: "https://www.linkedin.com/jobs/view/1",
-          evaluation: await input.evaluateJob("https://www.linkedin.com/jobs/view/1"),
+          url: "https://example.com/job/1",
+          evaluation: await input.evaluateJob("https://example.com/job/1"),
         },
       ],
       stopReason: "Only found and processed 0 matching LinkedIn apply job(s) before pagination ended.",
@@ -2106,7 +2104,7 @@ describe("phase 5 index flows", () => {
     expect(mocks.extractJobTextMock).not.toHaveBeenCalled();
     expect(mocks.warnMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        url: "https://www.linkedin.com/jobs/view/1",
+        url: "https://example.com/job/1",
       }),
       "Skipping duplicate job review",
     );
@@ -2289,6 +2287,55 @@ describe("phase 5 index flows", () => {
     }
   });
 
+  it("prints an explore-batch summary for successful recommendation scans", async () => {
+    const { module, mocks, deps } = await loadIndexModule();
+    const stdoutWriteSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const originalArgv = process.argv;
+    process.argv = ["node", "index.js", "explore-batch", "--count", "1"];
+
+    try {
+      mocks.loadCandidateProfileMock.mockResolvedValue({ yearsOfExperience: 3 });
+      mockWithPageSuccess(mocks.withPageMock);
+      mocks.createEasyApplyDriverMock.mockResolvedValue({
+        ensureAuthenticated: vi.fn().mockResolvedValue(undefined),
+        openCollection: vi.fn().mockResolvedValue(undefined),
+        collectVisibleJobs: vi.fn().mockResolvedValue([
+          { url: "https://www.linkedin.com/jobs/view/1", alreadyApplied: false },
+        ]),
+        goToNextResultsPage: vi.fn().mockResolvedValue(false),
+      });
+      mocks.extractJobTextMock.mockResolvedValue({
+        rawText: "Raw body",
+        title: "Adapter Title",
+        company: "Adapter Company",
+        companyLogoUrl: null,
+        companyLinkedinUrl: null,
+        location: "Remote",
+        platform: "linkedin",
+        applicationType: "easy_apply",
+      });
+      mocks.formatJobForLLMMock.mockReturnValue("Formatted prompt");
+      mocks.parseJobMock.mockResolvedValue({
+        parsed: { title: "Adapter Title", location: "Remote", platform: "linkedin" },
+        provider: "local",
+        model: "openai/gpt-oss-20b",
+        rawText: "{}",
+      });
+      mocks.normalizeParsedJobMock.mockReturnValue({ platform: "linkedin" });
+      mocks.scoreJobMock.mockReturnValue({ totalScore: 65, breakdown: { skill: 20 } });
+      mocks.evaluatePolicyMock.mockReturnValue({ allowed: true, reasons: [] });
+
+      await module.runCli(deps);
+
+      expect(stdoutWriteSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Explore batch finished"),
+      );
+    } finally {
+      process.argv = originalArgv;
+      stdoutWriteSpy.mockRestore();
+    }
+  });
+
   it("prints a terminal summary for successful single easy-apply runs", async () => {
     const { module, mocks, deps } = await loadIndexModule();
     const stdoutWriteSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
@@ -2323,6 +2370,7 @@ describe("phase 5 index flows", () => {
       stdoutWriteSpy.mockRestore();
     }
   });
+
 
   it("wraps job analysis database save failures with a database phase error", async () => {
     const { module, mocks, deps } = await loadIndexModule();

@@ -113,43 +113,52 @@ export async function main(
     `Using LLM provider: ${llmProviderInfo.provider} (${llmProviderInfo.model})`,
   );
 
-  let result;
-  if (args.mode === "build-profile") {
-    result = await runBuildProfileFlow(args, deps);
-  } else if (args.mode === "answer-questions") {
-    result = await runAnswerQuestionsFlow(args, deps);
-  } else if (args.mode === "easy-apply") {
-    result = args.dryRun
-      ? await runEasyApplyDryRunFlow(args, deps)
-      : await runEasyApplyFlow(args, deps);
-  } else if (args.mode === "apply") {
-    result = args.dryRun
-      ? await runApplyDryRunFlow(args, deps)
-      : await runApplyFlow(args, deps);
-  } else if (args.mode === "easy-apply-batch") {
-    result = args.dryRun
-      ? await runEasyApplyDryRunFlow(args, deps)
-      : await runEasyApplyBatchFlow(args, deps);
-  } else if (args.mode === "apply-batch") {
-    result = args.dryRun
-      ? await runApplyDryRunFlow(args, deps)
-      : await runApplyBatchFlow(args, deps);
-  } else if (args.mode === "external-apply") {
-    result = args.dryRun
-      ? await runExternalApplyDryRunFlow(args, deps)
-      : await runExternalApplyFlow(args, deps);
-  } else if (args.mode === "explore-batch") {
-    result = await runExploreBatchFlow(args, deps);
-  } else {
-    result = await runJobFlow(args.mode, args.url, deps, {
-      useAiScoreAdjustment: args.useAiScoreAdjustment,
-    });
-  }
+  const result = await runCommand(args, deps);
 
   return {
     ...result,
     durationMs: Math.round(performance.now() - startedAt),
   };
+}
+
+async function runCommand(
+  args: ReturnType<typeof parseCliArgs>,
+  deps: AppDeps,
+) {
+  switch (args.mode) {
+    case "build-profile":
+      return runBuildProfileFlow(args, deps);
+    case "answer-questions":
+      return runAnswerQuestionsFlow(args, deps);
+    case "easy-apply":
+      return args.dryRun
+        ? runEasyApplyDryRunFlow(args, deps)
+        : runEasyApplyFlow(args, deps);
+    case "apply":
+      return args.dryRun
+        ? runApplyDryRunFlow(args, deps)
+        : runApplyFlow(args, deps);
+    case "easy-apply-batch":
+      return args.dryRun
+        ? runEasyApplyDryRunFlow(args, deps)
+        : runEasyApplyBatchFlow(args, deps);
+    case "apply-batch":
+      return args.dryRun
+        ? runApplyDryRunFlow(args, deps)
+        : runApplyBatchFlow(args, deps);
+    case "external-apply":
+      return args.dryRun
+        ? runExternalApplyDryRunFlow(args, deps)
+        : runExternalApplyFlow(args, deps);
+    case "explore-batch":
+      return runExploreBatchFlow(args, deps);
+    case "score":
+    case "decide":
+    case "explore":
+      return runJobFlow(args.mode, args.url, deps, {
+        useAiScoreAdjustment: args.useAiScoreAdjustment,
+      });
+  }
 }
 
 export async function runCli(deps: AppDeps = appDeps): Promise<void> {

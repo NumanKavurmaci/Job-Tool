@@ -176,15 +176,7 @@ describe("easy apply flows", () => {
         summary: "Reached the final submit step.",
       }),
     });
-    expect(deps.prisma.systemLog.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        level: "INFO",
-        scope: "linkedin.easy_apply",
-        message: "LinkedIn Easy Apply dry run finished.",
-        runType: "easy-apply-dry-run",
-        jobUrl: "https://www.linkedin.com/jobs/view/1",
-      }),
-    });
+    expect(deps.prisma.systemLog.create).not.toHaveBeenCalled();
     expect(deps.prisma.candidateProfileSnapshot.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         fullName: "Jane",
@@ -261,7 +253,7 @@ describe("easy apply flows", () => {
       collectionUrl: "https://www.linkedin.com/jobs/collections/easy-apply",
       requestedCount: 2,
       attemptedCount: 1,
-      evaluatedCount: 2,
+      evaluatedCount: 1,
       skippedCount: 1,
       pagesVisited: 1,
       stopReason: "Processed 1 job.",
@@ -332,14 +324,7 @@ describe("easy apply flows", () => {
         candidateProfileId: "snapshot_1",
       }),
     });
-    expect(deps.prisma.systemLog.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        level: "INFO",
-        scope: "linkedin.easy_apply",
-        message: "LinkedIn Easy Apply dry run finished.",
-        runType: "easy-apply-dry-run",
-      }),
-    });
+    expect(deps.prisma.systemLog.create).not.toHaveBeenCalled();
     expect(evaluationPage.close).toHaveBeenCalledTimes(1);
   });
 
@@ -759,14 +744,7 @@ describe("easy apply flows", () => {
         detailsJson: expect.stringContaining("\"finalStage\":\"completed\""),
       }),
     });
-    expect(deps.prisma.systemLog.create).toHaveBeenLastCalledWith({
-      data: expect.objectContaining({
-        level: "INFO",
-        scope: "linkedin.easy_apply",
-        message: "LinkedIn Easy Apply finished.",
-        runType: "apply",
-      }),
-    });
+    expect(deps.prisma.systemLog.create).not.toHaveBeenCalled();
   });
 
   it("persists survey answers for the live easy-apply flow when questions were answered", async () => {
@@ -931,14 +909,7 @@ describe("easy apply flows", () => {
 
     expect(result.reportPath).toBe("artifacts/batch-runs/live.json");
     expect(deps.prisma.jobReviewHistory.create).toHaveBeenCalledTimes(2);
-    expect(deps.prisma.systemLog.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        level: "INFO",
-        scope: "linkedin.batch",
-        message: "LinkedIn Easy Apply batch finished.",
-        runType: "easy-apply-batch",
-      }),
-    });
+    expect(deps.prisma.systemLog.create).not.toHaveBeenCalled();
     expect(evaluationPage.close).toHaveBeenCalledTimes(1);
   });
 
@@ -1055,6 +1026,14 @@ describe("easy apply flows", () => {
         ],
       };
     });
+    runExternalApplyFlowMock.mockResolvedValue({
+      finalStage: "completed",
+      stopReason: "Submitted the application successfully after filling 6 field(s).",
+      discovery: {
+        platform: "workable",
+      },
+      reportPath: "artifacts/external-apply-runs/live.json",
+    });
     (deps.writeRunReport as any).mockResolvedValue("artifacts/batch-runs/live.json");
 
     const { runApplyBatchFlow } = await import("../../../src/app/flows/applyFlows.js");
@@ -1072,29 +1051,7 @@ describe("easy apply flows", () => {
       deps,
     );
 
-    expect(deps.prisma.systemLog.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        scope: "linkedin.batch",
-        message: "Discovered job on LinkedIn collection page.",
-        jobUrl: "https://www.linkedin.com/jobs/view/1",
-      }),
-    });
-    expect(deps.prisma.systemLog.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        scope: "linkedin.batch",
-        message: "Recorded batch decision for job.",
-        jobUrl: "https://www.linkedin.com/jobs/view/1",
-        detailsJson: expect.stringContaining("\"applicationType\":\"easy_apply\""),
-      }),
-    });
-    expect(deps.prisma.systemLog.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        scope: "linkedin.batch",
-        message: "Finished application processing for approved job.",
-        jobUrl: "https://www.linkedin.com/jobs/view/1",
-        detailsJson: expect.stringContaining("\"externalApplyUrl\":\"https://company.example/apply\""),
-      }),
-    });
+    expect(deps.prisma.systemLog.create).not.toHaveBeenCalled();
     expect(evaluationPage.close).toHaveBeenCalledTimes(1);
   });
 

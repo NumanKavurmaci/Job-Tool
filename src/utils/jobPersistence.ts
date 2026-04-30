@@ -6,18 +6,11 @@ import type { ParsedJob } from "../parser/parseJobWithLLM.js";
 
 type PersistencePrisma = {
   firm: {
-    upsert(args: {
-      where: { name: string };
-      update: Record<string, unknown>;
-      create: Record<string, unknown>;
-    }): Promise<{ id: string; name: string; logoUrl?: string | null }>;
-    update(args: {
-      where: { id: string };
-      data: Record<string, unknown>;
-    }): Promise<unknown>;
+    upsert(args: any): Promise<{ id: string; name: string; logoUrl?: string | null }>;
+    update(args: any): Promise<unknown>;
   };
   jobPosting: {
-    upsert(args: Record<string, unknown>): Promise<{
+    upsert(args: any): Promise<{
       id: string;
       company?: string | null;
       title?: string | null;
@@ -27,7 +20,7 @@ type PersistencePrisma = {
       platform?: string | null;
       parseVersion?: string | null;
     }>;
-    findUnique?(args: Record<string, unknown>): Promise<{
+    findUnique?(args: any): Promise<{
       id: string;
       company?: string | null;
       title?: string | null;
@@ -39,8 +32,8 @@ type PersistencePrisma = {
     } | null>;
   };
   applicationDecision: {
-    create(args: Record<string, unknown>): Promise<{ id: string }>;
-    findMany(args: Record<string, unknown>): Promise<
+    create(args: any): Promise<{ id: string }>;
+    findMany(args: any): Promise<
       Array<{
         id: string;
         decision: ApplicationDecisionType;
@@ -49,7 +42,7 @@ type PersistencePrisma = {
     >;
   };
   jobRecommendation?: {
-    upsert(args: Record<string, unknown>): Promise<{ id: string }>;
+    upsert(args: any): Promise<{ id: string }>;
   };
 };
 
