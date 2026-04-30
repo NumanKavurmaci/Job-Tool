@@ -14,7 +14,7 @@ export type JobScore = {
   aiAdjustment?: number;
   aiReasoning?: string;
   aiConfidence?: "low" | "medium" | "high";
-  scoringSource?: "deterministic" | "deterministic+ai";
+  scoringSource?: "deterministic" | "llm";
 };
 
 const TERM_ALIASES: Record<string, string> = {
@@ -36,11 +36,16 @@ const TERM_ALIASES: Record<string, string> = {
   "microservices architecture": "microservices",
   "ci cd": "ci/cd",
   "ci-cd": "ci/cd",
-  "cicd": "ci/cd",
-  "frontend": "front-end",
-  "fullstack": "full stack",
-  "html5": "html",
-  "css3": "css",
+  cicd: "ci/cd",
+  frontend: "front-end",
+  fullstack: "full stack",
+  "full stack web applications": "full stack",
+  "full stack development": "full stack",
+  "back-end services": "backend services",
+  "back-end architectures": "backend architectures",
+  "api development": "api",
+  html5: "html",
+  css3: "css",
 };
 
 const TESTING_ROLE_KEYWORDS = new Set(["qa", "qc", "test"]);
@@ -72,11 +77,16 @@ function normalizeTerm(value: string): string {
   const normalized = value
     .toLowerCase()
     .replace(/[()"'`]/g, " ")
-    .replace(/[–—-]/g, " ")
+    .replace(/[+\-\u2010-\u2015]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 
   return TERM_ALIASES[normalized] ?? normalized;
+}
+
+function includesKeyword(text: string, keyword: string): boolean {
+  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\b${escaped}\\b`, "i").test(text);
 }
 
 function expandTerms(values: string[]): string[][] {
@@ -90,18 +100,33 @@ function expandTerms(values: string[]): string[][] {
     .filter((parts) => parts.length > 0);
 }
 
-function overlapRatio(left: string[] = [], right: string[] = []): number {
+function termMatches(leftTerm: string, rightTerm: string): boolean {
+  if (leftTerm === rightTerm) {
+    return true;
+  }
+
+  return includesKeyword(leftTerm, rightTerm) || includesKeyword(rightTerm, leftTerm);
+}
+
+function countOverlapMatches(left: string[] = [], right: string[] = []): number {
   if (left.length === 0 || right.length === 0) {
     return 0;
   }
 
   const leftTerms = expandTerms(left);
-  const rightSet = new Set(expandTerms(right).flat());
-  const matches = leftTerms.filter((terms) =>
-    terms.some((term) => rightSet.has(term)),
-  ).length;
+  const rightTerms = expandTerms(right).flat();
 
-  return matches / left.length;
+  return leftTerms.filter((terms) =>
+    terms.some((term) => rightTerms.some((rightTerm) => termMatches(term, rightTerm))),
+  ).length;
+}
+
+function overlapRatio(left: string[] = [], right: string[] = []): number {
+  if (left.length === 0 || right.length === 0) {
+    return 0;
+  }
+
+  return countOverlapMatches(left, right) / left.length;
 }
 
 type AlignmentSignals = {
@@ -110,10 +135,13 @@ type AlignmentSignals = {
   aspirationalOverlap: number;
   roleSignalOverlap: number;
   preferredRoleMatch: boolean;
+  preferredTechMatchCount: number;
   coreAlignment: number;
 };
 
-function buildJobText(job: Pick<NormalizedJob, "title" | "mustHaveSkills" | "niceToHaveSkills" | "technologies">): string {
+function buildJobText(
+  job: Pick<NormalizedJob, "title" | "mustHaveSkills" | "niceToHaveSkills" | "technologies">,
+): string {
   return [
     job.title ?? "",
     ...job.mustHaveSkills,
@@ -122,11 +150,6 @@ function buildJobText(job: Pick<NormalizedJob, "title" | "mustHaveSkills" | "nic
   ]
     .map((value) => normalizeTerm(value))
     .join(" ");
-}
-
-function includesKeyword(text: string, keyword: string): boolean {
-  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`\\b${escaped}\\b`, "i").test(text);
 }
 
 function hasTestingRoleSignal(text: string): boolean {
@@ -147,8 +170,13 @@ function getAlignmentSignals(job: NormalizedJob, profile: CandidateProfile): Ali
     [job.title ?? "", ...job.mustHaveSkills, ...job.niceToHaveSkills, ...job.technologies],
     profile.preferredRoleOverlapSignals ?? [],
   );
+  const preferredTechMatchCount = countOverlapMatches(
+    [...job.mustHaveSkills, ...job.technologies],
+    profile.preferredTechStack,
+  );
+  const normalizedTitle = normalizeTerm(job.title ?? "");
   const preferredRoleMatch = profile.preferredRoles.some((role) =>
-    (job.title ?? "").toLowerCase().includes(role.toLowerCase()),
+    includesKeyword(normalizedTitle, normalizeTerm(role)),
   );
   const coreAlignment = Math.max(
     mustHaveRatio,
@@ -164,11 +192,16 @@ function getAlignmentSignals(job: NormalizedJob, profile: CandidateProfile): Ali
     aspirationalOverlap,
     roleSignalOverlap,
     preferredRoleMatch,
+    preferredTechMatchCount,
     coreAlignment,
   };
 }
 
-function scoreSkill(job: NormalizedJob, profile: CandidateProfile, signals: AlignmentSignals): number {
+function scoreSkill(
+  job: NormalizedJob,
+  profile: CandidateProfile,
+  signals: AlignmentSignals,
+): number {
   return Math.round(
     signals.mustHaveRatio * 18 + signals.techOverlap * 12 + signals.aspirationalOverlap * 8,
   );
@@ -284,9 +317,9 @@ function scoreLocation(
 
 function scoreTech(job: NormalizedJob, profile: CandidateProfile): number {
   const preferredTechScore =
-    overlapRatio(job.technologies, profile.preferredTechStack) * 12;
+    overlapRatio([...job.mustHaveSkills, ...job.technologies], profile.preferredTechStack) * 12;
   const aspirationalTechScore =
-    overlapRatio(job.technologies, profile.aspirationalTechStack) * 5;
+    overlapRatio([...job.mustHaveSkills, ...job.technologies], profile.aspirationalTechStack) * 5;
 
   return Math.round(preferredTechScore + aspirationalTechScore);
 }
@@ -315,7 +348,9 @@ function scoreRolePenalty(
     }
 
     if (STACK_MISMATCH_KEYWORDS.has(normalizedKeyword) && signals.coreAlignment < 0.3) {
-      penalty = Math.max(penalty, 12);
+      const softenedPenalty =
+        signals.preferredTechMatchCount >= 3 || signals.preferredRoleMatch ? 4 : 12;
+      penalty = Math.max(penalty, softenedPenalty);
     }
   }
 
@@ -341,7 +376,11 @@ function scoreRolePenalty(
   return penalty;
 }
 
-function scoreBonus(job: NormalizedJob, profile: CandidateProfile, signals: AlignmentSignals): number {
+function scoreBonus(
+  job: NormalizedJob,
+  profile: CandidateProfile,
+  signals: AlignmentSignals,
+): number {
   const niceToHave = overlapRatio(job.niceToHaveSkills, profile.preferredTechStack) * 6;
   const aspirationalNiceToHave =
     overlapRatio(job.niceToHaveSkills, profile.aspirationalTechStack) * 3;
@@ -377,9 +416,7 @@ function capScoreForRoleRisk(
     signals.coreAlignment <= 0.18 &&
     signals.preferredRoleMatch &&
     !job.mustHaveSkills.some((skill) =>
-      profile.preferredTechStack.some(
-        (preferred) => normalizeTerm(preferred) === normalizeTerm(skill),
-      ),
+      profile.preferredTechStack.some((preferred) => termMatches(normalizeTerm(skill), normalizeTerm(preferred))),
     )
   ) {
     cappedScore = Math.min(cappedScore, 35);

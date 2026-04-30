@@ -92,7 +92,7 @@ export async function runExploreBatchFlow(
         count: args.count,
         scoreThreshold: args.scoreThreshold,
         disableAiEvaluation: args.disableAiEvaluation,
-        useAiScoreAdjustment: args.useAiScoreAdjustment,
+        scoringMode: args.scoringMode,
       },
     },
     deps,
@@ -108,7 +108,7 @@ export async function runExploreBatchFlow(
       const evaluateJob = createBatchJobEvaluator({
         disableAiEvaluation: args.disableAiEvaluation,
         scoreThreshold: args.scoreThreshold,
-        useAiScoreAdjustment: args.useAiScoreAdjustment,
+        scoringMode: args.scoringMode,
         source: "explore-batch",
         systemScope: "explore.batch",
         recommendationPolicy: "all-evaluated",
@@ -278,7 +278,7 @@ export async function runExploreBatchFlow(
       count: args.count,
       scoreThreshold: args.scoreThreshold,
       disableAiEvaluation: args.disableAiEvaluation,
-      useAiScoreAdjustment: args.useAiScoreAdjustment,
+      scoringMode: args.scoringMode,
       result,
       meta: {
         durationMs: Math.round(performance.now() - startedAt),

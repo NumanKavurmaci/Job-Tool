@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
 import type { CandidateProfile } from "../candidate/types.js";
 import type { InputQuestion } from "../questions/types.js";
+import type { ScoringMode } from "./cli.js";
 import {
   buildDuplicateReviewReason,
   getLatestJobReview,
@@ -48,7 +49,7 @@ export function createCandidateAnswerResolver(
 export function createBatchJobEvaluator(args: {
   disableAiEvaluation: boolean;
   scoreThreshold: number;
-  useAiScoreAdjustment: boolean;
+  scoringMode: ScoringMode;
   allowExternalLinkedInApply?: boolean;
   source?: string;
   systemScope?: string;
@@ -228,7 +229,7 @@ export function createBatchJobEvaluator(args: {
       extracted,
       scoringProfile: args.scoringProfile,
       deps,
-      ...(args.useAiScoreAdjustment ? { useAiScoreAdjustment: true } : {}),
+      scoringMode: args.scoringMode,
       ...(args.allowExternalLinkedInApply != null
         ? { allowExternalLinkedInApply: args.allowExternalLinkedInApply }
         : {}),

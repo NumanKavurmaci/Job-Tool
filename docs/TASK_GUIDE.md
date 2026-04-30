@@ -73,6 +73,7 @@ Open in this order:
 ### Change persistence, artifacts, or dashboard-facing outputs
 
 Open in this order:
+- [src/dashboard/loadDashboardSnapshot.ts](../src/dashboard/loadDashboardSnapshot.ts)
 - [src/app/observability.ts](../src/app/observability.ts)
 - [src/utils/jobHistory.ts](../src/utils/jobHistory.ts)
 - [src/utils/jobPersistence.ts](../src/utils/jobPersistence.ts)

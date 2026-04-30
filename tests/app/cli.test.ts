@@ -7,17 +7,25 @@ describe("app cli", () => {
     expect(parseCliArgs(["score", "https://example.com/job"])).toEqual({
       mode: "score",
       url: "https://example.com/job",
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
     });
     expect(parseCliArgs(["decide", "https://example.com/job"])).toEqual({
       mode: "decide",
       url: "https://example.com/job",
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
     });
     expect(parseCliArgs(["explore", "https://example.com/job"])).toEqual({
       mode: "explore",
       url: "https://example.com/job",
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
+    });
+    expect(parseCliArgs(["dashboard"])).toEqual({
+      mode: "dashboard",
+      limit: 5,
+    });
+    expect(parseCliArgs(["dashboard", "--limit", "8"])).toEqual({
+      mode: "dashboard",
+      limit: 8,
     });
   });
 
@@ -25,15 +33,20 @@ describe("app cli", () => {
     expect(parseCliArgs(["https://example.com/job"])).toEqual({
       mode: "decide",
       url: "https://example.com/job",
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
     });
   });
 
-  it("parses the optional AI score adjustment flag", () => {
+  it("parses AI scoring mode flags", () => {
     expect(parseCliArgs(["decide", "https://example.com/job", "--ai-score-adjustment"])).toEqual({
       mode: "decide",
       url: "https://example.com/job",
-      useAiScoreAdjustment: true,
+      scoringMode: "ai",
+    });
+    expect(parseCliArgs(["decide", "https://example.com/job", "--scoring", "ai"])).toEqual({
+      mode: "decide",
+      url: "https://example.com/job",
+      scoringMode: "ai",
     });
     expect(parseCliArgs(["easy-apply", "--dry-run", "--ai-score-adjustment"])).toEqual({
       mode: "easy-apply-batch",
@@ -42,7 +55,7 @@ describe("app cli", () => {
       count: 1,
       disableAiEvaluation: false,
       scoreThreshold: 40,
-      useAiScoreAdjustment: true,
+      scoringMode: "ai",
       dryRun: true,
     });
   });
@@ -88,7 +101,7 @@ describe("app cli", () => {
       count: 2,
       disableAiEvaluation: false,
       scoreThreshold: 40,
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
       dryRun: true,
     });
   });
@@ -126,7 +139,7 @@ describe("app cli", () => {
       count: 3,
       disableAiEvaluation: true,
       scoreThreshold: 55,
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
       dryRun: false,
     });
   });
@@ -149,7 +162,7 @@ describe("app cli", () => {
       count: 7,
       disableAiEvaluation: true,
       scoreThreshold: 65,
-      useAiScoreAdjustment: true,
+      scoringMode: "ai",
     });
   });
 
@@ -168,7 +181,7 @@ describe("app cli", () => {
       count: 2,
       disableAiEvaluation: false,
       scoreThreshold: 40,
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
       dryRun: true,
     });
   });

@@ -704,9 +704,9 @@ describe("scoreJob", () => {
       profile,
     );
 
-    expect(result.totalScore).toBeLessThanOrEqual(30);
+    expect(result.totalScore).toBeLessThanOrEqual(40);
     expect(result.breakdown.location).toBe(2);
-    expect(result.breakdown.bonus).toBeLessThan(0);
+    expect(result.breakdown.bonus).toBeLessThanOrEqual(4);
   });
 
   it("heavily penalizes QA and testing-oriented roles even when the title still says software engineer", () => {
@@ -1061,8 +1061,8 @@ describe("scoreJob", () => {
         workAuthorization: "authorized",
         openQuestionsCount: 0,
       },
-      30,
       40,
+      50,
     ],
     [
       "java hybrid istanbul",
@@ -1157,8 +1157,8 @@ describe("scoreJob", () => {
         workAuthorization: "authorized",
         openQuestionsCount: 0,
       },
-      25,
-      35,
+      40,
+      45,
     ],
     [
       "rollic go python istanbul",
@@ -1199,14 +1199,136 @@ describe("scoreJob", () => {
         workAuthorization: "authorized",
         openQuestionsCount: 0,
       },
-      30,
-      35,
+      40,
+      45,
+    ],
+    [
+      "altamira remote node react php mixed stack",
+      {
+        title: "Full-Stack Developer (Node.js + React)",
+        company: "Altamira",
+        location: "Remote",
+        remoteType: "remote",
+        seniority: "unknown",
+        mustHaveSkills: [
+          "Deep hands-on experience with Node.js in production environments",
+          "Strong knowledge of TypeScript and modern JavaScript",
+          "Experience designing and implementing RESTful APIs",
+          "Understanding of backend architecture patterns (layered architecture, modular design, separation of concerns)",
+          "Solid understanding of asynchronous programming, the event loop, and performance considerations in Node.js",
+          "Experience working with SQL databases, including query optimization, transactions, and migrations",
+          "Knowledge of authentication and authorization mechanisms (JWT, OAuth, role-based access)",
+          "Experience with error handling, logging, and monitoring in back-end services",
+          "Ability to write maintainable and testable code (unit and integration tests)",
+          "Practical experience working with PHP and Laravel in production environments",
+          "Comfort working with and debugging legacy PHP/Laravel codebases",
+          "Strong experience building complex applications with React",
+          "Confident use of modern React patterns (hooks, context, controlled components)",
+          "Experience with state management solutions (Redux, React Query, or similar)",
+          "Ability to design and implement scalable component architectures",
+          "Strong understanding of front-end performance optimization (memoization, rendering control, code splitting)",
+          "Experience working with forms, validation, and complex UI state",
+          "Knowledge of accessibility (a11y) and cross-browser compatibility",
+          "Experience integrating front-end applications with APIs and handling asynchronous data flows",
+          "Ability to maintain consistent UI/UX in large codebases",
+        ],
+        niceToHaveSkills: [],
+        technologies: [
+          "Node.js",
+          "TypeScript",
+          "JavaScript",
+          "React",
+          "PHP",
+          "Laravel",
+          "SQL",
+          "RESTful APIs",
+          "JWT",
+          "OAuth",
+          "Redux",
+          "React Query",
+          "HTML",
+          "CSS",
+          "Accessibility (a11y)",
+        ],
+        yearsRequired: 3,
+        platform: "linkedin",
+        applicationType: "external",
+        visaSponsorship: "unknown",
+        workAuthorization: "authorized",
+        openQuestionsCount: 2,
+      },
+      40,
+      45,
     ],
   ])("keeps DB-derived %s case stable against the actual profile", (_label, job, minScore, maxExclusive) => {
     const result = scoreJob(job, actualProfile);
 
     expect(result.totalScore).toBeGreaterThanOrEqual(minScore);
     expect(result.totalScore).toBeLessThan(maxExclusive);
+  });
+
+  it("does not bury the Altamira full-stack role despite secondary PHP/Laravel requirements", () => {
+    const result = scoreJob(
+      {
+        title: "Full-Stack Developer (Node.js + React)",
+        company: "Altamira",
+        location: "Remote",
+        remoteType: "remote",
+        seniority: "unknown",
+        mustHaveSkills: [
+          "Deep hands-on experience with Node.js in production environments",
+          "Strong knowledge of TypeScript and modern JavaScript",
+          "Experience designing and implementing RESTful APIs",
+          "Understanding of backend architecture patterns (layered architecture, modular design, separation of concerns)",
+          "Solid understanding of asynchronous programming, the event loop, and performance considerations in Node.js",
+          "Experience working with SQL databases, including query optimization, transactions, and migrations",
+          "Knowledge of authentication and authorization mechanisms (JWT, OAuth, role-based access)",
+          "Experience with error handling, logging, and monitoring in back-end services",
+          "Ability to write maintainable and testable code (unit and integration tests)",
+          "Practical experience working with PHP and Laravel in production environments",
+          "Comfort working with and debugging legacy PHP/Laravel codebases",
+          "Strong experience building complex applications with React",
+          "Confident use of modern React patterns (hooks, context, controlled components)",
+          "Experience with state management solutions (Redux, React Query, or similar)",
+          "Ability to design and implement scalable component architectures",
+          "Strong understanding of front-end performance optimization (memoization, rendering control, code splitting)",
+          "Experience working with forms, validation, and complex UI state",
+          "Knowledge of accessibility (a11y) and cross-browser compatibility",
+          "Experience integrating front-end applications with APIs and handling asynchronous data flows",
+          "Ability to maintain consistent UI/UX in large codebases",
+        ],
+        niceToHaveSkills: [],
+        technologies: [
+          "Node.js",
+          "TypeScript",
+          "JavaScript",
+          "React",
+          "PHP",
+          "Laravel",
+          "SQL",
+          "RESTful APIs",
+          "JWT",
+          "OAuth",
+          "Redux",
+          "React Query",
+          "HTML",
+          "CSS",
+          "Accessibility (a11y)",
+        ],
+        yearsRequired: 3,
+        platform: "linkedin",
+        applicationType: "external",
+        visaSponsorship: "unknown",
+        workAuthorization: "authorized",
+        openQuestionsCount: 2,
+      },
+      actualProfile,
+    );
+
+    expect(result.totalScore).toBeGreaterThanOrEqual(40);
+    expect(result.breakdown.skill).toBeGreaterThan(0);
+    expect(result.breakdown.tech).toBeGreaterThan(0);
+    expect(result.breakdown.bonus).toBeGreaterThan(0);
   });
 
   it("ranks DB-derived cases in the expected order for the actual profile", () => {

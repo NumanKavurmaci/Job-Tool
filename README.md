@@ -71,6 +71,7 @@ npm run dev -- decide "https://job-link-here"
 ```bash
 npm run dev -- decide "https://job-link-here"
 npm run dev -- explore "https://job-link-here"
+npm run dev -- dashboard --limit 5
 npm run dev -- explore-batch "https://www.linkedin.com/jobs/collections/top-applicant" --count 25
 npm run dev -- score "https://job-link-here"
 npm run dev -- build-profile --resume "./cv.pdf" --linkedin "https://linkedin.com/in/your-handle"
@@ -90,6 +91,7 @@ npm run dev -- external-apply "https://example.com/apply"
 ## 🧠 Command Guide
 
 - `easy-apply`: LinkedIn Easy Apply only
+- `dashboard`: prints a dashboard snapshot from persisted recommendations, reviews, and firm stats
 - `explore`: evaluates one job and saves a recommendation snapshot without applying
 - `explore-batch`: evaluates jobs from a LinkedIn collection and saves recommendation records without entering any apply flow
 - `easy-apply-batch`: Easy Apply-only batch mode; defaults to [LinkedIn Easy Apply jobs](https://www.linkedin.com/jobs/collections/easy-apply) if no URL is provided
@@ -100,13 +102,25 @@ npm run dev -- external-apply "https://example.com/apply"
 
 - `--count <number>` controls how many jobs are processed
 - `--score-threshold <number>` controls the minimum score required
+- `--scoring local|ai` selects deterministic local scoring or direct LLM scoring
 - `--disable-ai-evaluation` skips AI evaluation and processes matching jobs directly
 
 ### Explore flags
 
 - `--count <number>` controls how many jobs are evaluated
 - `--score-threshold <number>` controls which jobs become recommendations
+- `--scoring local|ai` selects deterministic local scoring or direct LLM scoring
 - `--disable-ai-evaluation` marks discovered jobs as recommended without extraction/scoring
+
+### Dashboard flags
+
+- `--limit <number>` controls how many recommendations and recent reviews are shown
+
+### Scoring modes
+
+- `--scoring local` uses the built-in deterministic scorer
+- `--scoring ai` asks the configured LLM to produce the job score directly
+- legacy `--ai-score-adjustment` still maps to `--scoring ai` for compatibility
 
 ### External apply behavior
 

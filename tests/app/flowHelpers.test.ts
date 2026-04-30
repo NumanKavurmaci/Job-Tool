@@ -122,7 +122,7 @@ describe("app flow helpers", () => {
     const evaluate = createBatchJobEvaluator({
       disableAiEvaluation: true,
       scoreThreshold: 60,
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
       scoringProfile: {} as any,
       deps,
     });
@@ -154,7 +154,7 @@ describe("app flow helpers", () => {
     const evaluate = createBatchJobEvaluator({
       disableAiEvaluation: false,
       scoreThreshold: 60,
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
       scoringProfile: {} as any,
       evaluationPage: { fake: true } as any,
       deps,
@@ -212,7 +212,7 @@ describe("app flow helpers", () => {
     const evaluate = createBatchJobEvaluator({
       disableAiEvaluation: false,
       scoreThreshold: 60,
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
       scoringProfile: {} as any,
       evaluationPage: { fake: true } as any,
       deps,
@@ -249,7 +249,7 @@ describe("app flow helpers", () => {
     const evaluate = createBatchJobEvaluator({
       disableAiEvaluation: false,
       scoreThreshold: 60,
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
       scoringProfile: {} as any,
       evaluationPage: { fake: true } as any,
       deps,
@@ -323,7 +323,7 @@ describe("app flow helpers", () => {
     const evaluate = createBatchJobEvaluator({
       disableAiEvaluation: false,
       scoreThreshold: 60,
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
       scoringProfile: {} as any,
       evaluationPage: { fake: true } as any,
       deps,
@@ -357,7 +357,7 @@ describe("app flow helpers", () => {
     const evaluate = createBatchJobEvaluator({
       disableAiEvaluation: false,
       scoreThreshold: 60,
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
       scoringProfile: {} as any,
       evaluationPage: { fake: true } as any,
       deps,
@@ -444,7 +444,7 @@ describe("app flow helpers", () => {
     const evaluate = createBatchJobEvaluator({
       disableAiEvaluation: false,
       scoreThreshold: 40,
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
       scoringProfile: createScoringProfile(),
       evaluationPage: { fake: true } as any,
       deps,
@@ -527,7 +527,7 @@ describe("app flow helpers", () => {
     const evaluate = createBatchJobEvaluator({
       disableAiEvaluation: false,
       scoreThreshold: 40,
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
       scoringProfile: createScoringProfile(),
       evaluationPage: { fake: true } as any,
       deps,
@@ -567,7 +567,7 @@ describe("app flow helpers", () => {
     const evaluate = createBatchJobEvaluator({
       disableAiEvaluation: false,
       scoreThreshold: 60,
-      useAiScoreAdjustment: true,
+      scoringMode: "ai",
       scoringProfile: {} as any,
       evaluationPage: evaluationPage as any,
       deps,
@@ -622,7 +622,7 @@ describe("app flow helpers", () => {
     const evaluate = createBatchJobEvaluator({
       disableAiEvaluation: false,
       scoreThreshold: 60,
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
       source: "explore-batch",
       systemScope: "explore.batch",
       recommendationPolicy: "all-evaluated",
@@ -689,7 +689,7 @@ describe("app flow helpers", () => {
     const evaluate = createBatchJobEvaluator({
       disableAiEvaluation: false,
       scoreThreshold: 40,
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
       allowExternalLinkedInApply: true,
       recommendationPolicy: "apply-only",
       source: "apply-batch",
@@ -759,7 +759,7 @@ describe("app flow helpers", () => {
     const evaluate = createBatchJobEvaluator({
       disableAiEvaluation: false,
       scoreThreshold: 40,
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
       allowExternalLinkedInApply: true,
       recommendationPolicy: "apply-only",
       source: "apply-batch",
@@ -816,7 +816,7 @@ describe("app flow helpers", () => {
     const evaluate = createBatchJobEvaluator({
       disableAiEvaluation: false,
       scoreThreshold: 40,
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
       allowExternalLinkedInApply: true,
       scoringProfile: createScoringProfile(),
       evaluationPage: { fake: true } as any,
@@ -874,7 +874,7 @@ describe("app flow helpers", () => {
     const evaluate = createBatchJobEvaluator({
       disableAiEvaluation: false,
       scoreThreshold: 40,
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
       allowExternalLinkedInApply: false,
       scoringProfile: createScoringProfile(),
       evaluationPage: { fake: true } as any,
@@ -916,7 +916,7 @@ describe("app flow helpers", () => {
     const evaluate = createBatchJobEvaluator({
       disableAiEvaluation: false,
       scoreThreshold: 60,
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
       scoringProfile: {} as any,
       deps,
     });
@@ -957,7 +957,7 @@ describe("app flow helpers", () => {
     const evaluate = createBatchJobEvaluator({
       disableAiEvaluation: false,
       scoreThreshold: 60,
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
       scoringProfile: {
         workplacePolicyBypassLocations: ["Europe"],
       } as any,
@@ -1013,7 +1013,7 @@ describe("app flow helpers", () => {
     const evaluate = createBatchJobEvaluator({
       disableAiEvaluation: false,
       scoreThreshold: 60,
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
       scoringProfile: { workplacePolicyBypassLocations: ["Europe"] } as any,
       evaluationPage: {} as any,
       deps,
@@ -1060,7 +1060,7 @@ describe("app flow helpers", () => {
     const evaluate = createBatchJobEvaluator({
       disableAiEvaluation: false,
       scoreThreshold: 60,
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
       scoringProfile: {} as any,
       evaluationPage: {} as any,
       deps,
@@ -1102,7 +1102,7 @@ describe("app flow helpers", () => {
     const evaluate = createBatchJobEvaluator({
       disableAiEvaluation: false,
       scoreThreshold: 60,
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
       scoringProfile: {} as any,
       evaluationPage: {} as any,
       deps,
@@ -1166,7 +1166,7 @@ describe("app flow helpers", () => {
     const evaluate = createBatchJobEvaluator({
       disableAiEvaluation: false,
       scoreThreshold: 60,
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
       scoringProfile: { workplacePolicyBypassLocations: ["Europe"] } as any,
       evaluationPage: {} as any,
       deps,
@@ -1185,3 +1185,4 @@ describe("app flow helpers", () => {
     expect(deps.prisma.systemLog.create).not.toHaveBeenCalled();
   });
 });
+

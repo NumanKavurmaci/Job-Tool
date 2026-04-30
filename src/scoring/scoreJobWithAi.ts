@@ -2,10 +2,19 @@ import type { NormalizedJob } from "../domain/job.js";
 import type { CandidateProfile } from "../profile/candidate.js";
 import { scoreJob, type JobScore } from "./scoreJob.js";
 
-export type AiScoreAdjustment = {
-  adjustment: number;
+export type AiScoreBreakdown = {
+  skill: number;
+  seniority: number;
+  location: number;
+  tech: number;
+  bonus: number;
+};
+
+export type AiScoreResult = {
+  score: number;
   rationale: string;
   confidence: "low" | "medium" | "high";
+  breakdown?: Partial<AiScoreBreakdown>;
 };
 
 type ScoreJobWithAiArgs = {
@@ -18,22 +27,26 @@ type ScoreJobWithAiArgs = {
   };
 };
 
-const AI_ADJUSTMENT_LIMIT = 15;
-
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
+function clampBreakdownValue(value: unknown): number {
+  const numeric = typeof value === "number" ? value : Number(value ?? 0);
+  return Number.isFinite(numeric) ? clamp(Math.round(numeric), -25, 100) : 0;
+}
+
 function buildScoringPrompt(job: NormalizedJob, profile: CandidateProfile): string {
   return [
-    "You are refining a job-fit score for a software candidate.",
+    "You are scoring a software job for a candidate.",
     "You must return JSON only with this shape:",
-    '{"adjustment": number, "rationale": string, "confidence": "low" | "medium" | "high"}',
-    `The adjustment must be an integer between -${AI_ADJUSTMENT_LIMIT} and ${AI_ADJUSTMENT_LIMIT}.`,
-    "Use the adjustment to capture semantic fit and transferable overlap that exact keyword scoring can miss.",
-    "Do not overfit to one specific role family.",
-    "Reward strong adjacency across frontend, backend, full-stack, platform, automation, and cloud when the overlap is credible.",
-    "Do not compensate for hard policy issues like on-site mismatch, missing required fields, or non-Easy Apply constraints.",
+    '{"score": number, "rationale": string, "confidence": "low" | "medium" | "high", "breakdown": {"skill": number, "seniority": number, "location": number, "tech": number, "bonus": number}}',
+    "Score must be an integer between 0 and 100.",
+    "Breakdown values should explain the score, but the total score is authoritative.",
+    "Use semantic evaluation, not just exact keyword overlap.",
+    "Reward credible overlap across backend, frontend, full-stack, platform, automation, and cloud.",
+    "Do not let one secondary technology erase a strong primary stack match.",
+    "Do not compensate for hard policy blockers like on-site mismatch or missing required fields.",
     "",
     `Job title: ${job.title ?? "unknown"}`,
     `Job company: ${job.company ?? "unknown"}`,
@@ -54,69 +67,73 @@ function buildScoringPrompt(job: NormalizedJob, profile: CandidateProfile): stri
   ].join("\n");
 }
 
-export function parseAiScoreAdjustment(text: string): AiScoreAdjustment {
-  const parsed = JSON.parse(text) as Partial<AiScoreAdjustment>;
-  const rawAdjustment =
-    typeof parsed.adjustment === "number"
-      ? parsed.adjustment
-      : Number(parsed.adjustment ?? 0);
-  const adjustment = clamp(
-    Number.isFinite(rawAdjustment) ? Math.round(rawAdjustment) : 0,
-    -AI_ADJUSTMENT_LIMIT,
-    AI_ADJUSTMENT_LIMIT,
-  );
+export function parseAiScoreAdjustment(text: string): AiScoreResult {
+  const parsed = JSON.parse(text) as Partial<AiScoreResult>;
+  const rawScore = typeof parsed.score === "number" ? parsed.score : Number(parsed.score ?? 0);
+  const score = clamp(Number.isFinite(rawScore) ? Math.round(rawScore) : 0, 0, 100);
 
   return {
-    adjustment,
+    score,
     rationale:
       typeof parsed.rationale === "string" && parsed.rationale.trim()
         ? parsed.rationale.trim()
-        : "AI fit adjustment did not include a rationale.",
+        : "AI job scoring did not include a rationale.",
     confidence:
       parsed.confidence === "low" ||
       parsed.confidence === "medium" ||
       parsed.confidence === "high"
         ? parsed.confidence
         : "medium",
+    ...(parsed.breakdown && typeof parsed.breakdown === "object"
+      ? {
+          breakdown: {
+            skill: clampBreakdownValue(parsed.breakdown.skill),
+            seniority: clampBreakdownValue(parsed.breakdown.seniority),
+            location: clampBreakdownValue(parsed.breakdown.location),
+            tech: clampBreakdownValue(parsed.breakdown.tech),
+            bonus: clampBreakdownValue(parsed.breakdown.bonus),
+          },
+        }
+      : {}),
   };
 }
 
 export async function scoreJobWithAi(args: ScoreJobWithAiArgs): Promise<JobScore> {
-  const baseline = scoreJob(args.job, args.profile);
-
   try {
     const response = await args.completePrompt(buildScoringPrompt(args.job, args.profile));
     const ai = parseAiScoreAdjustment(response.text);
-    const totalScore = clamp((baseline.baselineScore ?? baseline.totalScore) + ai.adjustment, 0, 100);
 
     args.logger?.info?.(
       {
-        event: "scoring.ai_adjustment.applied",
-        baselineScore: baseline.baselineScore ?? baseline.totalScore,
-        totalScore,
-        adjustment: ai.adjustment,
+        event: "scoring.ai_score.applied",
+        totalScore: ai.score,
         confidence: ai.confidence,
       },
-      "Applied AI fit adjustment",
+      "Applied AI job score",
     );
 
     return {
-      ...baseline,
-      totalScore,
-      aiAdjustment: ai.adjustment,
+      totalScore: ai.score,
+      breakdown: {
+        skill: ai.breakdown?.skill ?? 0,
+        seniority: ai.breakdown?.seniority ?? 0,
+        location: ai.breakdown?.location ?? 0,
+        tech: ai.breakdown?.tech ?? 0,
+        bonus: ai.breakdown?.bonus ?? 0,
+      },
       aiReasoning: ai.rationale,
       aiConfidence: ai.confidence,
-      scoringSource: "deterministic+ai",
+      scoringSource: "llm",
     };
   } catch (error) {
     args.logger?.warn?.(
       {
-        event: "scoring.ai_adjustment.failed",
+        event: "scoring.ai_score.failed",
         reason: error instanceof Error ? error.message : String(error),
       },
-      "AI fit adjustment failed, falling back to deterministic score",
+      "AI job scoring failed, falling back to deterministic score",
     );
 
-    return baseline;
+    return scoreJob(args.job, args.profile);
   }
 }

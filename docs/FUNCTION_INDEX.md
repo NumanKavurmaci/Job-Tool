@@ -191,6 +191,13 @@ Important helper clusters in this file:
 
 ## Candidate and Answers
 
+### [src/dashboard/loadDashboardSnapshot.ts](../src/dashboard/loadDashboardSnapshot.ts)
+
+- `loadDashboardSnapshot(...)`
+  Loads dashboard-facing metrics, recommendations, review history, and firm rollups from persisted data.
+- `formatDashboardSummary(...)`
+  Renders the dashboard snapshot as a readable terminal summary.
+
 ### [src/candidate/buildMasterProfile.ts](../src/candidate/buildMasterProfile.ts)
 
 - `buildMasterProfile(...)`
@@ -225,3 +232,6 @@ Important helper clusters in this file:
 
 - "Where are run reports built?"
   Open [src/app/observability.ts](../src/app/observability.ts) and [src/utils/runReports.ts](../src/utils/runReports.ts).
+
+- "Where does the dashboard summary come from?"
+  Open [src/dashboard/loadDashboardSnapshot.ts](../src/dashboard/loadDashboardSnapshot.ts), then the persistence helpers in [src/utils/jobHistory.ts](../src/utils/jobHistory.ts) and [src/utils/jobPersistence.ts](../src/utils/jobPersistence.ts).

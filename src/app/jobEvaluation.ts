@@ -1,4 +1,5 @@
 import { shouldBypassWorkplacePolicy } from "../policy/policyEngine.js";
+import type { ScoringMode } from "./cli.js";
 import type { AppDeps } from "./deps.js";
 
 export type ScoringProfile = Awaited<ReturnType<AppDeps["loadCandidateProfile"]>>;
@@ -31,7 +32,7 @@ export async function analyzeExtractedJob(args: {
   extracted: Awaited<ReturnType<AppDeps["extractJobText"]>>;
   scoringProfile: ScoringProfile;
   deps: AppDeps;
-  useAiScoreAdjustment?: boolean;
+  scoringMode?: ScoringMode;
   allowExternalLinkedInApply?: boolean;
 }) {
   const hasStructuredLocation = Boolean(args.extracted.location);
@@ -42,7 +43,7 @@ export async function analyzeExtractedJob(args: {
     excludeLocation: hasStructuredLocation,
   });
   const normalized = args.deps.normalizeParsedJob(parseResult.parsed, args.extracted);
-  const score = args.useAiScoreAdjustment
+  const score = args.scoringMode === "ai"
     ? await args.deps.scoreJobWithAi({
         job: normalized,
         profile: args.scoringProfile,

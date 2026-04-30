@@ -24,6 +24,7 @@ import {
 } from "./flows/profileFlows.js";
 import { persistSystemEvent } from "./observability.js";
 import { runExploreBatchFlow } from "./flows/exploreFlows.js";
+import { formatDashboardSummary, loadDashboardSnapshot } from "../dashboard/loadDashboardSnapshot.js";
 
 function renderCliSummary(
   result: Awaited<ReturnType<typeof main>>,
@@ -44,6 +45,10 @@ function renderCliSummary(
           : []),
       ].join("\n") + "\n"
     );
+  }
+
+  if ("dashboard" in result) {
+    return formatDashboardSummary(result.dashboard);
   }
 
   if (!("easyApply" in result)) {
@@ -130,6 +135,15 @@ async function runCommand(
       return runBuildProfileFlow(args, deps);
     case "answer-questions":
       return runAnswerQuestionsFlow(args, deps);
+    case "dashboard":
+      return {
+        dashboard: await loadDashboardSnapshot({
+          prisma: deps.prisma,
+          recommendationLimit: args.limit,
+          reviewLimit: args.limit,
+          firmLimit: Math.min(args.limit, 5),
+        }),
+      };
     case "easy-apply":
       return args.dryRun
         ? runEasyApplyDryRunFlow(args, deps)
@@ -156,7 +170,7 @@ async function runCommand(
     case "decide":
     case "explore":
       return runJobFlow(args.mode, args.url, deps, {
-        useAiScoreAdjustment: args.useAiScoreAdjustment,
+        scoringMode: args.scoringMode,
       });
   }
 }

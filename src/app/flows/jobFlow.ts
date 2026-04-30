@@ -4,6 +4,7 @@ import {
   persistJobRecommendationRecord,
 } from "../../utils/jobPersistence.js";
 import { LINKEDIN_BROWSER_SESSION_OPTIONS, PARSE_VERSION } from "../constants.js";
+import type { ScoringMode } from "../cli.js";
 import type { AppDeps } from "../deps.js";
 import { analyzeExtractedJob, resolveDecisionOutcome } from "../jobEvaluation.js";
 import { persistJobHistory, persistRunArtifact, persistSystemEvent } from "../observability.js";
@@ -13,7 +14,7 @@ export async function runJobFlow(
   url: string,
   deps: AppDeps,
   options?: {
-    useAiScoreAdjustment?: boolean;
+    scoringMode?: ScoringMode;
   },
 ) {
   const guaranteedStartEvent = {
@@ -52,7 +53,7 @@ export async function runJobFlow(
     extracted,
     scoringProfile: profile,
     deps,
-    ...(options?.useAiScoreAdjustment ? { useAiScoreAdjustment: true } : {}),
+    ...(options?.scoringMode ? { scoringMode: options.scoringMode } : {}),
   });
   const parsed = analysis.parsed;
   const normalized = analysis.normalized;

@@ -66,7 +66,7 @@ This file maps all `src/` files to their purpose.
 
 ## `src/dashboard/`
 
-- `src/dashboard/`: Currently an empty placeholder directory. No active production code lives here.
+- [src/dashboard/loadDashboardSnapshot.ts](../src/dashboard/loadDashboardSnapshot.ts): Loads dashboard-facing overview metrics, recent recommendations, review history, and top firms from Prisma-backed persistence.
 
 ## `src/db/`
 

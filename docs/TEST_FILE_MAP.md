@@ -51,7 +51,7 @@ This file maps all test files to the behavior they protect.
 
 ## `tests/dashboard/`
 
-- `tests/dashboard/`: Currently an empty placeholder directory matching the unused `src/dashboard/` folder.
+- [tests/dashboard/loadDashboardSnapshot.test.ts](../tests/dashboard/loadDashboardSnapshot.test.ts): Covers dashboard snapshot aggregation and terminal summary formatting.
 
 ## `tests/db/`
 

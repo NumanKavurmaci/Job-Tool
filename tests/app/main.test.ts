@@ -45,6 +45,11 @@ async function loadIndexModule(readFileMock?: ReturnType<typeof vi.fn>) {
   const upsertMock = vi.fn().mockResolvedValue({ id: "job_1", company: "Adapter Company" });
   const createDecisionMock = vi.fn().mockResolvedValue({ id: "decision_1" });
   const createRecommendationMock = vi.fn().mockResolvedValue({ id: "recommendation_1" });
+  const countRecommendationMock = vi.fn().mockResolvedValue(0);
+  const findManyRecommendationMock = vi.fn().mockResolvedValue([]);
+  const countJobReviewHistoryMock = vi.fn().mockResolvedValue(0);
+  const findManyJobReviewHistoryMock = vi.fn().mockResolvedValue([]);
+  const findManyFirmMock = vi.fn().mockResolvedValue([]);
   const disconnectMock = vi.fn();
   const infoMock = vi.fn();
   const warnMock = vi.fn();
@@ -87,6 +92,11 @@ async function loadIndexModule(readFileMock?: ReturnType<typeof vi.fn>) {
       upsertMock,
       createDecisionMock,
       createRecommendationMock,
+      countRecommendationMock,
+      findManyRecommendationMock,
+      countJobReviewHistoryMock,
+      findManyJobReviewHistoryMock,
+      findManyFirmMock,
       disconnectMock,
       infoMock,
       warnMock,
@@ -118,16 +128,23 @@ async function loadIndexModule(readFileMock?: ReturnType<typeof vi.fn>) {
         firm: {
           upsert: firmUpsertMock,
           update: firmUpdateMock,
+          findMany: findManyFirmMock,
         },
         jobPosting: { upsert: upsertMock, count: jobPostingCountMock },
         applicationDecision: { create: createDecisionMock, findMany: findDecisionMock },
-        jobRecommendation: { upsert: createRecommendationMock },
+        jobRecommendation: {
+          upsert: createRecommendationMock,
+          count: countRecommendationMock,
+          findMany: findManyRecommendationMock,
+        },
         candidateProfileSnapshot: { create: createSnapshotMock },
         preparedAnswerSet: { create: createPreparedAnswerSetMock },
         systemLog: { create: createSystemLogMock },
         jobReviewHistory: {
           create: createJobReviewHistoryMock,
           findFirst: findFirstJobReviewHistoryMock,
+          count: countJobReviewHistoryMock,
+          findMany: findManyJobReviewHistoryMock,
         },
         $disconnect: disconnectMock,
       },
@@ -439,7 +456,7 @@ describe("phase 5 index flows", () => {
       count: 1,
       disableAiEvaluation: false,
       scoreThreshold: 40,
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
       dryRun: true,
     });
 
@@ -450,7 +467,7 @@ describe("phase 5 index flows", () => {
       count: 3,
       disableAiEvaluation: false,
       scoreThreshold: 40,
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
       dryRun: true,
     });
 
@@ -461,7 +478,7 @@ describe("phase 5 index flows", () => {
       count: 2,
       disableAiEvaluation: false,
       scoreThreshold: 40,
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
       dryRun: true,
     });
 
@@ -480,7 +497,7 @@ describe("phase 5 index flows", () => {
       count: 2,
       disableAiEvaluation: true,
       scoreThreshold: 60,
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
       dryRun: true,
     });
 
@@ -498,7 +515,7 @@ describe("phase 5 index flows", () => {
       count: 1,
       disableAiEvaluation: false,
       scoreThreshold: 40,
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
       dryRun: false,
     });
 
@@ -517,9 +534,86 @@ describe("phase 5 index flows", () => {
       count: 5,
       disableAiEvaluation: true,
       scoreThreshold: 60,
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
       dryRun: false,
     });
+  });
+
+  it("loads a dashboard snapshot from persisted data", async () => {
+    const { module, mocks, deps } = await loadIndexModule();
+    mocks.jobPostingCountMock.mockResolvedValue(11);
+    mocks.countRecommendationMock
+      .mockResolvedValueOnce(7)
+      .mockResolvedValueOnce(5);
+    mocks.countJobReviewHistoryMock
+      .mockResolvedValueOnce(3)
+      .mockResolvedValueOnce(2)
+      .mockResolvedValueOnce(1);
+    mocks.findManyRecommendationMock.mockResolvedValue([
+      {
+        source: "apply-batch",
+        score: 74,
+        decision: "APPLY",
+        policyAllowed: true,
+        summary: "Strong overall fit.",
+        recommendationStatus: "RECOMMENDED",
+        updatedAt: new Date("2026-04-30T09:30:00.000Z"),
+        jobPosting: {
+          url: "https://www.linkedin.com/jobs/view/1",
+          title: "Full-Stack Engineer",
+          company: "Acme",
+          location: "Remote",
+          platform: "linkedin",
+        },
+      },
+    ]);
+    mocks.findManyJobReviewHistoryMock.mockResolvedValue([
+      {
+        jobUrl: "https://www.linkedin.com/jobs/view/2",
+        status: "SUBMITTED",
+        source: "apply-batch",
+        score: 68,
+        decision: "APPLY",
+        summary: "Submitted successfully.",
+        createdAt: new Date("2026-04-30T08:45:00.000Z"),
+      },
+    ]);
+    mocks.findManyFirmMock.mockResolvedValue([
+      {
+        name: "Acme",
+        totalReviewedJobs: 4,
+        appliedJobs: 2,
+        skippedJobs: 1,
+        logoUrl: null,
+        linkedinUrl: "https://www.linkedin.com/company/acme/",
+      },
+    ]);
+
+    const result = await module.main(["dashboard", "--limit", "3"], deps);
+
+    expect(result.dashboard.overview).toEqual({
+      totalJobs: 11,
+      totalRecommendations: 7,
+      activeRecommendations: 5,
+      submittedReviews: 3,
+      readyToSubmitReviews: 2,
+      failedReviews: 1,
+    });
+    expect(mocks.findManyRecommendationMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        take: 3,
+      }),
+    );
+    expect(mocks.findManyJobReviewHistoryMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        take: 3,
+      }),
+    );
+    expect(mocks.findManyFirmMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        take: 3,
+      }),
+    );
   });
 
   it("rejects missing candidate prep flags", async () => {
@@ -537,7 +631,7 @@ describe("phase 5 index flows", () => {
       count: 1,
       disableAiEvaluation: false,
       scoreThreshold: 40,
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
       dryRun: false,
     });
     expect(() =>
@@ -957,12 +1051,12 @@ describe("phase 5 index flows", () => {
     expect(module.parseCliArgs(["score", "https://jobs.example.com/1"])).toEqual({
       mode: "score",
       url: "https://jobs.example.com/1",
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
     });
     expect(module.parseCliArgs(["https://jobs.example.com/1"])).toEqual({
       mode: "decide",
       url: "https://jobs.example.com/1",
-      useAiScoreAdjustment: false,
+      scoringMode: "local",
     });
   });
 
@@ -2553,3 +2647,4 @@ describe("phase 5 index flows", () => {
     });
   });
 });
+

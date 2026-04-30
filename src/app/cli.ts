@@ -6,8 +6,10 @@ import {
   isLinkedInCollectionUrl,
 } from "./constants.js";
 
+export type ScoringMode = "local" | "ai";
+
 export type CliArgs =
-  | { mode: "score" | "decide" | "explore"; url: string; useAiScoreAdjustment: boolean }
+  | { mode: "score" | "decide" | "explore"; url: string; scoringMode: ScoringMode }
   | { mode: "easy-apply"; url: string; resumePath: string; dryRun?: boolean }
   | { mode: "apply"; url: string; resumePath: string; dryRun?: boolean }
   | { mode: "external-apply"; url: string; resumePath: string; dryRun?: boolean }
@@ -17,7 +19,7 @@ export type CliArgs =
       count: number;
       disableAiEvaluation: boolean;
       scoreThreshold: number;
-      useAiScoreAdjustment: boolean;
+      scoringMode: ScoringMode;
     }
   | {
       mode: "easy-apply-batch";
@@ -26,7 +28,7 @@ export type CliArgs =
       count: number;
       disableAiEvaluation: boolean;
       scoreThreshold: number;
-      useAiScoreAdjustment: boolean;
+      scoringMode: ScoringMode;
       dryRun?: boolean;
     }
   | {
@@ -36,7 +38,7 @@ export type CliArgs =
       count: number;
       disableAiEvaluation: boolean;
       scoreThreshold: number;
-      useAiScoreAdjustment: boolean;
+      scoringMode: ScoringMode;
       dryRun?: boolean;
     }
   | {
@@ -49,6 +51,10 @@ export type CliArgs =
       resumePath: string;
       linkedinUrl?: string;
       questionsPath: string;
+    }
+  | {
+      mode: "dashboard";
+      limit: number;
     };
 
 type LinkedInBatchMode = "easy-apply-batch" | "apply-batch" | "explore-batch";
@@ -64,6 +70,7 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
     "--questions",
     "--count",
     "--score-threshold",
+    "--limit",
   ]);
 
   const getFlag = (name: string): string | undefined => {
@@ -109,12 +116,22 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
     first === "easy-apply-dry-run" ||
     first === "apply-dry-run" ||
     first === "external-apply-dry-run";
-  const useAiScoreAdjustment = hasFlag("--ai-score-adjustment");
+  const scoringMode = readScoringMode({
+    getFlag,
+    hasLegacyAiFlag: hasFlag("--ai-score-adjustment"),
+  });
 
   if (!first) {
     throw new Error(
-      'Usage: npm run dev -- <job-url> | npm run dev -- score "<job-url>" | npm run dev -- decide "<job-url>" | npm run dev -- explore "<job-url>" | npm run dev -- explore-batch "<linkedin-collection-url>" --count 25 | npm run dev -- build-profile --resume "./cv.pdf" --linkedin "https://linkedin.com/in/..." | npm run dev -- answer-questions --resume "./cv.pdf" --linkedin "https://linkedin.com/in/..." --questions "./questions.json" | npm run dev -- easy-apply "<linkedin-job-url>" --dry-run | npm run dev -- apply "<linkedin-job-or-collection-url>" --dry-run --count 3 | npm run dev -- external-apply "<external-application-url>" --dry-run',
+      'Usage: npm run dev -- <job-url> | npm run dev -- score "<job-url>" | npm run dev -- decide "<job-url>" | npm run dev -- explore "<job-url>" | npm run dev -- explore-batch "<linkedin-collection-url>" --count 25 | npm run dev -- dashboard --limit 5 | npm run dev -- build-profile --resume "./cv.pdf" --linkedin "https://linkedin.com/in/..." | npm run dev -- answer-questions --resume "./cv.pdf" --linkedin "https://linkedin.com/in/..." --questions "./questions.json" | npm run dev -- easy-apply "<linkedin-job-url>" --dry-run | npm run dev -- apply "<linkedin-job-or-collection-url>" --dry-run --count 3 | npm run dev -- external-apply "<external-application-url>" --dry-run',
     );
+  }
+
+  if (first === "dashboard") {
+    return {
+      mode: "dashboard",
+      limit: getIntegerFlag("--limit") ?? 5,
+    };
   }
 
   if (first === "build-profile") {
@@ -153,7 +170,7 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
       positionalArgs: getPositionalTailArgs(),
       getIntegerFlag,
       hasFlag,
-      useAiScoreAdjustment,
+      scoringMode,
     });
   }
 
@@ -176,7 +193,7 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
       positionalArgs: getPositionalTailArgs(),
       getIntegerFlag,
       hasFlag,
-      useAiScoreAdjustment,
+      scoringMode,
       dryRun,
     });
   }
@@ -200,7 +217,7 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
       positionalArgs: getPositionalTailArgs(),
       getIntegerFlag,
       hasFlag,
-      useAiScoreAdjustment,
+      scoringMode,
       dryRun,
     });
   }
@@ -257,7 +274,7 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
       positionalArgs: getPositionalTailArgs(),
       getIntegerFlag,
       hasFlag,
-      useAiScoreAdjustment,
+      scoringMode,
     });
     assertLinkedInCollectionMode("easy-apply-batch", batchOptions.url);
     return {
@@ -277,7 +294,7 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
       positionalArgs: getPositionalTailArgs(),
       getIntegerFlag,
       hasFlag,
-      useAiScoreAdjustment,
+      scoringMode,
     });
     assertLinkedInCollectionMode("apply-batch", batchOptions.url);
     return {
@@ -293,10 +310,26 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
   }
 
   if ((first === "score" || first === "decide" || first === "explore") && tail[0]) {
-    return { mode: first, url: tail[0], useAiScoreAdjustment };
+    return { mode: first, url: tail[0], scoringMode };
   }
 
-  return { mode: "decide", url: first, useAiScoreAdjustment };
+  return { mode: "decide", url: first, scoringMode };
+}
+
+function readScoringMode(args: {
+  getFlag: (name: string) => string | undefined;
+  hasLegacyAiFlag: boolean;
+}): ScoringMode {
+  const raw = args.getFlag("--scoring");
+  if (raw === undefined) {
+    return args.hasLegacyAiFlag ? "ai" : "local";
+  }
+
+  if (raw === "local" || raw === "ai") {
+    return raw;
+  }
+
+  throw new Error('--scoring must be either "local" or "ai".');
 }
 
 function normalizeCommandName(command?: string): string | undefined {
@@ -368,7 +401,7 @@ function readLinkedInBatchOptions(args: {
   positionalArgs: string[];
   getIntegerFlag: (name: string) => number | undefined;
   hasFlag: (name: string) => boolean;
-  useAiScoreAdjustment: boolean;
+  scoringMode: ScoringMode;
 }) {
   const batchShape = readLinkedInBatchShape(args);
   return {
@@ -376,7 +409,7 @@ function readLinkedInBatchOptions(args: {
     count: batchShape.count,
     disableAiEvaluation: args.hasFlag("--disable-ai-evaluation"),
     scoreThreshold: batchShape.scoreThreshold,
-    useAiScoreAdjustment: args.useAiScoreAdjustment,
+    scoringMode: args.scoringMode,
   };
 }
 
@@ -384,7 +417,7 @@ function parseExploreBatchCommand(args: {
   positionalArgs: string[];
   getIntegerFlag: (name: string) => number | undefined;
   hasFlag: (name: string) => boolean;
-  useAiScoreAdjustment: boolean;
+  scoringMode: ScoringMode;
 }) {
   const batchOptions = readLinkedInBatchOptions(args);
   assertLinkedInCollectionMode("explore-batch", batchOptions.url);
@@ -429,7 +462,7 @@ function parseLinkedInFamilyCommand(args: {
   positionalArgs: string[];
   getIntegerFlag: (name: string) => number | undefined;
   hasFlag: (name: string) => boolean;
-  useAiScoreAdjustment: boolean;
+  scoringMode: ScoringMode;
   dryRun: boolean;
 }) {
   const batchShape = readLinkedInBatchShape(args);
@@ -444,7 +477,7 @@ function parseLinkedInFamilyCommand(args: {
       count: batchShape.count,
       disableAiEvaluation: args.hasFlag("--disable-ai-evaluation"),
       scoreThreshold: batchShape.scoreThreshold,
-      useAiScoreAdjustment: args.useAiScoreAdjustment,
+      scoringMode: args.scoringMode,
       dryRun: args.dryRun,
     };
   }

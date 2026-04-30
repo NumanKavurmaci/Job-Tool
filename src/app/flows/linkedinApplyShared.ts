@@ -561,7 +561,7 @@ async function runLinkedInDryRunFlow(
         const evaluateJob = createBatchJobEvaluator({
           disableAiEvaluation: isBatchRun ? args.disableAiEvaluation : true,
           scoreThreshold: isBatchRun ? args.scoreThreshold : 0,
-          useAiScoreAdjustment: isBatchRun ? args.useAiScoreAdjustment : false,
+          scoringMode: isBatchRun ? args.scoringMode : "local",
           allowExternalLinkedInApply:
             args.mode === "apply" || args.mode === "apply-batch",
           source: args.mode,
@@ -713,7 +713,7 @@ async function runLinkedInDryRunFlow(
           pagesVisited: result.pagesVisited,
           disableAiEvaluation: isBatchRun ? args.disableAiEvaluation : true,
           scoreThreshold: isBatchRun ? args.scoreThreshold : 0,
-          useAiScoreAdjustment: isBatchRun ? args.useAiScoreAdjustment : false,
+          scoringMode: isBatchRun ? args.scoringMode : "local",
           stopReason: result.stopReason,
         }
       : {
@@ -771,7 +771,7 @@ async function runLinkedInDryRunFlow(
         url: args.url,
         disableAiEvaluation: isBatchRun ? args.disableAiEvaluation : true,
         scoreThreshold: isBatchRun ? args.scoreThreshold : 0,
-        useAiScoreAdjustment: isBatchRun ? args.useAiScoreAdjustment : false,
+        scoringMode: isBatchRun ? args.scoringMode : "local",
         result,
         meta: buildLinkedInBatchRunMeta({
           mode: args.mode as "easy-apply-batch" | "apply-batch",
@@ -1061,7 +1061,7 @@ async function runLinkedInBatchFlow(
         const evaluateJob = createBatchJobEvaluator({
           disableAiEvaluation: args.disableAiEvaluation,
           scoreThreshold: args.scoreThreshold,
-          useAiScoreAdjustment: args.useAiScoreAdjustment,
+          scoringMode: args.scoringMode,
           allowExternalLinkedInApply: args.mode === "apply-batch",
           source: getBatchPersistenceSource(args),
           recommendationPolicy: args.mode === "apply-batch" ? "apply-only" : "never",
@@ -1200,7 +1200,7 @@ async function runLinkedInBatchFlow(
       pagesVisited: result.pagesVisited,
       disableAiEvaluation: args.disableAiEvaluation,
       scoreThreshold: args.scoreThreshold,
-      useAiScoreAdjustment: args.useAiScoreAdjustment,
+      scoringMode: args.scoringMode,
       stopReason: result.stopReason,
     },
     getBatchCompletionLabel(args),
@@ -1215,7 +1215,7 @@ async function runLinkedInBatchFlow(
         url: args.url,
       disableAiEvaluation: args.disableAiEvaluation,
       scoreThreshold: args.scoreThreshold,
-      useAiScoreAdjustment: args.useAiScoreAdjustment,
+      scoringMode: args.scoringMode,
       result,
       meta: buildLinkedInBatchRunMeta({
         mode: args.mode,
