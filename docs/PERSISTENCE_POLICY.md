@@ -13,6 +13,12 @@ Keep these in SQLite/Prisma because later flows actively depend on them:
 - `AnswerCacheEntry`
 - `PreparedAnswerSet` when survey answer reuse matters
 
+Recommendation records are outcome-driven durable state:
+
+- `explore` persists recommendation records for evaluated jobs so the recommendation catalog can track both recommended and not-recommended outcomes.
+- `explore-batch` does the same at batch scale.
+- `apply-batch` now also persists a `JobRecommendation` when a job evaluates to `APPLY`, even if the job later continues through an external LinkedIn application path.
+
 ## Debugging Evidence
 
 Keep full run detail in JSON artifacts and file logs:

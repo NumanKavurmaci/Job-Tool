@@ -52,7 +52,7 @@ export function createBatchJobEvaluator(args: {
   allowExternalLinkedInApply?: boolean;
   source?: string;
   systemScope?: string;
-  persistRecommendations?: boolean;
+  recommendationPolicy?: "never" | "apply-only" | "all-evaluated";
   scoringProfile: Awaited<ReturnType<AppDeps["loadCandidateProfile"]>>;
   evaluationPage?: Page;
   deps: AppDeps;
@@ -60,7 +60,18 @@ export function createBatchJobEvaluator(args: {
   const deps = args.deps;
   const reviewSource = args.source ?? "easy-apply-batch";
   const systemScope = args.systemScope ?? "linkedin.batch";
+  const recommendationPolicy = args.recommendationPolicy ?? "never";
   const isLinkedInJobUrl = (url: string) => /linkedin\.com\/jobs\/view\//i.test(url);
+  const shouldPersistRecommendation = (finalDecision: "APPLY" | "SKIP" | "MAYBE") => {
+    switch (recommendationPolicy) {
+      case "all-evaluated":
+        return true;
+      case "apply-only":
+        return finalDecision === "APPLY";
+      default:
+        return false;
+    }
+  };
 
   if (args.disableAiEvaluation) {
     return async (_url: string) => ({
@@ -281,7 +292,7 @@ export function createBatchJobEvaluator(args: {
       parseVersion: PARSE_VERSION,
     });
 
-    if (args.persistRecommendations) {
+    if (shouldPersistRecommendation(finalDecision)) {
       await persistJobRecommendationRecord({
         prisma: deps.prisma,
         logger: deps.logger,

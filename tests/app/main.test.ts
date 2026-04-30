@@ -782,6 +782,125 @@ describe("phase 5 index flows", () => {
     expect(mocks.runEasyApplyBatchDryRunMock).toHaveBeenCalled();
   });
 
+  it("persists recommendations for APPLY jobs discovered through apply-batch evaluation", async () => {
+    const { module, mocks, deps } = await loadIndexModule();
+    mocks.loadCandidateMasterProfileMock.mockResolvedValue({
+      fullName: "Jane Doe",
+      linkedinUrl: "https://linkedin.com/in/jane",
+      sourceMetadata: { resumePath: "./resume.txt" },
+    });
+    mocks.loadCandidateProfileMock.mockResolvedValue({
+      yearsOfExperience: 3,
+      preferredRoles: ["Backend Engineer"],
+      preferredTechStack: ["TypeScript"],
+      aspirationalTechStack: [],
+      excludedRoles: [],
+      disallowedRoleKeywords: [],
+      preferredLocations: [],
+      excludedLocations: [],
+      allowedHybridLocations: [],
+      workplacePolicyBypassLocations: [],
+      remotePreference: "remote",
+      remoteOnly: true,
+      visaRequirement: "not-required",
+      languages: [],
+      salaryExpectation: null,
+      salaryExpectations: { usd: null, eur: null, try: null },
+      gpa: null,
+      linkedinUrl: null,
+      workAuthorizationStatus: "authorized",
+      requiresSponsorship: false,
+      willingToRelocate: false,
+      disability: {
+        hasVisualDisability: false,
+        disabilityPercentage: null,
+        requiresAccommodation: null,
+        accommodationNotes: null,
+        disclosurePreference: "manual-review",
+      },
+    });
+    mocks.createEasyApplyDriverMock.mockReturnValue({ driver: true });
+    mockWithPageSuccess(mocks.withPageMock);
+    mocks.runEasyApplyBatchMock.mockResolvedValue({
+      status: "completed",
+      collectionUrl: "https://www.linkedin.com/jobs/collections/recommended",
+      requestedCount: 1,
+      attemptedCount: 1,
+      evaluatedCount: 1,
+      skippedCount: 0,
+      pagesVisited: 1,
+      jobs: [],
+      stopReason: "Processed 1 LinkedIn Apply job(s).",
+    });
+    deps.extractJobText = vi.fn().mockResolvedValue({
+      rawText: "Job body",
+      title: "Backend Engineer",
+      company: "Acme",
+      location: "Remote",
+      platform: "linkedin",
+      applicationType: "external",
+      applyUrl: "https://acme.example/apply",
+      currentUrl: "https://www.linkedin.com/jobs/view/1",
+      descriptionText: "TypeScript backend role",
+      requirementsText: "Need TypeScript",
+      benefitsText: null,
+    });
+    deps.formatJobForLLM = vi.fn().mockReturnValue("Formatted prompt");
+    deps.parseJob = vi.fn().mockResolvedValue({
+      parsed: {
+        title: "Backend Engineer",
+        company: "Acme",
+        location: "Remote",
+        platform: "linkedin",
+      },
+      provider: "local",
+      model: "openai/gpt-oss-20b",
+      rawText: "{}",
+    });
+    deps.normalizeParsedJob = vi.fn().mockReturnValue({
+      title: "Backend Engineer",
+      company: "Acme",
+      location: "Remote",
+      remoteType: "remote",
+      seniority: "mid",
+      mustHaveSkills: ["TypeScript"],
+      niceToHaveSkills: [],
+      technologies: ["TypeScript"],
+      yearsRequired: 3,
+      platform: "linkedin",
+      applicationType: "external",
+      visaSponsorship: "no",
+      workAuthorization: "authorized",
+      openQuestionsCount: 0,
+    });
+    deps.scoreJob = vi.fn().mockReturnValue({
+      totalScore: 81,
+      breakdown: { skill: 30, seniority: 18, location: 20, tech: 10, bonus: 3 },
+    });
+    deps.evaluatePolicy = vi.fn().mockReturnValue({ allowed: true, reasons: [] });
+
+    await module.main(
+      ["apply-batch", "--count", "1", "--resume", "./resume.txt"],
+      deps,
+    );
+
+    const batchArgs = mocks.runEasyApplyBatchMock.mock.calls[0]?.[0];
+    await batchArgs.evaluateJob("https://www.linkedin.com/jobs/view/1");
+
+    expect(mocks.createRecommendationMock).toHaveBeenCalledWith({
+      where: { jobPostingId: "job_1" },
+      update: expect.objectContaining({
+        source: "apply-batch",
+        decision: "APPLY",
+      }),
+      create: expect.objectContaining({
+        jobPostingId: "job_1",
+        source: "apply-batch",
+        decision: "APPLY",
+      }),
+    });
+  });
+
   it("wraps real easy apply batch failures with a linkedin phase error", async () => {
     const { module, mocks, deps } = await loadIndexModule();
     mocks.loadCandidateMasterProfileMock.mockResolvedValue({

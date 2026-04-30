@@ -111,7 +111,7 @@ export async function runExploreBatchFlow(
         useAiScoreAdjustment: args.useAiScoreAdjustment,
         source: "explore-batch",
         systemScope: "explore.batch",
-        persistRecommendations: true,
+        recommendationPolicy: "all-evaluated",
         scoringProfile,
         ...(evaluationPage ? { evaluationPage } : {}),
         deps,

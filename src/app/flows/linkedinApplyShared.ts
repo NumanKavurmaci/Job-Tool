@@ -564,6 +564,7 @@ async function runLinkedInDryRunFlow(
           useAiScoreAdjustment: isBatchRun ? args.useAiScoreAdjustment : false,
           allowExternalLinkedInApply:
             args.mode === "apply" || args.mode === "apply-batch",
+          source: args.mode,
           scoringProfile,
           ...(evaluationPage ? { evaluationPage } : {}),
           deps,
@@ -1062,6 +1063,8 @@ async function runLinkedInBatchFlow(
           scoreThreshold: args.scoreThreshold,
           useAiScoreAdjustment: args.useAiScoreAdjustment,
           allowExternalLinkedInApply: args.mode === "apply-batch",
+          source: getBatchPersistenceSource(args),
+          recommendationPolicy: args.mode === "apply-batch" ? "apply-only" : "never",
           scoringProfile,
           ...(evaluationPage ? { evaluationPage } : {}),
           deps,
