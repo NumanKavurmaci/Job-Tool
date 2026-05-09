@@ -1022,12 +1022,12 @@ describe("app flow helpers", () => {
     const result = await evaluate("https://example.com/job");
 
     expect(result).toEqual({
-      shouldApply: true,
-      finalDecision: "APPLY",
+      shouldApply: false,
+      finalDecision: "SKIP",
       score: 12,
-      reason: "Configured workplace-policy bypass matched this job location, so the role will be applied.",
+      reason: "Configured workplace-policy bypass matched this job location. Score 12 is below the configured threshold of 60.",
       policyAllowed: true,
-      diagnostics: {
+      diagnostics: expect.objectContaining({
         title: "Job",
         company: "Acme",
         location: "Berlin, Germany",
@@ -1035,7 +1035,7 @@ describe("app flow helpers", () => {
         applicationType: "easy_apply",
         companyInfoRead: true,
         metadataRead: true,
-      },
+      }),
     });
   });
 

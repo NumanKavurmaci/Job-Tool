@@ -64,6 +64,37 @@ describe("LMStudioProvider", () => {
     );
   });
 
+  it("checks local server availability with the models endpoint", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+    }) as typeof fetch;
+
+    const { checkLocalLlmConnection } = await import("../../src/llm/providers/lmStudioProvider.js");
+
+    await expect(checkLocalLlmConnection()).resolves.toBeUndefined();
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "http://127.0.0.1:1234/v1/models",
+      expect.objectContaining({
+        method: "GET",
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it("throws a preflight error before job parsing when the local server is unreachable", async () => {
+    global.fetch = vi.fn().mockRejectedValue(new Error("connection refused")) as typeof fetch;
+
+    const { checkLocalLlmConnection } = await import("../../src/llm/providers/lmStudioProvider.js");
+
+    await expect(checkLocalLlmConnection()).rejects.toMatchObject({
+      name: "AppError",
+      phase: "llm",
+      code: "LLM_PROVIDER_UNREACHABLE",
+    });
+    await expect(checkLocalLlmConnection()).rejects.toThrow("LM Studio is not reachable");
+  });
+
   it("uses the configured timeout by default", async () => {
     global.fetch = vi.fn().mockRejectedValue(
       Object.assign(new Error("timeout"), { name: "TimeoutError" }),

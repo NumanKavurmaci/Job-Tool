@@ -127,6 +127,19 @@ function includesAllowedHybridLocation(
   return null;
 }
 
+function isRemoteLocationText(location: string | null | undefined): boolean {
+  const normalizedLocation = normalizePolicyText(location);
+  if (!normalizedLocation) {
+    return false;
+  }
+
+  return (
+    /\bremote\b/.test(normalizedLocation) ||
+    /\bwork from home\b/.test(normalizedLocation) ||
+    /\bworldwide\b/.test(normalizedLocation)
+  );
+}
+
 function includesRoleKeyword(haystack: string, keywords: string[]): string | null {
   const normalizedHaystack = normalizePolicyText(haystack);
 
@@ -351,7 +364,7 @@ function collectLocationReasons(
   job: Pick<NormalizedJob, "location" | "remoteType">,
   profile: Pick<
     CandidateProfile,
-    "excludedLocations" | "allowedHybridLocations" | "workplacePolicyBypassLocations"
+    "excludedLocations" | "allowedHybridLocations" | "workplacePolicyBypassLocations" | "remoteOnly"
   >,
 ): string[] {
   const reasons: string[] = [];
@@ -363,8 +376,17 @@ function collectLocationReasons(
     reasons.push(`Location excluded by profile: ${excludedLocation}.`);
   }
 
-  if (!workplacePolicyBypassed && job.remoteType === "onsite") {
+  if (job.remoteType === "onsite") {
     reasons.push("On-site roles are blocked by profile.");
+  }
+
+  if (
+    profile.remoteOnly &&
+    job.remoteType === "unknown" &&
+    job.location &&
+    !isRemoteLocationText(job.location)
+  ) {
+    reasons.push("Workplace type is unknown for a non-remote location.");
   }
 
   if (!workplacePolicyBypassed && job.remoteType === "hybrid") {

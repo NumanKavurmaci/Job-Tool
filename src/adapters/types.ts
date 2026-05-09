@@ -9,6 +9,9 @@ export interface ExtractedJobContent {
   location: string | null;
   platform: string;
   applicationType: "easy_apply" | "external" | "unknown";
+  rawWorkplaceType?: "remote" | "hybrid" | "onsite" | null;
+  rawApplicationType?: "easy_apply" | "external" | "unknown" | null;
+  locationSource?: string | null;
   applyUrl: string | null;
   currentUrl: string;
   descriptionText: string | null;

@@ -270,10 +270,35 @@ function parseLinkedInLabeledField(
 }
 
 function parseLinkedInWorkplaceType(values: string[]): "remote" | "hybrid" | "onsite" | null {
-  const normalized = values.join("\n").toLowerCase();
+  const lines = flattenTextLines(values);
+  const normalized = lines.join("\n").toLowerCase();
 
   if (!normalized) {
     return null;
+  }
+
+  for (const line of lines) {
+    const lineNormalized = line.toLowerCase();
+    const workplaceTypeMatch = lineNormalized.match(
+      /\bworkplace type is\s+(remote|hybrid|on-?site|onsite)\b/,
+    );
+    if (workplaceTypeMatch?.[1]) {
+      return workplaceTypeMatch[1].replace("-", "") === "onsite"
+        ? "onsite"
+        : (workplaceTypeMatch[1] as "remote" | "hybrid");
+    }
+
+    if (/^remote$/i.test(line)) {
+      return "remote";
+    }
+
+    if (/^hybrid$/i.test(line)) {
+      return "hybrid";
+    }
+
+    if (/^on-?site$/i.test(line) || /^onsite$/i.test(line)) {
+      return "onsite";
+    }
   }
 
   if (
@@ -307,6 +332,10 @@ function sanitizeLinkedInLocation(value: string | null | undefined): string | nu
     return null;
   }
 
+  if (/\bremote\b/i.test(normalized) && isLikelyTitleOrCompensationText(normalized)) {
+    return "Remote";
+  }
+
   const cleanSegment = (segment: string | null | undefined) =>
     optionalText(segment)?.replace(/\s*Â+\s*$/g, "").trim() ?? null;
 
@@ -334,6 +363,56 @@ function sanitizeLinkedInLocation(value: string | null | undefined): string | nu
   }
 
   return cleanSegment(parts[0] ?? normalized);
+}
+
+function normalizeLocationComparison(value: string | null | undefined): string {
+  return optionalText(value)
+    ?.toLowerCase()
+    .replace(/\b(remote|hybrid|on-?site|onsite|turkish speaking)\b/gi, "")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim() ?? "";
+}
+
+function isLikelyTitleOrCompensationText(value: string | null | undefined): boolean {
+  const normalized = optionalText(value);
+  if (!normalized) {
+    return false;
+  }
+
+  return (
+    /[$€£]\s*\d+|\b\d+\s*\/\s*(hr|hour|day|month|year)\b/i.test(normalized) ||
+    /\b(developer|engineer|analyst|specialist|manager|consultant|architect|trainer|executive|associate|owner)\b/i.test(
+      normalized,
+    )
+  );
+}
+
+function isLikelyTitleLocation(
+  location: string | null | undefined,
+  title: string | null | undefined,
+): boolean {
+  const normalizedLocation = normalizeLocationComparison(location);
+  if (!normalizedLocation) {
+    return false;
+  }
+
+  const normalizedTitle = normalizeLocationComparison(title);
+  if (
+    normalizedTitle &&
+    (normalizedLocation === normalizedTitle ||
+      normalizedLocation.includes(normalizedTitle) ||
+      normalizedTitle.includes(normalizedLocation))
+  ) {
+    return true;
+  }
+
+  const hasGeoSignal =
+    /\b(remote|t[üu]rkiye|turkey|ankara|istanbul|izmir|eski[şs]ehir|samsun|amsterdam|netherlands|germany|france|spain|italy|europe|remote)\b/i.test(
+      location ?? "",
+    );
+
+  return !hasGeoSignal && isLikelyTitleOrCompensationText(location);
 }
 
 function isGenericLinkedInWorkplaceLocation(value: string | null | undefined): boolean {
@@ -501,6 +580,10 @@ async function detectLinkedInApplicationType(
   const bodyLower = pageBodyText.toLowerCase();
   if (bodyLower.includes("company website") || bodyLower.includes("company site")) {
     return "external";
+  }
+
+  if (bodyLower.includes("easy apply")) {
+    return "easy_apply";
   }
 
   return "unknown";
@@ -832,10 +915,11 @@ export class LinkedInAdapter implements JobAdapter {
     );
 
     const badgeTexts = flattenTextLines(await getTextsBySelectors(page, LINKEDIN_BADGE_SELECTORS));
-    const workplaceType = parseLinkedInWorkplaceType(badgeTexts);
+    const workplaceType =
+      parseLinkedInWorkplaceType(badgeTexts) ??
+      parseLinkedInWorkplaceType([pageBodyText]);
     const inferredBadgeLocation =
       aboutLocation ??
-      badgeTexts.find((value) => /\b(remote|hybrid|onsite|on-site)\b/i.test(value)) ??
       inferLocationFromBodyText(pageBodyText) ??
       titleParts.location;
     const topCardLocation = await getTextBySelectors(page, LINKEDIN_LOCATION_SELECTORS);
@@ -843,7 +927,7 @@ export class LinkedInAdapter implements JobAdapter {
     const rawLocation = topCardLocation ?? inferredBadgeLocation ?? null;
     const sanitizedRawLocation = sanitizeLinkedInLocation(rawLocation);
     const fallbackTitleLocation = sanitizeLinkedInLocation(titleParts.location);
-    const location =
+    const candidateLocation =
       isGenericLinkedInWorkplaceLocation(sanitizedRawLocation) &&
       fallbackBodyLocation &&
       !isGenericLinkedInWorkplaceLocation(fallbackBodyLocation)
@@ -853,6 +937,25 @@ export class LinkedInAdapter implements JobAdapter {
       !isGenericLinkedInWorkplaceLocation(fallbackTitleLocation)
         ? fallbackTitleLocation
         : sanitizedRawLocation;
+    const location = isLikelyTitleLocation(candidateLocation, rawTitle)
+      ? workplaceType === "remote"
+        ? "Remote"
+        : fallbackTitleLocation && !isLikelyTitleLocation(fallbackTitleLocation, rawTitle)
+          ? fallbackTitleLocation
+          : null
+      : candidateLocation;
+    const locationSource =
+      location === topCardLocation
+        ? "top-card"
+        : location === fallbackBodyLocation
+          ? "body"
+          : location === fallbackTitleLocation
+            ? "page-title"
+            : location === "Remote" && workplaceType === "remote"
+              ? "workplace-type"
+              : location
+                ? "sanitized"
+                : null;
     const title = cleanLinkedInTitle(rawTitle, location) ?? aboutPosition ?? titleParts.title;
 
     const applyUrl =
@@ -914,6 +1017,9 @@ export class LinkedInAdapter implements JobAdapter {
       location,
       platform: this.name,
       applicationType,
+      rawWorkplaceType: workplaceType,
+      rawApplicationType: applicationType,
+      locationSource,
       applyUrl,
       currentUrl: await getCurrentUrl(page),
       descriptionText,

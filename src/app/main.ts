@@ -118,12 +118,35 @@ export async function main(
     `Using LLM provider: ${llmProviderInfo.provider} (${llmProviderInfo.model})`,
   );
 
+  if (shouldPreflightLocalLlm(args, llmProviderInfo.provider)) {
+    await deps.checkLocalLlmConnection();
+  }
+
   const result = await runCommand(args, deps);
 
   return {
     ...result,
     durationMs: Math.round(performance.now() - startedAt),
   };
+}
+
+function shouldPreflightLocalLlm(
+  args: ReturnType<typeof parseCliArgs>,
+  provider: ReturnType<AppDeps["getConfiguredProviderInfo"]>["provider"],
+): boolean {
+  if (provider !== "local") {
+    return false;
+  }
+
+  if (args.mode === "dashboard") {
+    return false;
+  }
+
+  if ("disableAiEvaluation" in args && args.disableAiEvaluation) {
+    return false;
+  }
+
+  return true;
 }
 
 async function runCommand(

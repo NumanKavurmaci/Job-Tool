@@ -10,6 +10,50 @@ type LmStudioResponse = {
   }>;
 };
 
+export async function checkLocalLlmConnection(
+  baseUrl = env.LOCAL_LLM_BASE_URL ?? "",
+  timeoutMs = Math.min(env.LOCAL_LLM_TIMEOUT_MS, 5_000),
+): Promise<void> {
+  const normalizedBaseUrl = baseUrl.replace(/\/$/, "");
+
+  try {
+    const response = await fetch(`${normalizedBaseUrl}/models`, {
+      method: "GET",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+
+    if (!response.ok) {
+      throw new AppError({
+        message: `LM Studio health check failed with status ${response.status}.`,
+        phase: "llm",
+        code: "LLM_PROVIDER_UNREACHABLE",
+        details: {
+          provider: "local",
+          baseUrl: normalizedBaseUrl,
+          status: response.status,
+        },
+      });
+    }
+  } catch (error) {
+    if (error instanceof AppError) {
+      throw error;
+    }
+
+    const message =
+      error instanceof Error && error.name === "TimeoutError"
+        ? `LM Studio health check timed out after ${timeoutMs}ms.`
+        : `LM Studio is not reachable at ${normalizedBaseUrl}. Start the LM Studio local server before running this command.`;
+
+    throw new AppError({
+      message,
+      phase: "llm",
+      code: "LLM_PROVIDER_UNREACHABLE",
+      cause: error,
+      details: { provider: "local", baseUrl: normalizedBaseUrl },
+    });
+  }
+}
+
 export class LMStudioProvider implements LlmProvider {
   name = "local" as const;
   private readonly baseUrl: string;

@@ -80,6 +80,24 @@ function inferRemoteTypeFromText(
     return "unknown";
   }
 
+  const explicitWorkplaceType = normalized.match(
+    /\bworkplace type\s*:\s*(remote|hybrid|on-?site|onsite)\b/,
+  );
+  if (explicitWorkplaceType?.[1]) {
+    return explicitWorkplaceType[1].replace("-", "") === "onsite"
+      ? "onsite"
+      : (explicitWorkplaceType[1] as "remote" | "hybrid");
+  }
+
+  const explicitWorkplaceSentence = normalized.match(
+    /\bworkplace type is\s+(remote|hybrid|on-?site|onsite)\b/,
+  );
+  if (explicitWorkplaceSentence?.[1]) {
+    return explicitWorkplaceSentence[1].replace("-", "") === "onsite"
+      ? "onsite"
+      : (explicitWorkplaceSentence[1] as "remote" | "hybrid");
+  }
+
   const hasNegativeRemoteSignal =
     /fully remote work is not available/.test(normalized) ||
     /remote work is not available/.test(normalized) ||

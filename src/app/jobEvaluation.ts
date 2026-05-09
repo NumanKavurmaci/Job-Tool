@@ -15,6 +15,9 @@ export function buildJobDiagnostics(
     location: extracted.location ?? null,
     companyLinkedinUrl: extracted.companyLinkedinUrl ?? null,
     applicationType: extracted.applicationType ?? null,
+    rawWorkplaceType: extracted.rawWorkplaceType ?? null,
+    rawApplicationType: extracted.rawApplicationType ?? extracted.applicationType ?? null,
+    locationSource: extracted.locationSource ?? null,
     companyInfoRead: Boolean(
       extracted.company || extracted.companyLinkedinUrl || extracted.companyLogoUrl,
     ),
@@ -77,25 +80,27 @@ export function resolveDecisionOutcome(args: {
   score: { totalScore: number };
   scoreThreshold?: number;
 }) {
-  const forceApplyForConfiguredRegion =
+  const workplacePolicyBypassed =
     shouldBypassWorkplacePolicy(args.normalized, args.scoringProfile) && args.policy.allowed;
+  const workplaceBypassReason =
+    "Configured workplace-policy bypass matched this job location.";
 
   if (typeof args.scoreThreshold === "number") {
     const meetsThreshold = args.score.totalScore >= args.scoreThreshold;
     const finalDecision: "APPLY" | "SKIP" =
-      forceApplyForConfiguredRegion || (args.policy.allowed && meetsThreshold)
-        ? "APPLY"
-        : "SKIP";
-    const reason = forceApplyForConfiguredRegion
-      ? "Configured workplace-policy bypass matched this job location, so the role will be applied."
-      : !args.policy.allowed
+      args.policy.allowed && meetsThreshold ? "APPLY" : "SKIP";
+    const scoreReason = meetsThreshold
+      ? `Score ${args.score.totalScore} meets the configured threshold of ${args.scoreThreshold}.`
+      : `Score ${args.score.totalScore} is below the configured threshold of ${args.scoreThreshold}.`;
+    const reason = !args.policy.allowed
         ? args.policy.reasons.join(" ")
-        : meetsThreshold
-          ? `Score ${args.score.totalScore} meets the configured threshold of ${args.scoreThreshold}.`
-          : `Score ${args.score.totalScore} is below the configured threshold of ${args.scoreThreshold}.`;
+        : workplacePolicyBypassed
+          ? `${workplaceBypassReason} ${scoreReason}`
+          : scoreReason;
 
     return {
-      forceApplyForConfiguredRegion,
+      forceApplyForConfiguredRegion: false,
+      workplacePolicyBypassed,
       finalDecision,
       finalReasons: !args.policy.allowed ? args.policy.reasons : [reason],
       reason,
@@ -103,18 +108,14 @@ export function resolveDecisionOutcome(args: {
   }
 
   const decision = args.decision ?? { decision: "SKIP" as const, reason: "" };
-  const finalDecision =
-    forceApplyForConfiguredRegion ? "APPLY" : args.policy.allowed ? decision.decision : "SKIP";
-  const finalReasons = forceApplyForConfiguredRegion
-    ? [
-        "Configured workplace-policy bypass matched this job location, so the role was forced to APPLY.",
-      ]
-    : args.policy.allowed
-      ? [decision.reason]
-      : args.policy.reasons;
+  const finalDecision = args.policy.allowed ? decision.decision : "SKIP";
+  const finalReasons = args.policy.allowed
+    ? [workplacePolicyBypassed ? `${workplaceBypassReason} ${decision.reason}` : decision.reason]
+    : args.policy.reasons;
 
   return {
-    forceApplyForConfiguredRegion,
+    forceApplyForConfiguredRegion: false,
+    workplacePolicyBypassed,
     finalDecision,
     finalReasons,
     reason: finalReasons.join(" "),

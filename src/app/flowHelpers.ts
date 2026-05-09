@@ -273,6 +273,7 @@ export function createBatchJobEvaluator(args: {
           policyAllowed: policy.allowed,
           decisionReason: reason,
           policyReasons: policy.reasons,
+          workplacePolicyBypassed: outcome.workplacePolicyBypassed,
           diagnostics,
         },
       },
@@ -312,6 +313,7 @@ export function createBatchJobEvaluator(args: {
           aiReasoning: score.aiReasoning ?? null,
           aiConfidence: score.aiConfidence ?? null,
           scoringSource: score.scoringSource ?? "deterministic",
+          workplacePolicyBypassed: outcome.workplacePolicyBypassed,
           diagnostics,
         },
       });
@@ -337,6 +339,7 @@ export function createBatchJobEvaluator(args: {
           aiReasoning: score.aiReasoning ?? null,
           aiConfidence: score.aiConfidence ?? null,
           scoringSource: score.scoringSource ?? "deterministic",
+          workplacePolicyBypassed: outcome.workplacePolicyBypassed,
         },
       },
       deps,

@@ -292,7 +292,7 @@ describe("evaluatePolicy", () => {
     expect(blocked.reasons.join(" ")).toContain("Hybrid roles are only allowed in");
   });
 
-  it("bypasses workplace policy for Europe-centered onsite and hybrid roles", () => {
+  it("bypasses workplace policy for Europe-centered hybrid roles but not onsite roles", () => {
     const onsiteEurope = evaluatePolicy(
       makeJob({
         location: "Berlin, Germany",
@@ -308,9 +308,9 @@ describe("evaluatePolicy", () => {
       profile,
     );
 
-    expect(onsiteEurope.allowed).toBe(true);
+    expect(onsiteEurope.allowed).toBe(false);
     expect(hybridEurope.allowed).toBe(true);
-    expect(onsiteEurope.reasons).not.toContain("On-site roles are blocked by profile.");
+    expect(onsiteEurope.reasons).toContain("On-site roles are blocked by profile.");
     expect(hybridEurope.reasons.some((reason) => reason.includes("Hybrid roles are only allowed in"))).toBe(
       false,
     );
@@ -329,6 +329,35 @@ describe("evaluatePolicy", () => {
 
     expect(result.allowed).toBe(false);
     expect(result.reasons.join(" ")).toContain("Hybrid roles are only allowed in");
+  });
+
+  it("blocks unknown workplace type for physical locations when the profile is remote-only", () => {
+    const result = evaluatePolicy(
+      makeJob({
+        location: "Istanbul, Türkiye",
+        remoteType: "unknown",
+        platform: "linkedin",
+        applicationType: "easy_apply",
+      }),
+      profile,
+    );
+
+    expect(result.allowed).toBe(false);
+    expect(result.reasons).toContain("Workplace type is unknown for a non-remote location.");
+  });
+
+  it("allows unknown workplace type when the location text itself is remote", () => {
+    const result = evaluatePolicy(
+      makeJob({
+        location: "Türkiye (Remote)",
+        remoteType: "unknown",
+        platform: "linkedin",
+        applicationType: "easy_apply",
+      }),
+      profile,
+    );
+
+    expect(result.reasons).not.toContain("Workplace type is unknown for a non-remote location.");
   });
 
   it("rejects sponsorship mismatches only when the candidate requires sponsorship", () => {

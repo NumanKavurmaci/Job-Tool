@@ -14,6 +14,7 @@ async function loadIndexModule(readFileMock?: ReturnType<typeof vi.fn>) {
     provider: "local",
     model: "openai/gpt-oss-20b",
   }));
+  const checkLocalLlmConnectionMock = vi.fn().mockResolvedValue(undefined);
   const loadCandidateMasterProfileMock = vi.fn();
   const loadCandidateProfileMock = vi.fn();
   const resolveAnswerMock = vi.fn();
@@ -61,6 +62,7 @@ async function loadIndexModule(readFileMock?: ReturnType<typeof vi.fn>) {
     module,
     mocks: {
       getConfiguredProviderInfoMock,
+      checkLocalLlmConnectionMock,
       loadCandidateMasterProfileMock,
       loadCandidateProfileMock,
       resolveAnswerMock,
@@ -105,6 +107,7 @@ async function loadIndexModule(readFileMock?: ReturnType<typeof vi.fn>) {
     },
     deps: {
       getConfiguredProviderInfo: getConfiguredProviderInfoMock,
+      checkLocalLlmConnection: checkLocalLlmConnectionMock,
       loadCandidateMasterProfile: loadCandidateMasterProfileMock,
       loadCandidateProfile: loadCandidateProfileMock,
       resolveAnswer: resolveAnswerMock,
@@ -1921,6 +1924,86 @@ describe("phase 5 index flows", () => {
         prefix: "decide",
       }),
     );
+  });
+
+  it("fails explore-batch before opening LinkedIn when the local LLM is unreachable", async () => {
+    const { module, mocks, deps } = await loadIndexModule();
+    mocks.checkLocalLlmConnectionMock.mockRejectedValue(
+      new Error("LM Studio is not reachable at http://127.0.0.1:1234/v1."),
+    );
+
+    await expect(
+      module.main(
+        [
+          "explore-batch",
+          "https://www.linkedin.com/jobs/collections/top-applicant",
+          "--count",
+          "10",
+        ],
+        deps,
+      ),
+    ).rejects.toThrow("LM Studio is not reachable");
+
+    expect(mocks.checkLocalLlmConnectionMock).toHaveBeenCalledTimes(1);
+    expect(mocks.loadCandidateProfileMock).not.toHaveBeenCalled();
+    expect(mocks.withPageMock).not.toHaveBeenCalled();
+    expect(mocks.createEasyApplyDriverMock).not.toHaveBeenCalled();
+  });
+
+  it("does not preflight the local LLM when AI evaluation is disabled", async () => {
+    const { module, mocks, deps } = await loadIndexModule();
+    mocks.loadCandidateProfileMock.mockResolvedValue({
+      yearsOfExperience: 3,
+      preferredRoles: [],
+      preferredTechStack: [],
+      excludedRoles: [],
+      preferredLocations: [],
+      excludedLocations: [],
+      remotePreference: "remote",
+      remoteOnly: false,
+      visaRequirement: "not-required",
+      languages: [],
+      salaryExpectation: null,
+      salaryExpectations: { usd: null, eur: null, try: null },
+      gpa: null,
+      linkedinUrl: null,
+      workAuthorizationStatus: "authorized",
+      requiresSponsorship: false,
+      willingToRelocate: false,
+      disability: {
+        hasVisualDisability: false,
+        disabilityPercentage: null,
+        requiresAccommodation: null,
+        accommodationNotes: null,
+        disclosurePreference: "manual-review",
+      },
+    });
+    mockWithPageSuccess(mocks.withPageMock);
+    mocks.createEasyApplyDriverMock.mockResolvedValue({
+      ensureAuthenticated: vi.fn().mockResolvedValue(undefined),
+      openCollection: vi.fn().mockResolvedValue(undefined),
+      collectVisibleJobs: vi.fn().mockResolvedValue([
+        {
+          url: "https://www.linkedin.com/jobs/view/1",
+          alreadyApplied: false,
+        },
+      ]),
+      goToNextResultsPage: vi.fn().mockResolvedValue(false),
+    });
+
+    await module.main(
+      [
+        "explore-batch",
+        "https://www.linkedin.com/jobs/collections/top-applicant",
+        "--count",
+        "1",
+        "--disable-ai-evaluation",
+      ],
+      deps,
+    );
+
+    expect(mocks.checkLocalLlmConnectionMock).not.toHaveBeenCalled();
+    expect(mocks.withPageMock).toHaveBeenCalledTimes(1);
   });
 
   it("runs explore-batch without entering any apply flow and persists recommendations", async () => {

@@ -540,6 +540,49 @@ describe("normalizeParsedJob", () => {
     expect(result.applicationType).toBe("easy_apply");
   });
 
+  it("lets explicit LinkedIn workplace type override conflicting hybrid prose", () => {
+    const result = normalizeParsedJob(
+      {
+        title: "Next.js Developer / Product Owner",
+        company: "The Things Industries",
+        location: null,
+        platform: "linkedin",
+        seniority: null,
+        mustHaveSkills: ["Next.js", "TypeScript"],
+        niceToHaveSkills: [],
+        technologies: ["Next.js", "TypeScript"],
+        yearsRequired: null,
+        remoteType: "Hybrid (4-5 Days)",
+        visaSponsorship: null,
+        workAuthorization: null,
+      },
+      {
+        rawText: [
+          "Title: Next.js Developer / Product Owner",
+          "Company: The Things Industries",
+          "Location: Amsterdam, The Netherlands Type: Hybrid (4-5 Days)",
+          "Workplace Type: onsite",
+          "Description:",
+          "Location: Amsterdam, The Netherlands Type: Hybrid (4-5 Days)",
+          "Benefits:",
+          "Hybrid working with real flexibility",
+        ].join("\n"),
+        title: "Next.js Developer / Product Owner",
+        company: "The Things Industries",
+        location: "Amsterdam, The Netherlands Type: Hybrid (4-5 Days)",
+        platform: "linkedin",
+        applicationType: "easy_apply",
+        applyUrl: "https://www.linkedin.com/jobs/view/4410564479/",
+        currentUrl: "https://www.linkedin.com/jobs/view/4410564479/",
+        descriptionText: "Location: Amsterdam, The Netherlands Type: Hybrid (4-5 Days)",
+        requirementsText: null,
+        benefitsText: "Hybrid working with real flexibility",
+      },
+    );
+
+    expect(result.remoteType).toBe("onsite");
+  });
+
   it("rounds valid years and discards invalid years", () => {
     const rounded = normalizeParsedJob(
       {

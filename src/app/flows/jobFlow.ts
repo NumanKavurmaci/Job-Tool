@@ -125,6 +125,7 @@ export async function runJobFlow(
           aiReasoning: score.aiReasoning ?? null,
           aiConfidence: score.aiConfidence ?? null,
           scoringSource: score.scoringSource ?? "deterministic",
+          workplacePolicyBypassed: outcome.workplacePolicyBypassed,
         },
       });
     }
@@ -168,6 +169,7 @@ export async function runJobFlow(
         aiReasoning: score.aiReasoning ?? null,
         aiConfidence: score.aiConfidence ?? null,
         scoringSource: score.scoringSource ?? "deterministic",
+        workplacePolicyBypassed: outcome.workplacePolicyBypassed,
       },
     },
     deps,
@@ -183,6 +185,7 @@ export async function runJobFlow(
       details: {
         finalDecision,
         score: score.totalScore,
+        workplacePolicyBypassed: outcome.workplacePolicyBypassed,
       },
     },
     deps,

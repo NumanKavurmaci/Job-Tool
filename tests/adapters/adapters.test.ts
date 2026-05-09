@@ -1118,6 +1118,128 @@ describe("LinkedInAdapter", () => {
     expect(result.rawText).toContain("Workplace Type: hybrid");
     expect(result.applicationType).toBe("external");
   });
+
+  it("keeps a standalone linkedin onsite workplace signal ahead of hybrid description prose", async () => {
+    const { LinkedInAdapter } = await import("../../src/adapters/LinkedInAdapter.js");
+    const page = createMockPage({
+      currentUrl: "https://www.linkedin.com/jobs/view/4410564479/",
+      title: "Next.js Developer / Product Owner | The Things Industries | LinkedIn",
+      selectors: {
+        ".global-nav": { text: "Primary nav" },
+        ".job-details-jobs-unified-top-card__job-title": {
+          text: "Next.js Developer / Product Owner",
+        },
+        ".job-details-jobs-unified-top-card__company-name": {
+          text: "The Things Industries",
+        },
+        "button.jobs-apply-button": {
+          text: "Easy Apply",
+          attributes: { "aria-label": "Easy Apply" },
+        },
+        "[data-testid='expandable-text-box']": {
+          text: [
+            "Location: Amsterdam, The Netherlands Type: Hybrid (4-5 Days)",
+            "Benefits:",
+            "Hybrid working with real flexibility",
+          ].join("\n"),
+        },
+        body: {
+          text: [
+            "Next.js Developer / Product Owner",
+            "The Things Industries",
+            "On-site",
+            "Location: Amsterdam, The Netherlands Type: Hybrid (4-5 Days)",
+            "Hybrid working with real flexibility",
+            "Easy Apply",
+          ].join("\n"),
+        },
+      },
+    });
+
+    const result = await new LinkedInAdapter().extract(page as never, page.url());
+
+    expect(result.location).toBe("Amsterdam, The Netherlands Type: Hybrid (4-5 Days)");
+    expect(result.rawText).toContain("Workplace Type: onsite");
+  });
+
+  it("captures a standalone linkedin hybrid workplace signal without treating it as location", async () => {
+    const { LinkedInAdapter } = await import("../../src/adapters/LinkedInAdapter.js");
+    const page = createMockPage({
+      currentUrl: "https://www.linkedin.com/jobs/view/4401643633/",
+      title: "Frontend Uzmanı | Eksim Holding | LinkedIn",
+      selectors: {
+        ".global-nav": { text: "Primary nav" },
+        ".job-details-jobs-unified-top-card__job-title": {
+          text: "Frontend Uzmanı",
+        },
+        ".job-details-jobs-unified-top-card__company-name": {
+          text: "Eksim Holding",
+        },
+        ".job-details-jobs-unified-top-card__bullet": {
+          text: "Hybrid",
+        },
+        "button.jobs-apply-button": {
+          text: "Easy Apply",
+          attributes: { "aria-label": "Easy Apply" },
+        },
+        "[data-testid='expandable-text-box']": {
+          text: "Frontend role with React and Vue.js experience.",
+        },
+        body: {
+          text: [
+            "Frontend Uzmanı",
+            "Eksim Holding",
+            "Istanbul, Türkiye · 2 days ago · Over 100 applicants",
+            "Hybrid",
+            "Easy Apply",
+            "Frontend role with React and Vue.js experience.",
+          ].join("\n"),
+        },
+      },
+    });
+
+    const result = await new LinkedInAdapter().extract(page as never, page.url());
+
+    expect(result.location).toBe("Istanbul, Türkiye");
+    expect(result.rawText).toContain("Workplace Type: hybrid");
+  });
+
+  it("does not keep a title-like linkedin meta line as location", async () => {
+    const { LinkedInAdapter } = await import("../../src/adapters/LinkedInAdapter.js");
+    const page = createMockPage({
+      currentUrl: "https://www.linkedin.com/jobs/view/4410702958/",
+      title: "Frontend Developer (React Native) - Turkish Speaking (Remote) | Guardian Professional | LinkedIn",
+      selectors: {
+        ".global-nav": { text: "Primary nav" },
+        ".job-details-jobs-unified-top-card__job-title": {
+          text: "Frontend Developer (React Native) - Turkish Speaking",
+        },
+        ".job-details-jobs-unified-top-card__company-name": {
+          text: "Guardian Professional",
+        },
+        ".job-details-jobs-unified-top-card__bullet": {
+          text: "Frontend Developer (React Native) - Turkish Speaking",
+        },
+        "[data-testid='expandable-text-box']": {
+          text: "Remote role for Turkish speaking React Native developers.",
+        },
+        body: {
+          text: [
+            "Frontend Developer (React Native) - Turkish Speaking",
+            "Guardian Professional",
+            "Remote",
+            "Easy Apply",
+          ].join("\n"),
+        },
+      },
+    });
+
+    const result = await new LinkedInAdapter().extract(page as never, page.url());
+
+    expect(result.location).toBe("Remote");
+    expect(result.locationSource).toBe("workplace-type");
+    expect(result.rawText).toContain("Location: Remote");
+  });
 });
 
 describe("GreenhouseAdapter", () => {

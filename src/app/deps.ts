@@ -12,6 +12,7 @@ import {
 } from "../linkedin/easyApply.js";
 import { parseJob } from "../llm/parseJob.js";
 import { completePrompt } from "../llm/completePrompt.js";
+import { checkLocalLlmConnection } from "../llm/providers/lmStudioProvider.js";
 import { getConfiguredProviderInfo } from "../llm/providers/resolveProvider.js";
 import { extractJobText } from "../parser/extractJobText.js";
 import { formatJobForLLM } from "../parser/formatJobForLLM.js";
@@ -32,6 +33,7 @@ export const appDeps = {
   formatJobForLLM,
   parseJob,
   completePrompt,
+  checkLocalLlmConnection,
   getConfiguredProviderInfo,
   normalizeParsedJob,
   loadCandidateProfile,

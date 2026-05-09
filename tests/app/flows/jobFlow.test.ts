@@ -166,7 +166,7 @@ describe("job flow", () => {
     );
   });
 
-  it("forces APPLY for Europe-centered jobs when policy passes", async () => {
+  it("does not force APPLY for Europe-centered jobs when the score decision skips", async () => {
     const deps = createDeps();
     const page = { fake: "page" };
     deps.withPage.mockImplementation(async (_options: unknown, fn: (page: unknown) => Promise<unknown>) => fn(page));
@@ -215,9 +215,9 @@ describe("job flow", () => {
 
     const result = await runJobFlow("decide", "https://www.linkedin.com/jobs/view/1", deps);
 
-    expect(result.finalDecision).toBe("APPLY");
+    expect(result.finalDecision).toBe("SKIP");
     expect(result.finalReasons).toEqual([
-      "Configured workplace-policy bypass matched this job location, so the role was forced to APPLY.",
+      "Configured workplace-policy bypass matched this job location. Weak fit.",
     ]);
   });
 
