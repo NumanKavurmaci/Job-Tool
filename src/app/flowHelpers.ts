@@ -1,10 +1,12 @@
 import type { Page } from "@playwright/test";
+import { createHash } from "node:crypto";
 import type { CandidateProfile } from "../candidate/types.js";
 import type { InputQuestion } from "../questions/types.js";
 import type { ScoringMode } from "./cli.js";
 import {
   buildDuplicateReviewReason,
   getLatestJobReview,
+  type JobReviewHistory,
   shouldRetryPendingApprovedReview,
   shouldSkipDuplicateBatchReview,
 } from "../utils/jobHistory.js";
@@ -46,6 +48,12 @@ export function createCandidateAnswerResolver(
     });
 }
 
+export function createScoringProfileFingerprint(profile: unknown): string {
+  return createHash("sha256")
+    .update(JSON.stringify(profile) ?? "undefined")
+    .digest("hex");
+}
+
 export function createBatchJobEvaluator(args: {
   disableAiEvaluation: boolean;
   scoreThreshold: number;
@@ -54,6 +62,7 @@ export function createBatchJobEvaluator(args: {
   source?: string;
   systemScope?: string;
   recommendationPolicy?: "never" | "apply-only" | "all-evaluated";
+  preloadedReviews?: Map<string, JobReviewHistory>;
   scoringProfile: Awaited<ReturnType<AppDeps["loadCandidateProfile"]>>;
   evaluationPage?: Page;
   deps: AppDeps;
@@ -62,6 +71,7 @@ export function createBatchJobEvaluator(args: {
   const reviewSource = args.source ?? "easy-apply-batch";
   const systemScope = args.systemScope ?? "linkedin.batch";
   const recommendationPolicy = args.recommendationPolicy ?? "never";
+  const scoringProfileFingerprint = createScoringProfileFingerprint(args.scoringProfile);
   const isLinkedInJobUrl = (url: string) => /linkedin\.com\/jobs\/view\//i.test(url);
   const shouldPersistRecommendation = (finalDecision: "APPLY" | "SKIP" | "MAYBE") => {
     switch (recommendationPolicy) {
@@ -103,11 +113,14 @@ export function createBatchJobEvaluator(args: {
   };
 
   const evaluateOnPage = async (evaluationPage: Page, url: string) => {
-    const latestReview = await getLatestJobReview({
-      prisma: deps.prisma,
-      jobUrl: url,
-      logger: deps.logger,
-    });
+    const latestReview =
+      args.preloadedReviews
+        ? args.preloadedReviews.get(url) ?? null
+        : await getLatestJobReview({
+            prisma: deps.prisma,
+            jobUrl: url,
+            logger: deps.logger,
+          });
     const requiresFreshLinkedInEvaluation = isLinkedInJobUrl(url);
 
     if (
@@ -313,6 +326,7 @@ export function createBatchJobEvaluator(args: {
           aiReasoning: score.aiReasoning ?? null,
           aiConfidence: score.aiConfidence ?? null,
           scoringSource: score.scoringSource ?? "deterministic",
+          scoringProfileFingerprint,
           workplacePolicyBypassed: outcome.workplacePolicyBypassed,
           diagnostics,
         },
@@ -339,6 +353,7 @@ export function createBatchJobEvaluator(args: {
           aiReasoning: score.aiReasoning ?? null,
           aiConfidence: score.aiConfidence ?? null,
           scoringSource: score.scoringSource ?? "deterministic",
+          scoringProfileFingerprint,
           workplacePolicyBypassed: outcome.workplacePolicyBypassed,
         },
       },

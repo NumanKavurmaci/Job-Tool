@@ -1,10 +1,18 @@
 import { performance } from "node:perf_hooks";
+import type { Page } from "@playwright/test";
 import type { CliArgs } from "../cli.js";
-import { LINKEDIN_BROWSER_SESSION_OPTIONS } from "../constants.js";
+import { LINKEDIN_BROWSER_SESSION_OPTIONS, PARSE_VERSION } from "../constants.js";
 import type { AppDeps } from "../deps.js";
-import { createBatchJobEvaluator } from "../flowHelpers.js";
+import {
+  createBatchJobEvaluator,
+  createScoringProfileFingerprint,
+} from "../flowHelpers.js";
 import { persistRunArtifact, persistSystemEvent } from "../observability.js";
 import { getErrorMessage, serializeError } from "../../utils/errors.js";
+import {
+  getLatestJobReviewsByUrl,
+  type JobReviewHistory,
+} from "../../utils/jobHistory.js";
 import type {
   EasyApplyCollectionJob,
   EasyApplyDriver,
@@ -45,20 +53,68 @@ function buildEvaluationFailureResult(error: unknown): EasyApplyJobEvaluation {
   };
 }
 
-function buildCollectionJobUrl(collectionUrl: string, jobUrl: string): string {
-  try {
-    const collection = new URL(collectionUrl);
-    const job = new URL(jobUrl);
-    const jobId = job.pathname.match(/\/jobs\/view\/(\d+)/)?.[1];
-    if (!jobId) {
-      return collection.toString();
-    }
-
-    collection.searchParams.set("currentJobId", jobId);
-    return collection.toString();
-  } catch {
-    return collectionUrl;
+function readReviewDetails(review: Pick<JobReviewHistory, "detailsJson">): Record<string, unknown> {
+  if (!review.detailsJson) {
+    return {};
   }
+
+  try {
+    const parsed = JSON.parse(review.detailsJson);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function buildReusableExploreEvaluation(args: {
+  review?: JobReviewHistory;
+  scoreThreshold: number;
+  scoringMode: "local" | "ai";
+  scoringProfileFingerprint: string;
+}): EasyApplyJobEvaluation | null {
+  const review = args.review;
+  if (!review) {
+    return null;
+  }
+
+  if (
+    review.source !== "explore-batch" ||
+    (review.status !== "EVALUATED" && review.status !== "SKIPPED") ||
+    !review.decision ||
+    typeof review.score !== "number" ||
+    typeof review.policyAllowed !== "boolean" ||
+    review.threshold !== args.scoreThreshold
+  ) {
+    return null;
+  }
+
+  const details = readReviewDetails(review);
+  const expectedScoringSource = args.scoringMode === "ai" ? "llm" : "deterministic";
+  if (
+    details.parseVersion !== PARSE_VERSION ||
+    details.scoringSource !== expectedScoringSource ||
+    details.scoringProfileFingerprint !== args.scoringProfileFingerprint
+  ) {
+    return null;
+  }
+
+  return {
+    shouldApply: review.decision === "APPLY",
+    finalDecision: review.decision,
+    score: review.score,
+    reason: review.summary ?? buildReusableExploreReason(review),
+    policyAllowed: review.policyAllowed,
+    diagnostics: {
+      metadataRead: false,
+      companyInfoRead: false,
+    },
+  };
+}
+
+function buildReusableExploreReason(
+  review: Pick<JobReviewHistory, "createdAt" | "decision" | "score">,
+): string {
+  return `Reused explore-batch evaluation from ${review.createdAt.toISOString().slice(0, 10)} with decision ${review.decision} and score ${review.score}.`;
 }
 
 async function collectVisibleBatchJobs(
@@ -80,6 +136,7 @@ export async function runExploreBatchFlow(
 ) {
   const startedAt = performance.now();
   const scoringProfile = await deps.loadCandidateProfile();
+  const scoringProfileFingerprint = createScoringProfileFingerprint(scoringProfile);
 
   await persistSystemEvent(
     {
@@ -102,20 +159,34 @@ export async function runExploreBatchFlow(
     LINKEDIN_BROWSER_SESSION_OPTIONS,
     async (page) => {
       const driver = await deps.createEasyApplyDriver(page);
-      const evaluationPage = args.disableAiEvaluation
-        ? undefined
-        : await page.context().newPage();
-      const evaluateJob = createBatchJobEvaluator({
-        disableAiEvaluation: args.disableAiEvaluation,
-        scoreThreshold: args.scoreThreshold,
-        scoringMode: args.scoringMode,
-        source: "explore-batch",
-        systemScope: "explore.batch",
-        recommendationPolicy: "all-evaluated",
-        scoringProfile,
-        ...(evaluationPage ? { evaluationPage } : {}),
-        deps,
-      });
+      let evaluationPage: Page | undefined;
+      const preloadedReviews = new Map<string, JobReviewHistory>();
+      const sameRunEvaluations = new Map<string, EasyApplyJobEvaluation>();
+      let evaluateJob:
+        | ((url: string) => Promise<EasyApplyJobEvaluation>)
+        | undefined;
+
+      const getEvaluateJob = async () => {
+        if (!evaluateJob) {
+          evaluationPage = args.disableAiEvaluation
+            ? undefined
+            : await page.context().newPage();
+          evaluateJob = createBatchJobEvaluator({
+            disableAiEvaluation: args.disableAiEvaluation,
+            scoreThreshold: args.scoreThreshold,
+            scoringMode: args.scoringMode,
+            source: "explore-batch",
+            systemScope: "explore.batch",
+            recommendationPolicy: "all-evaluated",
+            preloadedReviews,
+            scoringProfile,
+            ...(evaluationPage ? { evaluationPage } : {}),
+            deps,
+          });
+        }
+
+        return evaluateJob;
+      };
 
       try {
         const requestedCount = Math.max(1, Math.floor(args.count));
@@ -131,6 +202,8 @@ export async function runExploreBatchFlow(
 
         while (jobs.length < requestedCount) {
           const visibleJobs = await collectVisibleBatchJobs(driver);
+          const remainingCount = requestedCount - jobs.length;
+          const candidates: EasyApplyCollectionJob[] = [];
 
           for (const job of visibleJobs) {
             if (seenUrls.has(job.url)) {
@@ -143,32 +216,70 @@ export async function runExploreBatchFlow(
               continue;
             }
 
+            candidates.push(job);
+            if (candidates.length >= remainingCount) {
+              break;
+            }
+          }
+
+          preloadedReviews.clear();
+          if (!args.disableAiEvaluation && candidates.length > 0) {
+            const latestReviews = await getLatestJobReviewsByUrl({
+              prisma: deps.prisma,
+              jobUrls: candidates.map((job) => job.url),
+              source: "explore-batch",
+              logger: deps.logger,
+            });
+            for (const [url, review] of latestReviews) {
+              preloadedReviews.set(url, review);
+            }
+          }
+
+          for (const job of candidates) {
             let evaluation: EasyApplyJobEvaluation;
-            try {
-              evaluation = await evaluateJob(job.url);
-            } catch (error) {
-              failedCount += 1;
-              evaluation = buildEvaluationFailureResult(error);
-              deps.logger.warn(
-                {
-                  url: job.url,
-                  error: serializeError(error),
-                },
-                "Explore batch evaluation failed for job",
-              );
-              await persistSystemEvent(
-                {
-                  level: "ERROR",
-                  scope: "explore.batch",
-                  message: "Explore batch evaluation failed for job.",
-                  runType: "explore-batch",
-                  jobUrl: job.url,
-                  details: {
+
+            const sameRunEvaluation = sameRunEvaluations.get(job.url);
+            const reusableEvaluation =
+              sameRunEvaluation ??
+              (!args.disableAiEvaluation
+                ? buildReusableExploreEvaluation({
+                    review: preloadedReviews.get(job.url) as JobReviewHistory,
+                    scoreThreshold: args.scoreThreshold,
+                    scoringMode: args.scoringMode,
+                    scoringProfileFingerprint,
+                  })
+                : null);
+
+            if (reusableEvaluation) {
+              evaluation = reusableEvaluation;
+            } else {
+              try {
+                evaluation = await (await getEvaluateJob())(job.url);
+                sameRunEvaluations.set(job.url, evaluation);
+              } catch (error) {
+                failedCount += 1;
+                evaluation = buildEvaluationFailureResult(error);
+                deps.logger.warn(
+                  {
+                    url: job.url,
                     error: serializeError(error),
                   },
-                },
-                deps,
-              );
+                  "Explore batch evaluation failed for job",
+                );
+                await persistSystemEvent(
+                  {
+                    level: "ERROR",
+                    scope: "explore.batch",
+                    message: "Explore batch evaluation failed for job.",
+                    runType: "explore-batch",
+                    jobUrl: job.url,
+                    details: {
+                      error: serializeError(error),
+                    },
+                  },
+                  deps,
+                );
+              }
             }
             jobs.push({
               url: job.url,
@@ -182,8 +293,6 @@ export async function runExploreBatchFlow(
             if (jobs.length >= requestedCount) {
               break;
             }
-
-            await driver.openCollection(buildCollectionJobUrl(args.url, job.url));
           }
 
           if (jobs.length >= requestedCount) {

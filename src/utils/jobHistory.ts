@@ -6,6 +6,8 @@ import type {
 } from "@prisma/client";
 import type pino from "pino";
 
+export type { JobReviewHistory };
+
 type JobHistoryWriter = Pick<PrismaClient, "jobReviewHistory">;
 type JobHistoryLogger = Pick<pino.Logger, "warn">;
 
@@ -84,6 +86,45 @@ export async function getLatestJobReview(args: {
       "Failed to load latest job review history",
     );
     return null;
+  }
+}
+
+export async function getLatestJobReviewsByUrl(args: {
+  prisma: JobHistoryWriter;
+  jobUrls: string[];
+  source?: string;
+  logger?: JobHistoryLogger;
+}): Promise<Map<string, JobReviewHistory>> {
+  const uniqueUrls = [...new Set(args.jobUrls)];
+  if (uniqueUrls.length === 0) {
+    return new Map();
+  }
+
+  try {
+    const reviews = await args.prisma.jobReviewHistory.findMany({
+      where: {
+        jobUrl: { in: uniqueUrls },
+        ...(args.source ? { source: args.source } : {}),
+      },
+      orderBy: [{ jobUrl: "asc" }, { createdAt: "desc" }],
+    });
+    const latestByUrl = new Map<string, JobReviewHistory>();
+    for (const review of reviews) {
+      if (!latestByUrl.has(review.jobUrl)) {
+        latestByUrl.set(review.jobUrl, review);
+      }
+    }
+    return latestByUrl;
+  } catch (error) {
+    args.logger?.warn(
+      {
+        jobUrls: uniqueUrls,
+        source: args.source,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      "Failed to load latest job review history batch",
+    );
+    return new Map();
   }
 }
 

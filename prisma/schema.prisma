@@ -178,4 +178,5 @@ model JobReviewHistory {
   @@index([jobUrl, createdAt])
   @@index([status, createdAt])
   @@index([source, createdAt])
+  @@index([source, jobUrl, createdAt])
 }

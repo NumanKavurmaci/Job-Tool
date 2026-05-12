@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildDuplicateReviewReason,
   getLatestJobReview,
+  getLatestJobReviewsByUrl,
   recordJobReviewHistory,
   shouldRetryPendingApprovedReview,
   shouldSkipDuplicateBatchReview,
@@ -111,6 +112,50 @@ describe("jobHistory", () => {
       }),
       "Failed to load latest job review history",
     );
+  });
+
+  it("fetches latest reviews for many URLs with one query", async () => {
+    const newer = {
+      id: "review_newer",
+      jobUrl: "https://example.com/jobs/1",
+      createdAt: new Date("2026-04-02T10:00:00.000Z"),
+    };
+    const older = {
+      id: "review_older",
+      jobUrl: "https://example.com/jobs/1",
+      createdAt: new Date("2026-04-01T10:00:00.000Z"),
+    };
+    const second = {
+      id: "review_2",
+      jobUrl: "https://example.com/jobs/2",
+      createdAt: new Date("2026-04-01T10:00:00.000Z"),
+    };
+    const findMany = vi.fn().mockResolvedValue([newer, older, second]);
+
+    const result = await getLatestJobReviewsByUrl({
+      prisma: {
+        jobReviewHistory: { findMany },
+      } as never,
+      jobUrls: [
+        "https://example.com/jobs/1",
+        "https://example.com/jobs/2",
+        "https://example.com/jobs/1",
+      ],
+      source: "explore-batch",
+    });
+
+    expect(result.get("https://example.com/jobs/1")).toBe(newer);
+    expect(result.get("https://example.com/jobs/2")).toBe(second);
+    expect(findMany).toHaveBeenCalledTimes(1);
+    expect(findMany).toHaveBeenCalledWith({
+      where: {
+        jobUrl: {
+          in: ["https://example.com/jobs/1", "https://example.com/jobs/2"],
+        },
+        source: "explore-batch",
+      },
+      orderBy: [{ jobUrl: "asc" }, { createdAt: "desc" }],
+    });
   });
 
   it("builds a human-readable duplicate review reason", () => {
