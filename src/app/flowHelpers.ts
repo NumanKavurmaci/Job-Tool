@@ -20,6 +20,7 @@ import { LINKEDIN_EVALUATION_SESSION_OPTIONS, PARSE_VERSION } from "./constants.
 import type { AppDeps } from "./deps.js";
 import { analyzeExtractedJob, buildJobDiagnostics, resolveDecisionOutcome } from "./jobEvaluation.js";
 import { persistJobHistory, persistSystemEvent } from "./observability.js";
+import type { TimingRecorder } from "../utils/timing.js";
 
 export async function loadMasterProfileForArgs(
   args: { resumePath: string; linkedinUrl?: string },
@@ -63,6 +64,7 @@ export function createBatchJobEvaluator(args: {
   systemScope?: string;
   recommendationPolicy?: "never" | "apply-only" | "all-evaluated";
   preloadedReviews?: Map<string, JobReviewHistory>;
+  timings?: TimingRecorder;
   scoringProfile: Awaited<ReturnType<AppDeps["loadCandidateProfile"]>>;
   evaluationPage?: Page;
   deps: AppDeps;
@@ -72,6 +74,8 @@ export function createBatchJobEvaluator(args: {
   const systemScope = args.systemScope ?? "linkedin.batch";
   const recommendationPolicy = args.recommendationPolicy ?? "never";
   const scoringProfileFingerprint = createScoringProfileFingerprint(args.scoringProfile);
+  const time = <T>(name: string, fn: () => Promise<T>) =>
+    args.timings ? args.timings.time(name, fn) : fn();
   const isLinkedInJobUrl = (url: string) => /linkedin\.com\/jobs\/view\//i.test(url);
   const shouldPersistRecommendation = (finalDecision: "APPLY" | "SKIP" | "MAYBE") => {
     switch (recommendationPolicy) {
@@ -225,7 +229,9 @@ export function createBatchJobEvaluator(args: {
       }
     }
 
-    const extracted = await deps.extractJobText(evaluationPage, url);
+    const extracted = await time("job.extractText", () =>
+      deps.extractJobText(evaluationPage, url),
+    );
     const diagnostics = buildJobDiagnostics(extracted);
     await persistSystemEvent(
       {
@@ -238,7 +244,7 @@ export function createBatchJobEvaluator(args: {
       },
       deps,
     );
-    const analysis = await analyzeExtractedJob({
+    const analysis = await time("job.analyze", () => analyzeExtractedJob({
       extracted,
       scoringProfile: args.scoringProfile,
       deps,
@@ -246,7 +252,7 @@ export function createBatchJobEvaluator(args: {
       ...(args.allowExternalLinkedInApply != null
         ? { allowExternalLinkedInApply: args.allowExternalLinkedInApply }
         : {}),
-    });
+    }));
     const normalized = analysis.normalized;
     const score = analysis.score;
     const policy = analysis.policy;
@@ -293,7 +299,7 @@ export function createBatchJobEvaluator(args: {
       deps,
     );
 
-    const persisted = await persistJobAnalysisRecord({
+    const persisted = await time("job.persistAnalysis", () => persistJobAnalysisRecord({
       prisma: deps.prisma,
       logger: deps.logger,
       url,
@@ -305,10 +311,10 @@ export function createBatchJobEvaluator(args: {
       policyAllowed: policy.allowed,
       reasons: outcome.finalReasons,
       parseVersion: PARSE_VERSION,
-    });
+    }));
 
     if (shouldPersistRecommendation(finalDecision)) {
-      await persistJobRecommendationRecord({
+      await time("job.persistRecommendation", () => persistJobRecommendationRecord({
         prisma: deps.prisma,
         logger: deps.logger,
         jobPostingId: persisted.jobPosting.id,
@@ -330,10 +336,10 @@ export function createBatchJobEvaluator(args: {
           workplacePolicyBypassed: outcome.workplacePolicyBypassed,
           diagnostics,
         },
-      });
+      }));
     }
 
-    await persistJobHistory(
+    await time("job.persistHistory", () => persistJobHistory(
       {
         jobPostingId: persisted.jobPosting.id,
         jobUrl: url,
@@ -358,7 +364,7 @@ export function createBatchJobEvaluator(args: {
         },
       },
       deps,
-    );
+    ));
 
     return {
       shouldApply: finalDecision === "APPLY",

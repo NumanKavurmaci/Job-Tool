@@ -13,6 +13,7 @@ import {
   getLatestJobReviewsByUrl,
   type JobReviewHistory,
 } from "../../utils/jobHistory.js";
+import { createTimingRecorder } from "../../utils/timing.js";
 import type {
   EasyApplyCollectionJob,
   EasyApplyDriver,
@@ -135,6 +136,7 @@ export async function runExploreBatchFlow(
   deps: AppDeps,
 ) {
   const startedAt = performance.now();
+  const timings = createTimingRecorder();
   const scoringProfile = await deps.loadCandidateProfile();
   const scoringProfileFingerprint = createScoringProfileFingerprint(scoringProfile);
 
@@ -179,6 +181,7 @@ export async function runExploreBatchFlow(
             systemScope: "explore.batch",
             recommendationPolicy: "all-evaluated",
             preloadedReviews,
+            timings,
             scoringProfile,
             ...(evaluationPage ? { evaluationPage } : {}),
             deps,
@@ -196,12 +199,15 @@ export async function runExploreBatchFlow(
         let recommendedCount = 0;
         let failedCount = 0;
 
-        await driver.ensureAuthenticated(args.url);
-        await driver.openCollection(args.url);
+        await timings.time("collection.authenticate", () => driver.ensureAuthenticated(args.url));
+        await timings.time("collection.open", () => driver.openCollection(args.url));
         pagesVisited += 1;
 
         while (jobs.length < requestedCount) {
-          const visibleJobs = await collectVisibleBatchJobs(driver);
+          const visibleJobs = await timings.time(
+            "collection.collectVisibleJobs",
+            () => collectVisibleBatchJobs(driver),
+          );
           const remainingCount = requestedCount - jobs.length;
           const candidates: EasyApplyCollectionJob[] = [];
 
@@ -224,12 +230,14 @@ export async function runExploreBatchFlow(
 
           preloadedReviews.clear();
           if (!args.disableAiEvaluation && candidates.length > 0) {
-            const latestReviews = await getLatestJobReviewsByUrl({
-              prisma: deps.prisma,
-              jobUrls: candidates.map((job) => job.url),
-              source: "explore-batch",
-              logger: deps.logger,
-            });
+            const latestReviews = await timings.time("history.batchLookup", () =>
+              getLatestJobReviewsByUrl({
+                prisma: deps.prisma,
+                jobUrls: candidates.map((job) => job.url),
+                source: "explore-batch",
+                logger: deps.logger,
+              }),
+            );
             for (const [url, review] of latestReviews) {
               preloadedReviews.set(url, review);
             }
@@ -254,7 +262,9 @@ export async function runExploreBatchFlow(
               evaluation = reusableEvaluation;
             } else {
               try {
-                evaluation = await (await getEvaluateJob())(job.url);
+                evaluation = await timings.time("job.evaluate", async () =>
+                  (await getEvaluateJob())(job.url),
+                );
                 sameRunEvaluations.set(job.url, evaluation);
               } catch (error) {
                 failedCount += 1;
@@ -299,7 +309,10 @@ export async function runExploreBatchFlow(
             break;
           }
 
-          const advanced = await driver.goToNextResultsPage();
+          const advanced = await timings.time(
+            "collection.nextResultsPage",
+            () => driver.goToNextResultsPage(),
+          );
           if (!advanced) {
             break;
           }
@@ -393,6 +406,7 @@ export async function runExploreBatchFlow(
         durationMs: Math.round(performance.now() - startedAt),
         finishedAt: new Date().toISOString(),
         summary: `Explore batch evaluated ${result.evaluatedCount} job(s) and recommended ${result.recommendedCount}.`,
+        timings: timings.snapshot(),
       },
     },
     deps,

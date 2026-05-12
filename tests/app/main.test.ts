@@ -2116,6 +2116,15 @@ describe("phase 5 index flows", () => {
       expect.objectContaining({
         category: "batch-runs",
         prefix: "explore-batch",
+        payload: expect.objectContaining({
+          meta: expect.objectContaining({
+            timings: expect.objectContaining({
+              "collection.open": expect.objectContaining({ count: 1 }),
+              "collection.collectVisibleJobs": expect.objectContaining({ count: 1 }),
+              "job.evaluate": expect.objectContaining({ count: 1 }),
+            }),
+          }),
+        }),
       }),
     );
   });

@@ -691,13 +691,15 @@ describe("external application discovery", () => {
     const result = await discoverExternalApplication(
       { goto, waitForFunction, waitForTimeout, evaluate } as never,
       "https://example.com/apply",
+      {
+        delayedEmbedRetryDelaysMs: [5, 10],
+        signalTimeoutMs: 50,
+      },
     );
 
-    expect(waitForTimeout).toHaveBeenCalledTimes(4);
-    expect(waitForTimeout).toHaveBeenNthCalledWith(1, 500);
-    expect(waitForTimeout).toHaveBeenNthCalledWith(2, 1000);
-    expect(waitForTimeout).toHaveBeenNthCalledWith(3, 2500);
-    expect(waitForTimeout).toHaveBeenNthCalledWith(4, 5000);
+    expect(waitForTimeout).toHaveBeenCalledTimes(2);
+    expect(waitForTimeout).toHaveBeenNthCalledWith(1, 5);
+    expect(waitForTimeout).toHaveBeenNthCalledWith(2, 10);
     expect(evaluate.mock.calls.length).toBeGreaterThanOrEqual(4);
     expect(result.fields).toEqual([]);
     expect(result.precursorLinks).toEqual([]);
@@ -974,7 +976,14 @@ describe("external application discovery", () => {
       });
     });
 
-    const result = await discoverExternalApplication(page, "https://example.test/delayed-embed");
+    const result = await discoverExternalApplication(
+      page,
+      "https://example.test/delayed-embed",
+      {
+        delayedEmbedRetryDelaysMs: [300],
+        signalTimeoutMs: 500,
+      },
+    );
 
     expect(result.finalUrl).toBe("https://example.test/application?in_iframe=1");
     expect(result.followedPrecursorLink).toBe("https://example.test/application?in_iframe=1");

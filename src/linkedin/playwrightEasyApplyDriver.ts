@@ -11,6 +11,12 @@ import type {
 import { chooseRadioValue } from "./easyApply.js";
 import type { ResolvedAnswer } from "../answers/types.js";
 import { createEmptySiteFeedbackSnapshot, type SiteFeedbackSnapshot } from "../browser/siteFeedback.js";
+import {
+  buildLinkedInJobSurfaceSelector,
+  buildPostClickSurfaceSelector,
+  joinSelectors,
+  LINKEDIN_ALREADY_APPLIED_SELECTORS,
+} from "./easyApplyDom.js";
 
 const EASY_APPLY_TRIGGER_SELECTOR = [
   "button[aria-label*='Easy Apply']",
@@ -327,6 +333,54 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
     await this.closeBlankPages();
   }
 
+  private async hasPostClickSurface(page: Page = this.page): Promise<boolean> {
+    const modal = page.locator(".jobs-easy-apply-modal, [role='dialog']").first();
+    if (await modal.isVisible().catch(() => false)) {
+      return true;
+    }
+
+    const safetyTitle = page.locator(SAFETY_REMINDER_TITLE_SELECTOR).filter({
+      hasText: /Job search safety reminder/i,
+    }).first();
+    if (await safetyTitle.isVisible().catch(() => false)) {
+      return true;
+    }
+
+    const alreadyApplied = page.locator(joinSelectors(LINKEDIN_ALREADY_APPLIED_SELECTORS)).first();
+    if (await alreadyApplied.isVisible().catch(() => false)) {
+      return true;
+    }
+
+    const externalTrigger = page.locator(
+      buildPostClickSurfaceSelector({
+        externalApplyTriggerSelector: EXTERNAL_APPLY_TRIGGER_SELECTOR,
+        externalHeaderApplyFallbackSelector: EXTERNAL_HEADER_APPLY_FALLBACK_SELECTOR,
+      }),
+    ).first();
+    return await externalTrigger.isVisible().catch(() => false);
+  }
+
+  private async waitForPostClickSurface(timeoutMs = 1_500): Promise<void> {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      if (await this.hasPostClickSurface()) {
+        return;
+      }
+      await this.page.waitForTimeout(50).catch(() => undefined);
+    }
+  }
+
+  private async waitForLinkedInJobSurface(timeoutMs = 2_000): Promise<void> {
+    const surface = this.page.locator(
+      buildLinkedInJobSurfaceSelector({
+        easyApplyTriggerSelector: EASY_APPLY_TRIGGER_SELECTOR,
+        externalApplyTriggerSelector: EXTERNAL_APPLY_TRIGGER_SELECTOR,
+      }),
+    ).first();
+
+    await surface.waitFor({ state: "attached", timeout: timeoutMs }).catch(() => undefined);
+  }
+
   private async clickFollowingNewPage(locator: Locator): Promise<void> {
     const originalPage = this.page;
     const popupPromise = this.page.waitForEvent("popup", { timeout: 500 }).catch(() => null);
@@ -335,6 +389,13 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
     if (popup) {
       await popup.waitForLoadState("domcontentloaded").catch(() => undefined);
       let popupNavigated = !this.isBlankPage(popup);
+      if (!popupNavigated && await this.hasPostClickSurface(originalPage)) {
+        await popup.close().catch(() => undefined);
+        this.page = originalPage;
+        await this.closeBlankPages();
+        return;
+      }
+
       for (let attempt = 0; attempt < 6 && !popupNavigated; attempt += 1) {
         await popup.waitForTimeout(500).catch(() => undefined);
         popupNavigated = !this.isBlankPage(popup);
@@ -348,26 +409,26 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
         this.page = originalPage;
       }
 
-      await this.page.waitForTimeout(1_500);
+      await this.waitForPostClickSurface();
       await this.closeBlankPages();
       return;
     }
     await this.adoptNewestPageAfterClick();
-    await this.page.waitForTimeout(1_500);
+    await this.waitForPostClickSurface();
   }
 
   private async continuePastSafetyReminder(): Promise<boolean> {
     const title = this.page.locator(SAFETY_REMINDER_TITLE_SELECTOR).filter({
       hasText: /Job search safety reminder/i,
     }).first();
-    if ((await title.count()) === 0) {
+    if (!(await title.isVisible().catch(() => false))) {
       return false;
     }
 
     const continueApplying = this.page.locator(CONTINUE_APPLYING_SELECTOR).filter({
       hasText: /Continue applying/i,
     }).first();
-    if ((await continueApplying.count()) === 0) {
+    if (!(await continueApplying.isVisible().catch(() => false))) {
       return false;
     }
 
@@ -377,7 +438,7 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
 
   async open(url: string): Promise<void> {
     await this.page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
-    await this.page.waitForTimeout(2_000);
+    await this.waitForLinkedInJobSurface();
   }
 
   async openCollection(url: string): Promise<void> {
@@ -418,13 +479,7 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
   }
 
   async isAlreadyApplied(): Promise<boolean> {
-    const badge = this.page.locator(
-      [
-        "#jobs-apply-see-application-link",
-        ".jobs-s-apply__application-link",
-        ".artdeco-inline-feedback__message:has-text('Applied')",
-      ].join(", "),
-    ).first();
+    const badge = this.page.locator(joinSelectors(LINKEDIN_ALREADY_APPLIED_SELECTORS)).first();
 
     return (await badge.count()) > 0;
   }
@@ -439,7 +494,7 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
       } catch {
         await this.continuePastSafetyReminder().catch(() => undefined);
 
-        if ((await modal.count().catch(() => 0)) > 0) {
+        if (await modal.isVisible().catch(() => false)) {
           return;
         }
 
@@ -545,7 +600,7 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
       return false;
     }
 
-    await this.clickFollowingNewPage(yesAction);
+    await yesAction.click();
     await this.page.waitForLoadState("domcontentloaded").catch(() => undefined);
     return true;
   }
@@ -1013,7 +1068,7 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
 
     if ((await notNow.count()) > 0) {
       await notNow.click();
-      await this.page.waitForTimeout(1_000);
+      await notNow.waitFor({ state: "detached", timeout: 1_000 }).catch(() => undefined);
       return true;
     }
 
@@ -1038,7 +1093,7 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
     }
 
     await dismissButton.click();
-    await this.page.waitForTimeout(1_000);
+    await successHeader.waitFor({ state: "detached", timeout: 1_000 }).catch(() => undefined);
     return true;
   }
 }

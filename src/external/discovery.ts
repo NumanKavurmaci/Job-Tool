@@ -13,6 +13,16 @@ import {
   resolveSemanticExternalAnswer as resolveSemanticExternalAnswerWithPlatform,
 } from "./semantics.js";
 
+export type ExternalDiscoveryRetryPolicy = {
+  delayedEmbedRetryDelaysMs: number[];
+  signalTimeoutMs: number;
+};
+
+export const DEFAULT_EXTERNAL_DISCOVERY_RETRY_POLICY: ExternalDiscoveryRetryPolicy = {
+  delayedEmbedRetryDelaysMs: [500, 1000, 2500, 5000],
+  signalTimeoutMs: 5_000,
+};
+
 const EXTERNAL_DISCOVERY_EVALUATE_SCRIPT = `(() => {
   const doc = globalThis.document;
   const applyTextPattern = /\\b(apply|continue|start|next|begin)\\b/i;
@@ -546,13 +556,17 @@ function looksNonApplicationField(field: {
 export async function discoverExternalApplication(
   page: Page,
   sourceUrl: string,
+  retryPolicy: ExternalDiscoveryRetryPolicy = DEFAULT_EXTERNAL_DISCOVERY_RETRY_POLICY,
 ): Promise<ExternalApplicationDiscovery> {
   await page.goto(sourceUrl);
-  await waitForExternalDiscoverySignals(page);
-  return inspectExternalApplicationPageWithRetry(page, sourceUrl);
+  await waitForExternalDiscoverySignals(page, retryPolicy);
+  return inspectExternalApplicationPageWithRetry(page, sourceUrl, retryPolicy);
 }
 
-async function waitForExternalDiscoverySignals(page: Page): Promise<void> {
+async function waitForExternalDiscoverySignals(
+  page: Page,
+  retryPolicy: ExternalDiscoveryRetryPolicy = DEFAULT_EXTERNAL_DISCOVERY_RETRY_POLICY,
+): Promise<void> {
   if (typeof (page as Page & { waitForFunction?: unknown }).waitForFunction !== "function") {
     return;
   }
@@ -598,7 +612,7 @@ async function waitForExternalDiscoverySignals(page: Page): Promise<void> {
         });
       }`,
       discoverySignal,
-      { timeout: 5_000 },
+      { timeout: retryPolicy.signalTimeoutMs },
     )
     .catch(() => undefined);
 }
@@ -765,6 +779,7 @@ export async function inspectExternalApplicationPage(
 async function inspectExternalApplicationPageWithRetry(
   page: Page,
   sourceUrl: string,
+  retryPolicy: ExternalDiscoveryRetryPolicy = DEFAULT_EXTERNAL_DISCOVERY_RETRY_POLICY,
 ): Promise<ExternalApplicationDiscovery> {
   let inspection = await inspectExternalApplicationPage(page, sourceUrl);
   if (inspection.fields.length > 0) {
@@ -775,7 +790,7 @@ async function inspectExternalApplicationPageWithRetry(
 
   for (const candidate of embeddedApplicationCandidates) {
     await page.goto(candidate.href);
-    await waitForExternalDiscoverySignals(page);
+    await waitForExternalDiscoverySignals(page, retryPolicy);
     inspection = await inspectExternalApplicationPage(page, sourceUrl);
     if (inspection.fields.length > 0 || inspection.precursorLinks.length > 0) {
       return {
@@ -794,12 +809,12 @@ async function inspectExternalApplicationPageWithRetry(
     return inspection;
   }
 
-  for (const delayMs of [500, 1000, 2500, 5000]) {
+  for (const delayMs of retryPolicy.delayedEmbedRetryDelaysMs) {
     await page.waitForTimeout(delayMs);
     embeddedApplicationCandidates = await inspectEmbeddedApplicationCandidates(page);
     for (const candidate of embeddedApplicationCandidates) {
       await page.goto(candidate.href);
-      await waitForExternalDiscoverySignals(page);
+      await waitForExternalDiscoverySignals(page, retryPolicy);
       inspection = await inspectExternalApplicationPage(page, sourceUrl);
       if (inspection.fields.length > 0 || inspection.precursorLinks.length > 0) {
         return {
@@ -831,10 +846,11 @@ export async function followExternalApplicationLink(
   page: Page,
   sourceUrl: string,
   href: string,
+  retryPolicy: ExternalDiscoveryRetryPolicy = DEFAULT_EXTERNAL_DISCOVERY_RETRY_POLICY,
 ): Promise<ExternalApplicationDiscovery> {
   await page.goto(href);
-  await waitForExternalDiscoverySignals(page);
-  const discovered = await inspectExternalApplicationPageWithRetry(page, sourceUrl);
+  await waitForExternalDiscoverySignals(page, retryPolicy);
+  const discovered = await inspectExternalApplicationPageWithRetry(page, sourceUrl, retryPolicy);
   return {
     ...discovered,
     followedPrecursorLink: href,

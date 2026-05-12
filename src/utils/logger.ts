@@ -4,6 +4,7 @@ import pino from "pino";
 
 const logsDir = join(process.cwd(), "logs");
 mkdirSync(logsDir, { recursive: true });
+const isVitest = process.env.VITEST === "true" || process.env.NODE_ENV === "test";
 
 const fileDestination = pino.destination({
   dest: join(logsDir, "app.log"),
@@ -15,7 +16,7 @@ export const logger = pino(
     level: "info",
   },
   pino.multistream([
-    { stream: process.stdout },
+    ...(isVitest ? [] : [{ stream: process.stdout }]),
     { stream: fileDestination },
   ]),
 );
