@@ -25,6 +25,25 @@ const EASY_APPLY_TRIGGER_SELECTOR = [
   "a[aria-label*='Easy Apply']",
   "a[href*='/apply/'][href*='openSDUIApplyFlow=true']",
 ].join(", ");
+const EASY_APPLY_NEXT_BUTTON_SELECTOR = [
+  "[data-live-test-easy-apply-next-button]",
+  "[data-easy-apply-next-button]",
+  "button[aria-label*='Continue to next step']",
+  "button:has-text('Next')",
+  "button:has-text('Continue')",
+  "button:has-text('Save and continue')",
+].join(", ");
+const EASY_APPLY_REVIEW_BUTTON_SELECTOR = [
+  "[data-live-test-easy-apply-review-button]",
+  "button[aria-label*='Review your application']",
+  "button:has-text('Review')",
+].join(", ");
+const EASY_APPLY_SUBMIT_BUTTON_SELECTOR = [
+  "[data-live-test-easy-apply-submit-button]",
+  "button[aria-label*='Submit application']",
+  "button:has-text('Submit application')",
+  "button:has-text('Submit')",
+].join(", ");
 const EXTERNAL_APPLY_TRIGGER_SELECTOR = [
   "button[aria-label*='Apply to'][aria-label*='company website']",
   "button[aria-label^='Apply to ']:has(svg use[href='#link-external-small'])",
@@ -188,6 +207,18 @@ async function annotateQuestions(page: Page): Promise<EasyApplyQuestionView[]> {
         continue;
       }
 
+      const label = getLabel(modal, control);
+      const placeholder = control.getAttribute("placeholder");
+      const role = (control.getAttribute("role") || "").toLowerCase();
+      const ariaLabel = (control.getAttribute("aria-label") || "").toLowerCase();
+      const looksLikeStandaloneSearch =
+        !label &&
+        (placeholder || "").trim().toLowerCase() === "search" &&
+        (role === "combobox" || ariaLabel === "search" || inputType === "search");
+      if (looksLikeStandaloneSearch) {
+        continue;
+      }
+
       const fieldKey = "field-" + counter++;
       control.setAttribute("data-job-tool-field-key", fieldKey);
 
@@ -205,7 +236,7 @@ async function annotateQuestions(page: Page): Promise<EasyApplyQuestionView[]> {
         control.getAttribute("data-test-form-element"),
         control.getAttribute("aria-describedby"),
         control.getAttribute("placeholder"),
-        getLabel(modal, control),
+        label,
       ]
         .filter(Boolean)
         .join(" ")
@@ -227,9 +258,9 @@ async function annotateQuestions(page: Page): Promise<EasyApplyQuestionView[]> {
 
       results.push({
         fieldKey,
-        label: getLabel(modal, control),
+        label,
         helpText: control.getAttribute("aria-describedby"),
-        placeholder: control.getAttribute("placeholder"),
+        placeholder,
         inputType: normalizeFieldType(inputType),
         currentValue: currentValue || null,
         isPrefilled,
@@ -246,7 +277,7 @@ async function annotateQuestions(page: Page): Promise<EasyApplyQuestionView[]> {
   return dialog.evaluate(
     (modal, source) => new Function("modal", source)(modal),
     script,
-  );
+  ).catch(() => []);
 }
 
 export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
@@ -682,19 +713,29 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
         disabled: Boolean(button.disabled || button.getAttribute("aria-disabled") === "true"),
       });
       const buttonDetails = buttons.map(describeButton);
+      const isSubmit = (button) =>
+        button.ariaLabel.includes("submit application") ||
+        button.text === "submit application" ||
+        button.text === "submit";
+      const isReview = (button) =>
+        button.ariaLabel.includes("review your application") ||
+        button.text === "review";
+      const isNext = (button) =>
+        button.ariaLabel.includes("continue to next step") ||
+        ["next", "continue", "continue application", "save and continue"].includes(button.text);
       const findAction = () => {
         if (buttonDetails.some((button) =>
-          button.ariaLabel.includes("submit application") || button.text === "submit application"
+          isSubmit(button)
         )) {
           return "submit";
         }
         if (buttonDetails.some((button) =>
-          button.ariaLabel.includes("review your application") || button.text === "review"
+          isReview(button)
         )) {
           return "review";
         }
         if (buttonDetails.some((button) =>
-          button.ariaLabel.includes("continue to next step") || button.text === "next"
+          isNext(button)
         )) {
           return "next";
         }
@@ -738,7 +779,12 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
     return dialog.evaluate(
       (modal, source) => new Function("modal", source)(modal),
       script,
-    );
+    ).catch(() => ({
+      modalTitle: null,
+      headingText: null,
+      primaryAction: "unknown" as const,
+      buttonLabels: [],
+    }));
   }
 
   async collectReviewDiagnostics(): Promise<EasyApplyReviewDiagnostics> {
@@ -1062,25 +1108,21 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
 
   async getPrimaryAction(): Promise<EasyApplyPrimaryAction> {
     const submit = this.page
-      .locator("[data-live-test-easy-apply-submit-button], button[aria-label*='Submit application']")
+      .locator(EASY_APPLY_SUBMIT_BUTTON_SELECTOR)
       .first();
     if ((await submit.count()) > 0) {
       return "submit";
     }
 
     const review = this.page
-      .locator(
-        "[data-live-test-easy-apply-review-button], button[aria-label*='Review your application'], button:has-text('Review')",
-      )
+      .locator(EASY_APPLY_REVIEW_BUTTON_SELECTOR)
       .first();
     if ((await review.count()) > 0) {
       return "review";
     }
 
     const next = this.page
-      .locator(
-        "[data-live-test-easy-apply-next-button], [data-easy-apply-next-button], button[aria-label*='Continue to next step'], button:has-text('Next')",
-      )
+      .locator(EASY_APPLY_NEXT_BUTTON_SELECTOR)
       .first();
     if ((await next.count()) > 0) {
       return "next";
@@ -1092,20 +1134,14 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
   async advance(action: "next" | "review" | "submit"): Promise<void> {
     const locator = action === "review"
       ? this.page
-        .locator(
-          "[data-live-test-easy-apply-review-button], button[aria-label*='Review your application'], button:has-text('Review')",
-        )
+        .locator(EASY_APPLY_REVIEW_BUTTON_SELECTOR)
         .first()
       : action === "submit"
         ? this.page
-          .locator(
-            "[data-live-test-easy-apply-submit-button], button[aria-label*='Submit application'], button:has-text('Submit application')",
-          )
+          .locator(EASY_APPLY_SUBMIT_BUTTON_SELECTOR)
           .first()
         : this.page
-          .locator(
-            "[data-live-test-easy-apply-next-button], [data-easy-apply-next-button], button[aria-label*='Continue to next step'], button:has-text('Next')",
-          )
+          .locator(EASY_APPLY_NEXT_BUTTON_SELECTOR)
           .first();
     await this.clickFollowingNewPage(locator);
   }

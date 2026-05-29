@@ -88,6 +88,116 @@ describe("PlaywrightLinkedInEasyApplyDriver", () => {
     await page.close();
   });
 
+  it("returns an empty unknown state when the Easy Apply modal is missing or closed", async () => {
+    const page = await browser.newPage();
+    page.setDefaultTimeout(100);
+    await page.setContent(`
+      <main>
+        <input aria-label="Search" placeholder="Search" role="combobox" />
+        <button type="button">Message</button>
+      </main>
+    `);
+
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page);
+
+    await expect(driver.collectQuestions()).resolves.toEqual([]);
+    await expect(driver.collectStepState()).resolves.toEqual({
+      modalTitle: null,
+      headingText: null,
+      primaryAction: "unknown",
+      buttonLabels: [],
+    });
+    await expect(driver.getPrimaryAction()).resolves.toBe("unknown");
+
+    await page.close();
+  });
+
+  it("ignores a focused generic Search typeahead instead of treating it as an Easy Apply question", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <div role="dialog" aria-label="Search people">
+        <input id="global-search" aria-label="Search" placeholder="Search" role="combobox" />
+        <div role="listbox">Pentanom</div>
+        <button type="button">Dismiss</button>
+      </div>
+    `);
+    await page.locator("#global-search").focus();
+
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page);
+    const questions = await driver.collectQuestions();
+    const diagnostics = await driver.collectUnknownActionDiagnostics();
+
+    expect(questions).toEqual([]);
+    expect(diagnostics.activeElement).toMatchObject({
+      tagName: "input",
+      role: "combobox",
+      ariaLabel: "Search",
+      placeholder: "Search",
+    });
+    expect(diagnostics.overlayTextSample).toContain("Pentanom");
+
+    await page.close();
+  });
+
+  it("recognizes changed modal button text like Continue as the next Easy Apply action", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <div class="jobs-easy-apply-modal" role="dialog">
+        <header><h2>Apply to Pentanom</h2></header>
+        <section><h3>Additional questions</h3></section>
+        <footer>
+          <button id="continue-button" type="button">
+            <span class="artdeco-button__text">Continue</span>
+          </button>
+        </footer>
+      </div>
+      <script>
+        document.getElementById("continue-button").addEventListener("click", () => {
+          document.body.setAttribute("data-continued", "true");
+        });
+      </script>
+    `);
+
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page);
+
+    await expect(driver.collectStepState()).resolves.toEqual({
+      modalTitle: "Apply to Pentanom",
+      headingText: "Additional questions",
+      primaryAction: "next",
+      buttonLabels: ["Continue"],
+    });
+    await expect(driver.getPrimaryAction()).resolves.toBe("next");
+    await driver.advance("next");
+    expect(await page.locator("body").getAttribute("data-continued")).toBe("true");
+
+    await page.close();
+  });
+
+  it("surfaces loading/interstitial modal context when buttons have not rendered yet", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <div class="jobs-easy-apply-modal" role="dialog">
+        <header><h2>Apply to OBSS</h2></header>
+        <div aria-live="polite">Loading application questions...</div>
+      </div>
+    `);
+
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page);
+    const state = await driver.collectStepState();
+    const diagnostics = await driver.collectUnknownActionDiagnostics();
+
+    expect(state).toEqual({
+      modalTitle: "Apply to OBSS",
+      headingText: null,
+      primaryAction: "unknown",
+      buttonLabels: [],
+    });
+    expect(diagnostics.modalHtmlSample).toContain("Loading application questions");
+    expect(diagnostics.overlayTextSample).toContain("Apply to OBSS");
+
+    await page.close();
+  });
+
   it("dismisses the application-sent modal through the X button when Not now is not present", async () => {
     const page = await browser.newPage();
     await page.setContent(linkedInApplicationSentModalHtml);
