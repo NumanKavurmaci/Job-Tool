@@ -49,6 +49,21 @@ export interface EasyApplyStepStateSnapshot {
   buttonLabels: string[];
 }
 
+export interface EasyApplyUnknownActionDiagnostics {
+  currentUrl?: string | null;
+  activeElement?: {
+    tagName: string;
+    inputType: string | null;
+    role: string | null;
+    ariaLabel: string | null;
+    placeholder: string | null;
+    text: string | null;
+  } | null;
+  visibleButtonLabels: string[];
+  modalHtmlSample?: string | null;
+  overlayTextSample?: string | null;
+}
+
 export interface EasyApplyReviewDiagnostics {
   validationMessages: string[];
   blockingFields: Array<{
@@ -74,6 +89,9 @@ export interface EasyApplyExternalApplicationHandoff {
   status: "completed" | "failed";
   finalStage?: string;
   stopReason?: string;
+  failureReasonCode?: string | null;
+  retryable?: boolean;
+  missingProfileData?: string[];
   platform?: string;
   reportPath?: string;
 }
@@ -98,6 +116,7 @@ export interface EasyApplyRunResult {
   externalDetection?: EasyApplyExternalDetection;
   externalApplication?: EasyApplyExternalApplicationHandoff;
   reviewDiagnostics?: EasyApplyReviewDiagnostics;
+  unknownActionDiagnostics?: EasyApplyUnknownActionDiagnostics;
   siteFeedback?: SiteFeedbackSnapshot;
   alreadyApplied?: boolean;
   error?: SerializableError;
@@ -106,6 +125,8 @@ export interface EasyApplyRunResult {
     succeeded: boolean;
     message: string;
   };
+  failureReasonCode?: string | null;
+  retryable?: boolean;
 }
 
 export interface EasyApplyJobEvaluation {
@@ -166,6 +187,7 @@ export interface EasyApplyDriver {
   goToNextResultsPage(): Promise<boolean>;
   collectStepState?(): Promise<EasyApplyStepStateSnapshot>;
   collectReviewDiagnostics?(): Promise<EasyApplyReviewDiagnostics>;
+  collectUnknownActionDiagnostics?(): Promise<EasyApplyUnknownActionDiagnostics>;
   collectSiteFeedback?(): Promise<SiteFeedbackSnapshot>;
   fillAnswer(
     question: EasyApplyQuestionView,
@@ -346,6 +368,18 @@ function formatErrorForJobProcessing(error: unknown): {
     summary: parts.join("; "),
     serialized,
   };
+}
+
+function isEmptyUnknownStepState(
+  state: EasyApplyStepStateSnapshot | undefined,
+): boolean {
+  return Boolean(
+    state &&
+      state.primaryAction === "unknown" &&
+      !state.modalTitle &&
+      !state.headingText &&
+      state.buttonLabels.length === 0,
+  );
 }
 
 function buildJobProcessingFailure(
@@ -730,7 +764,9 @@ async function executeStep(args: {
 
   const siteFeedback = await args.input.driver.collectSiteFeedback?.();
   const stateSnapshot = await args.input.driver.collectStepState?.();
-  const action = stateSnapshot?.primaryAction ?? await args.input.driver.getPrimaryAction();
+  const action = !stateSnapshot || isEmptyUnknownStepState(stateSnapshot)
+    ? await args.input.driver.getPrimaryAction()
+    : stateSnapshot.primaryAction;
   const stepSignature = JSON.stringify({
     questions: questions.map((question) => ({
       key: question.fieldKey,
@@ -860,11 +896,16 @@ async function runEasyApplyInternal(
       continue;
     }
 
+    const unknownActionDiagnostics =
+      await input.driver.collectUnknownActionDiagnostics?.();
     return {
       status: "stopped_unknown_action",
       steps,
       stopReason: "Could not determine the next Easy Apply action.",
       url: input.url,
+      failureReasonCode: "linkedin.empty_or_unrecognized_action_state",
+      retryable: true,
+      ...(unknownActionDiagnostics ? { unknownActionDiagnostics } : {}),
       ...(latestSiteFeedback ? { siteFeedback: latestSiteFeedback } : {}),
     };
   }

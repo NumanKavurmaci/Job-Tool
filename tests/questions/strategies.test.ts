@@ -162,6 +162,54 @@ describe("question strategies", () => {
     expect(result?.confidenceLabel).toBe("manual_review");
   });
 
+  it("answers availability questions from structured profile availability", async () => {
+    const { resolveDeterministicAnswer } = await import(
+      "../../src/questions/strategies/deterministic.js"
+    );
+
+    expect(
+      resolveDeterministicAnswer(
+        { type: "availability", normalizedText: "notice period", confidence: 0.9 },
+        {
+          ...profile,
+          availability: {
+            noticePeriod: "2 weeks",
+            startDate: "2026-06-15",
+            canStartImmediately: false,
+          },
+        },
+      )?.answer,
+    ).toBe("2 weeks");
+
+    expect(
+      resolveDeterministicAnswer(
+        { type: "availability", normalizedText: "when can you start", confidence: 0.9 },
+        {
+          ...profile,
+          availability: {
+            noticePeriod: "2 weeks",
+            startDate: null,
+            canStartImmediately: true,
+          },
+        },
+      )?.answer,
+    ).toBe("Immediately");
+  });
+
+  it("flags availability questions for manual review when profile data is missing", async () => {
+    const { resolveDeterministicAnswer } = await import(
+      "../../src/questions/strategies/deterministic.js"
+    );
+
+    const result = resolveDeterministicAnswer(
+      { type: "availability", normalizedText: "notice period", confidence: 0.9 },
+      profile,
+    );
+
+    expect(result?.confidenceLabel).toBe("manual_review");
+    expect(result?.notes?.[0]).toContain("Missing profile availability data");
+  });
+
   it("returns null for unsupported deterministic question types", async () => {
     const { resolveDeterministicAnswer } = await import(
       "../../src/questions/strategies/deterministic.js"

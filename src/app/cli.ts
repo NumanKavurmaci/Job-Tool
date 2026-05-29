@@ -55,6 +55,10 @@ export type CliArgs =
   | {
       mode: "dashboard";
       limit: number;
+    }
+  | {
+      mode: "resume-incomplete";
+      reportPath?: string;
     };
 
 type LinkedInBatchMode = "easy-apply-batch" | "apply-batch" | "explore-batch";
@@ -71,6 +75,7 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
     "--count",
     "--score-threshold",
     "--limit",
+    "--report",
   ]);
 
   const getFlag = (name: string): string | undefined => {
@@ -131,6 +136,14 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
     return {
       mode: "dashboard",
       limit: getIntegerFlag("--limit") ?? 5,
+    };
+  }
+
+  if (first === "resume-incomplete") {
+    const reportPath = getFlag("--report") ?? getPositionalTailArgs()[0];
+    return {
+      mode: "resume-incomplete",
+      ...(reportPath ? { reportPath } : {}),
     };
   }
 

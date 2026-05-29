@@ -78,5 +78,10 @@
       "try": null
     },
     "summary": null
+  },
+  "availability": {
+    "noticePeriod": null,
+    "startDate": null,
+    "canStartImmediately": null
   }
 }

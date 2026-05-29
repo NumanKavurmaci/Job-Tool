@@ -216,6 +216,108 @@ function isSelfDescribingSelectable(field: ExternalApplicationField): boolean {
   );
 }
 
+function isCheckboxControl(field: ExternalApplicationField): boolean {
+  return field.htmlInputType?.toLowerCase() === "checkbox";
+}
+
+function isRadioControl(field: ExternalApplicationField): boolean {
+  return field.htmlInputType?.toLowerCase() === "radio";
+}
+
+/* c8 ignore start */
+async function getLocatorControlKind(
+  locator: Awaited<ReturnType<typeof findFirstLocator>>,
+): Promise<{
+  tagName: string;
+  inputType: string;
+  role: string;
+} | null> {
+  if (!locator) {
+    return null;
+  }
+
+  if (typeof (locator as { evaluate?: unknown }).evaluate !== "function") {
+    return null;
+  }
+
+  return (locator as unknown as {
+    evaluate: <T>(callback: (element: Element) => T) => Promise<T>;
+  }).evaluate((element) => {
+    const control = element as {
+      tagName?: string;
+      type?: string;
+      getAttribute?: (name: string) => string | null;
+    };
+    return {
+      tagName: String(control.tagName ?? "").toLowerCase(),
+      inputType: String(control.type ?? "").toLowerCase(),
+      role: String(control.getAttribute?.("role") ?? "").toLowerCase(),
+    };
+  }).catch(() => null);
+}
+
+async function checkBooleanLikeControl(
+  locator: Awaited<ReturnType<typeof findFirstLocator>>,
+  shouldCheck: boolean,
+): Promise<boolean> {
+  if (!locator) {
+    return false;
+  }
+
+  const checkable = locator as unknown as {
+    check?: () => Promise<void>;
+    uncheck?: () => Promise<void>;
+    isChecked?: () => Promise<boolean>;
+    click: () => Promise<void>;
+  };
+
+  if (shouldCheck) {
+    if (typeof checkable.check === "function") {
+      await checkable.check();
+    } else if (typeof checkable.isChecked !== "function" || !(await checkable.isChecked())) {
+      await checkable.click();
+    }
+    return typeof checkable.isChecked === "function" ? await checkable.isChecked() : true;
+  }
+
+  if (typeof checkable.uncheck === "function") {
+    await checkable.uncheck();
+  } else if (typeof checkable.isChecked === "function" && await checkable.isChecked()) {
+    await checkable.click();
+  }
+  return typeof checkable.isChecked === "function" ? !(await checkable.isChecked()) : true;
+}
+
+function isTextFillCompatibleControl(control: {
+  tagName: string;
+  inputType: string;
+  role: string;
+} | null): boolean {
+  if (!control) {
+    return true;
+  }
+  if (control.tagName === "textarea") {
+    return true;
+  }
+  if (control.tagName === "select") {
+    return false;
+  }
+  if (control.tagName !== "input") {
+    return !["checkbox", "radio", "button", "option"].includes(control.role);
+  }
+
+  return ![
+    "checkbox",
+    "radio",
+    "file",
+    "button",
+    "submit",
+    "reset",
+    "image",
+  ].includes(control.inputType);
+}
+/* c8 ignore stop */
+
 function normalizeUrlAnswer(answer: string): string {
   const trimmed = answer.trim();
   if (!trimmed) {
@@ -376,8 +478,10 @@ async function fillSingleField(
         ).catch(() => false);
 
         if (!clickedOption) {
-          await locator.click();
+          await checkBooleanLikeControl(locator, true);
         }
+      } else if (isCheckboxControl(field) || isRadioControl(field)) {
+        await checkBooleanLikeControl(locator, false);
       }
 
       await locator.blur().catch(() => undefined);
@@ -394,6 +498,59 @@ async function fillSingleField(
     }
 
     if (field.type === "single_select" || field.type === "multi_select") {
+      const controlKind = await getLocatorControlKind(locator);
+      /* c8 ignore start */
+      if (isCheckboxControl(field) || controlKind?.inputType === "checkbox") {
+        const booleanAnswer =
+          normalizeBooleanAnswer(answer, field.options) ??
+          (shouldAutoAcceptConsent(field, plan)
+            ? { shouldCheck: true, matchedOption: field.options[0] }
+            : null);
+        if (!booleanAnswer) {
+          return {
+            fieldKey: field.key,
+            fieldLabel: field.label,
+            required: field.required,
+            status: "skipped",
+            details: "No compatible checkbox answer was available for this field.",
+          };
+        }
+
+        const selected = await checkBooleanLikeControl(locator, booleanAnswer.shouldCheck);
+        return {
+          fieldKey: field.key,
+          fieldLabel: field.label,
+          required: field.required,
+          status: selected ? "filled" : "failed",
+          details: selected
+            ? booleanAnswer.shouldCheck
+              ? "Selected the checkbox field."
+              : "Left the checkbox field unselected."
+            : "Could not set the checkbox field to the requested state.",
+        };
+      }
+
+      if (isRadioControl(field) || controlKind?.inputType === "radio") {
+        const clickedOption = await clickVisibleOption(page, answer).catch(() => false);
+        if (!clickedOption) {
+          return {
+            fieldKey: field.key,
+            fieldLabel: field.label,
+            required: field.required,
+            status: "failed",
+            details: "Could not select a matching radio option.",
+          };
+        }
+        return {
+          fieldKey: field.key,
+          fieldLabel: field.label,
+          required: field.required,
+          status: "filled",
+          details: "Selected a radio option.",
+        };
+      }
+      /* c8 ignore stop */
+
       if (isSelfDescribingSelectable(field)) {
         const booleanLike = normalizeBooleanAnswer(answer, ["Yes", "No"]);
         if (booleanLike?.shouldCheck === false) {
@@ -424,6 +581,15 @@ async function fillSingleField(
           : await locator.click().then(() => true).catch(() => false);
 
       if (!selectedNativeOption && !clickedOption && !clickedLabelControl) {
+        if (!isTextFillCompatibleControl(controlKind)) {
+          return {
+            fieldKey: field.key,
+            fieldLabel: field.label,
+            required: field.required,
+            status: "failed",
+            details: `Cannot fill a non-text form control (${controlKind?.tagName || "unknown"}${controlKind?.inputType ? `:${controlKind.inputType}` : ""}).`,
+          };
+        }
         await locator.fill(answer);
         if (looksLikeReactSelect) {
           await page.waitForTimeout(150);
@@ -473,6 +639,16 @@ async function fillSingleField(
         await locator.press("Enter").catch(() => undefined);
       }
     } else {
+      const controlKind = await getLocatorControlKind(locator);
+      if (!isTextFillCompatibleControl(controlKind)) {
+        return {
+          fieldKey: field.key,
+          fieldLabel: field.label,
+          required: field.required,
+          status: "failed",
+          details: `Cannot fill a non-text form control (${controlKind?.tagName || "unknown"}${controlKind?.inputType ? `:${controlKind.inputType}` : ""}).`,
+        };
+      }
       await locator.fill(fillValue);
     }
     await locator.blur().catch(() => undefined);

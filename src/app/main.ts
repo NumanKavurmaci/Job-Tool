@@ -24,6 +24,7 @@ import {
 } from "./flows/profileFlows.js";
 import { persistSystemEvent } from "./observability.js";
 import { runExploreBatchFlow } from "./flows/exploreFlows.js";
+import { runResumeIncompleteFlow } from "./flows/resumeIncompleteFlows.js";
 import { formatDashboardSummary, loadDashboardSnapshot } from "../dashboard/loadDashboardSnapshot.js";
 
 function renderCliSummary(
@@ -49,6 +50,26 @@ function renderCliSummary(
 
   if ("dashboard" in result) {
     return formatDashboardSummary(result.dashboard);
+  }
+
+  if ("resumeIncomplete" in result) {
+    return (
+      [
+        "Incomplete apply candidates",
+        `Report: ${result.resumeIncomplete.reportPath}`,
+        `Count: ${result.resumeIncomplete.candidateCount}`,
+        ...result.resumeIncomplete.candidates.map((candidate) =>
+          [
+            `- ${candidate.company ?? "Unknown company"}: ${candidate.title ?? candidate.url}`,
+            `  Status: ${candidate.resultStatus ?? "unknown"}`,
+            `  Code: ${candidate.failureReasonCode ?? "unknown"}`,
+            candidate.missingProfileData.length > 0
+              ? `  Missing profile data: ${candidate.missingProfileData.join(", ")}`
+              : null,
+          ].filter(Boolean).join("\n"),
+        ),
+      ].join("\n") + "\n"
+    );
   }
 
   if (!("easyApply" in result)) {
@@ -138,7 +159,7 @@ function shouldPreflightLocalLlm(
     return false;
   }
 
-  if (args.mode === "dashboard") {
+  if (args.mode === "dashboard" || args.mode === "resume-incomplete") {
     return false;
   }
 
@@ -167,6 +188,8 @@ async function runCommand(
           firmLimit: Math.min(args.limit, 5),
         }),
       };
+    case "resume-incomplete":
+      return runResumeIncompleteFlow(args);
     case "easy-apply":
       return args.dryRun
         ? runEasyApplyDryRunFlow(args, deps)

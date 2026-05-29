@@ -279,6 +279,9 @@ const EXTERNAL_DISCOVERY_EVALUATE_SCRIPT = `(() => {
       key: name || ngModel || id || \`\${tagName}-\${index + 1}\`,
       label,
       inputType,
+      htmlTag: tagName || null,
+      htmlInputType: inputType || null,
+      rawRole: rawRole || null,
       required:
         Boolean(element?.hasAttribute?.("required")) ||
         cleanText(element?.getAttribute?.("aria-required")).toLowerCase() === "true" ||
@@ -678,6 +681,9 @@ export async function inspectExternalApplicationPage(
       key: string;
       label: string;
       inputType: string;
+      htmlTag?: string | null;
+      htmlInputType?: string | null;
+      rawRole?: string | null;
       required: boolean;
       options: string[];
       placeholder: string | null;
@@ -709,6 +715,9 @@ export async function inspectExternalApplicationPage(
     key: field.key,
     label: field.label,
     type: mapHtmlInputTypeToFieldType(field.inputType, field.options),
+    ...(field.htmlTag ? { htmlTag: field.htmlTag } : {}),
+    ...(field.htmlInputType ? { htmlInputType: field.htmlInputType } : {}),
+    ...(field.rawRole ? { rawRole: field.rawRole } : {}),
     required: field.required,
     options: field.options,
     placeholder: field.placeholder,

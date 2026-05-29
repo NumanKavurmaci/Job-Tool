@@ -1100,6 +1100,125 @@ describe("external fill", () => {
     );
   });
 
+  it("checks discovered checkbox controls even when they were classified as multi-select", async () => {
+    const { page, register, actions } = createLocatorRecorder();
+    register(`[id="candidate_consent_given"]`, `button:has-text("Submit application")`);
+
+    const result = await fillExternalApplicationPage({
+      page: page as never,
+      discovery: {
+        sourceUrl: "https://jobs.example.com/form",
+        finalUrl: "https://jobs.example.com/form",
+        pageTitle: "Consent form",
+        platform: "generic",
+        precursorLinks: [],
+        followedPrecursorLink: null,
+        fields: [
+          {
+            key: "candidate[consent_given]",
+            label: "Required. I agree that I have read the Privacy Policy.*",
+            type: "multi_select",
+            htmlTag: "input",
+            htmlInputType: "checkbox",
+            semanticKey: "consent.privacy",
+            required: true,
+            options: ["0", "Required. I agree that I have read the Privacy Policy.*"],
+            placeholder: null,
+            helpText: null,
+            accept: null,
+            selectorHints: [`[id="candidate_consent_given"]`],
+          },
+        ],
+      },
+      answerPlan: [
+        {
+          fieldKey: "candidate[consent_given]",
+          fieldLabel: "Required. I agree that I have read the Privacy Policy.*",
+          fieldType: "multi_select",
+          semanticKey: "consent.privacy",
+          question: {
+            label: "Required. I agree that I have read the Privacy Policy.*",
+            inputType: "multi_select",
+            options: ["0", "Required. I agree that I have read the Privacy Policy.*"],
+          },
+          answer: "Yes",
+          source: "policy",
+          confidenceLabel: "high",
+          resolutionStrategy: "semantic:consent.privacy",
+        },
+      ],
+      candidateProfile,
+      submit: true,
+    });
+
+    expect(result.fieldResults[0]).toEqual(
+      expect.objectContaining({
+        status: "filled",
+        details: "Selected the checkbox field.",
+      }),
+    );
+    expect(actions).toContainEqual({ type: "click", selector: `[id="candidate_consent_given"]` });
+    expect(actions.some((action) => action.type === "fill")).toBe(false);
+  });
+
+  it("leaves discovered checkbox controls unselected when the planned answer is negative", async () => {
+    const { page, register, actions } = createLocatorRecorder();
+    register(`[id="sms_consent"]`, `button:has-text("Submit application")`);
+
+    const result = await fillExternalApplicationPage({
+      page: page as never,
+      discovery: {
+        sourceUrl: "https://jobs.example.com/form",
+        finalUrl: "https://jobs.example.com/form",
+        pageTitle: "Consent form",
+        platform: "generic",
+        precursorLinks: [],
+        followedPrecursorLink: null,
+        fields: [
+          {
+            key: "sms_consent",
+            label: "Receive SMS updates",
+            type: "multi_select",
+            htmlTag: "input",
+            htmlInputType: "checkbox",
+            required: false,
+            options: ["Yes", "No"],
+            placeholder: null,
+            helpText: null,
+            accept: null,
+            selectorHints: [`[id="sms_consent"]`],
+          },
+        ],
+      },
+      answerPlan: [
+        {
+          fieldKey: "sms_consent",
+          fieldLabel: "Receive SMS updates",
+          fieldType: "multi_select",
+          question: {
+            label: "Receive SMS updates",
+            inputType: "multi_select",
+            options: ["Yes", "No"],
+          },
+          answer: "No",
+          source: "llm",
+          confidenceLabel: "medium",
+          resolutionStrategy: "llm-or-default-answer-resolution",
+        },
+      ],
+      candidateProfile,
+      submit: true,
+    });
+
+    expect(result.fieldResults[0]).toEqual(
+      expect.objectContaining({
+        status: "filled",
+        details: "Left the checkbox field unselected.",
+      }),
+    );
+    expect(actions.some((action) => action.selector === `[id="sms_consent"]`)).toBe(false);
+  });
+
   it("normalizes url answers before filling url fields", async () => {
     const { page, register, actions } = createLocatorRecorder();
     register(`input[aria-label="LinkedIN Profile"]`, `button:has-text("Next")`);

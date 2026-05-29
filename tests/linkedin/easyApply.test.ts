@@ -600,6 +600,46 @@ describe("runEasyApplyDryRun", () => {
 
     expect(result.status).toBe("stopped_unknown_action");
     expect(result.stopReason).toContain("Could not determine");
+    expect(result.failureReasonCode).toBe("linkedin.empty_or_unrecognized_action_state");
+    expect(result.retryable).toBe(true);
+  });
+
+  it("falls back to page-level primary action when the collected modal state is empty", async () => {
+    const driver = {
+      open: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn().mockResolvedValue([]),
+      collectStepState: vi.fn().mockResolvedValue({
+        modalTitle: null,
+        headingText: null,
+        primaryAction: "unknown",
+        buttonLabels: [],
+      }),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn().mockResolvedValue("next"),
+      advance: vi.fn(),
+    };
+
+    const result = await runEasyApplyDryRun({
+      driver,
+      url: "https://www.linkedin.com/jobs/view/1",
+      candidateProfile: profile,
+      resolveAnswer: async () => ({
+        questionType: "contact_info",
+        strategy: "deterministic",
+        answer: "123",
+        confidence: 0.95,
+        confidenceLabel: "high",
+        source: "candidate-profile",
+      }),
+      maxSteps: 2,
+    });
+
+    expect(driver.getPrimaryAction).toHaveBeenCalled();
+    expect(driver.advance).toHaveBeenCalledWith("next");
+    expect(result.steps[0]?.action).toBe("next");
   });
 
   it("stops on repeated review when the step does not advance without manual review blockers", async () => {

@@ -40,6 +40,9 @@ export type ExternalApplicationField = {
   key: string;
   label: string;
   type: ExternalApplicationFieldType;
+  htmlTag?: string | undefined;
+  htmlInputType?: string | undefined;
+  rawRole?: string | undefined;
   semanticKey?: ExternalApplicationFieldSemanticKey | undefined;
   semanticSignals?: string[] | undefined;
   semanticConfidence?: ExternalApplicationFieldSemanticConfidence | undefined;

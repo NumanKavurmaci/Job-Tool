@@ -44,6 +44,11 @@ describe("candidate profile loader", () => {
         turkeyRequiresSponsorship: null,
         europeRequiresSponsorship: null,
       },
+      availability: {
+        noticePeriod: null,
+        startDate: null,
+        canStartImmediately: null,
+      },
       linkedinUrl: null,
       githubUrl: null,
       portfolioUrl: null,

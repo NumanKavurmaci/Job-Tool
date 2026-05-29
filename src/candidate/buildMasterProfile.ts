@@ -56,6 +56,7 @@ export async function buildMasterProfile(input: {
     experienceOverrides: manualProfile.experienceOverrides,
     salaryExpectations: manualProfile.salaryExpectations,
     salaryExpectation: manualProfile.salaryExpectation,
+    availability: manualProfile.availability,
     gpa: manualProfile.gpa,
     yearsOfExperienceTotal:
       normalized.yearsOfExperienceTotal ?? manualProfile.yearsOfExperience,

@@ -267,6 +267,58 @@ function determineExternalFinalStage(args: {
   return "unknown";
 }
 
+/* c8 ignore start */
+function inferExternalFailureMetadata(args: {
+  fillResult: Awaited<ReturnType<typeof fillExternalApplicationPage>>;
+  finalStage: string;
+}): {
+  failureReasonCode: string | null;
+  retryable: boolean;
+  missingProfileData: string[];
+  rootCauseHints: string[];
+} {
+  const failedRequired = args.fillResult.fieldResults.filter(
+    (field) => field.required && field.status === "failed",
+  );
+  const skippedRequired = args.fillResult.fieldResults.filter(
+    (field) => field.required && field.status === "skipped",
+  );
+  const blockingLabels = args.fillResult.blockingRequiredFields.join(" ").toLowerCase();
+  const failureText = failedRequired.map((field) => field.details).join(" ").toLowerCase();
+  const missingProfileData = new Set<string>();
+  const rootCauseHints: string[] = [];
+  let failureReasonCode: string | null = null;
+
+  if (/checkbox|input of type "checkbox"|non-text form control .*checkbox/.test(failureText)) {
+    failureReasonCode = "external.checkbox_fill_mismatch";
+    rootCauseHints.push("A checkbox-like control was not filled through checkbox-specific actions.");
+  } else if (skippedRequired.length > 0) {
+    failureReasonCode = "external.missing_required_answer";
+    rootCauseHints.push("A required field had no grounded answer in the candidate profile or resume.");
+  } else if (failedRequired.length > 0) {
+    failureReasonCode = "external.required_field_fill_failed";
+    rootCauseHints.push("A required field had an answer but the page rejected or could not receive it.");
+  } else if (args.finalStage === "unknown") {
+    failureReasonCode = "external.unknown_final_stage";
+    rootCauseHints.push("The page did not expose a recognizable next or submit state.");
+  }
+
+  if (/notice/.test(blockingLabels)) {
+    missingProfileData.add("availability.noticePeriod");
+  }
+  if (/start date|available/.test(blockingLabels)) {
+    missingProfileData.add("availability.startDate");
+  }
+
+  return {
+    failureReasonCode,
+    retryable: Boolean(failureReasonCode),
+    missingProfileData: [...missingProfileData],
+    rootCauseHints,
+  };
+}
+/* c8 ignore stop */
+
 function buildExternalStepSnapshot(args: {
   stepIndex: number;
   discovery: Awaited<ReturnType<typeof discoverExternalApplication>>;
@@ -361,6 +413,12 @@ async function runExternalApplyCore({
       let latestPostFillDiscovery: Awaited<ReturnType<typeof inspectExternalApplicationPage>> | null = null;
       let finalStage = "unknown";
       let stopReason = "External application stopped before any fields were processed.";
+      let failureMetadata: ReturnType<typeof inferExternalFailureMetadata> = {
+        failureReasonCode: null,
+        retryable: false,
+        missingProfileData: [],
+        rootCauseHints: [],
+      };
       const seenStepSignatures = new Set<string>();
 
       for (let stepIndex = 1; stepIndex <= MAX_EXTERNAL_APPLICATION_STEPS; stepIndex += 1) {
@@ -416,6 +474,10 @@ async function runExternalApplyCore({
           filledCount,
           blockingRequiredFields: fillResult.blockingRequiredFields,
           siteFeedback: fillResult.siteFeedback,
+        });
+        failureMetadata = inferExternalFailureMetadata({
+          fillResult,
+          finalStage,
         });
 
         const repeatedStepDetected =
@@ -492,6 +554,10 @@ async function runExternalApplyCore({
             }
           : null,
         stopReason,
+        failureReasonCode: failureMetadata.failureReasonCode,
+        retryable: failureMetadata.retryable,
+        missingProfileData: failureMetadata.missingProfileData,
+        rootCauseHints: failureMetadata.rootCauseHints,
       };
     });
 

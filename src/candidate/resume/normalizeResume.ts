@@ -96,6 +96,11 @@ export function normalizeResume(
     salaryExpectation: null,
     workAuthorization: parsed.workAuthorization,
     requiresSponsorship: parsed.requiresSponsorship,
+    availability: {
+      noticePeriod: null,
+      startDate: null,
+      canStartImmediately: null,
+    },
     willingToRelocate: parsed.willingToRelocate,
     remotePreference: parsed.remotePreference,
     remoteOnly: false,

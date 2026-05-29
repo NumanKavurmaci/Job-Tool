@@ -54,6 +54,12 @@ export interface CandidateRegionalAuthorization {
   europeRequiresSponsorship: boolean | null;
 }
 
+export interface CandidateAvailability {
+  noticePeriod: string | null;
+  startDate: string | null;
+  canStartImmediately: boolean | null;
+}
+
 export interface CandidateProfile {
   fullName: string | null;
   email: string | null;
@@ -76,6 +82,7 @@ export interface CandidateProfile {
   workAuthorization: string | null;
   requiresSponsorship: boolean | null;
   regionalAuthorization?: CandidateRegionalAuthorization;
+  availability?: CandidateAvailability;
   willingToRelocate: boolean | null;
   remotePreference: string | null;
   remoteOnly: boolean;

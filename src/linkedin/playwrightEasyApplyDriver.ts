@@ -863,6 +863,59 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
     return diagnostics;
   }
 
+  async collectUnknownActionDiagnostics() {
+    return this.page.evaluate(() => {
+      const normalize = (value: unknown) => String(value ?? "").replace(/\s+/g, " ").trim();
+      const runtime = globalThis as {
+        document?: {
+          activeElement?: unknown;
+          querySelectorAll?: (selector: string) => Iterable<unknown>;
+          querySelector?: (selector: string) => unknown;
+        };
+        location?: { href?: string };
+      };
+      const active = runtime.document?.activeElement as {
+        tagName?: string;
+        textContent?: string | null;
+        getAttribute?: (name: string) => string | null;
+        type?: string | null;
+        placeholder?: string | null;
+      } | null;
+      const buttons = Array.from(runtime.document?.querySelectorAll?.("button, [role='button']") ?? [])
+        .map((button) => normalize((button as { textContent?: string | null }).textContent))
+        .filter(Boolean);
+      const modal = runtime.document?.querySelector?.(".jobs-easy-apply-modal, [role='dialog']") as {
+        outerHTML?: string;
+      } | null;
+      const overlay = runtime.document?.querySelector?.(
+        ".artdeco-typeahead-results, [role='listbox'], .jobs-easy-apply-modal, [role='dialog']",
+      ) as { textContent?: string | null } | null;
+
+      return {
+        currentUrl: runtime.location?.href ?? null,
+        activeElement: active
+          ? {
+              tagName: normalize(active.tagName).toLowerCase(),
+              inputType: normalize(active.type) || null,
+              role: normalize(active.getAttribute?.("role")) || null,
+              ariaLabel: normalize(active.getAttribute?.("aria-label")) || null,
+              placeholder: normalize(active.placeholder) || null,
+              text: normalize(active.textContent).slice(0, 300) || null,
+            }
+          : null,
+        visibleButtonLabels: [...new Set(buttons)].slice(0, 30),
+        modalHtmlSample: normalize(modal?.outerHTML).slice(0, 2000) || null,
+        overlayTextSample: normalize(overlay?.textContent).slice(0, 1000) || null,
+      };
+    }).catch(() => ({
+      currentUrl: null,
+      activeElement: null,
+      visibleButtonLabels: [],
+      modalHtmlSample: null,
+      overlayTextSample: null,
+    }));
+  }
+
   async fillAnswer(
     question: EasyApplyQuestionView,
     resolved: ResolvedAnswer,

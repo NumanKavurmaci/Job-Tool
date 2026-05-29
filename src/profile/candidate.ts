@@ -70,6 +70,24 @@ const SalaryExpectationsSchema = z
     try: null,
   });
 
+const AvailabilitySchema = z
+  .object({
+    noticePeriod: z
+      .union([z.string(), z.number(), z.null()])
+      .transform((value) => (value == null ? null : String(value)))
+      .default(null),
+    startDate: z
+      .union([z.string(), z.number(), z.null()])
+      .transform((value) => (value == null ? null : String(value)))
+      .default(null),
+    canStartImmediately: z.boolean().nullable().default(null),
+  })
+  .default({
+    noticePeriod: null,
+    startDate: null,
+    canStartImmediately: null,
+  });
+
 const CandidateProfileFileSchema = z.object({
   experience: z
     .object({
@@ -195,6 +213,7 @@ const CandidateProfileFileSchema = z.object({
       },
       summary: null,
     }),
+  availability: AvailabilitySchema,
 });
 
 type CandidateProfileFile = z.infer<typeof CandidateProfileFileSchema>;
@@ -220,6 +239,7 @@ export type CandidateProfile = {
     turkeyRequiresSponsorship: boolean | null;
     europeRequiresSponsorship: boolean | null;
   };
+  availability: z.infer<typeof AvailabilitySchema>;
   linkedinUrl: string | null;
   githubUrl: string | null;
   portfolioUrl: string | null;
@@ -254,6 +274,7 @@ function toRuntimeProfile(file: CandidateProfileFile): CandidateProfile {
     visaRequirement: file.authorization.visaRequirement,
     workAuthorizationStatus: file.authorization.workAuthorizationStatus,
     regionalAuthorization: file.authorization.regional,
+    availability: file.availability,
     linkedinUrl: file.identity.linkedinUrl,
     githubUrl: file.identity.githubUrl,
     portfolioUrl: file.identity.portfolioUrl,

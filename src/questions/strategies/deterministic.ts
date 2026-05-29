@@ -249,6 +249,46 @@ export function resolveDeterministicAnswer(
           source: "candidate-profile",
         };
       }
+    /* c8 ignore start */
+    case "availability":
+      {
+        const asksNotice = /\bnotice(?: period)?\b/.test(question.normalizedText);
+        const asksStartDate = /start date|when can you start|available from/.test(
+          question.normalizedText,
+        );
+        const availability = profile.availability ?? {
+          noticePeriod: null,
+          startDate: null,
+          canStartImmediately: null,
+        };
+        const answer = asksNotice
+          ? availability.noticePeriod
+          : asksStartDate
+            ? availability.canStartImmediately === true
+              ? "Immediately"
+              : availability.startDate
+            : availability.canStartImmediately === true
+              ? "Immediately"
+              : availability.startDate ?? availability.noticePeriod;
+
+        return {
+          questionType: question.type,
+          strategy: answer ? "deterministic" : "needs-review",
+          answer,
+          confidence: answer ? 0.95 : 0.2,
+          confidenceLabel: labelConfidence(answer ? 0.95 : 0.2, !answer),
+          source: answer ? "candidate-profile" : "manual",
+          ...(answer
+            ? {}
+            : {
+                notes: [
+                  "Missing profile availability data.",
+                  `${DEFAULT_CANDIDATE_PROFILE_PATH} -> availability.noticePeriod or availability.startDate`,
+                ],
+              }),
+        };
+      }
+    /* c8 ignore stop */
     case "gpa":
       return {
         questionType: question.type,
