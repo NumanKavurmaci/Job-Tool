@@ -88,6 +88,12 @@ const AvailabilitySchema = z
     canStartImmediately: null,
   });
 
+const EmploymentReferenceSchema = z.object({
+  name: z.string().min(1),
+  linkedinUrl: z.string().url(),
+  relationship: z.string().nullable().default(null),
+});
+
 const CandidateProfileFileSchema = z.object({
   experience: z
     .object({
@@ -214,6 +220,7 @@ const CandidateProfileFileSchema = z.object({
       summary: null,
     }),
   availability: AvailabilitySchema,
+  references: z.array(EmploymentReferenceSchema).default([]),
 });
 
 type CandidateProfileFile = z.infer<typeof CandidateProfileFileSchema>;
@@ -240,6 +247,7 @@ export type CandidateProfile = {
     europeRequiresSponsorship: boolean | null;
   };
   availability: z.infer<typeof AvailabilitySchema>;
+  references: z.infer<typeof EmploymentReferenceSchema>[];
   linkedinUrl: string | null;
   githubUrl: string | null;
   portfolioUrl: string | null;
@@ -275,6 +283,7 @@ function toRuntimeProfile(file: CandidateProfileFile): CandidateProfile {
     workAuthorizationStatus: file.authorization.workAuthorizationStatus,
     regionalAuthorization: file.authorization.regional,
     availability: file.availability,
+    references: file.references,
     linkedinUrl: file.identity.linkedinUrl,
     githubUrl: file.identity.githubUrl,
     portfolioUrl: file.identity.portfolioUrl,

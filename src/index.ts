@@ -8,6 +8,10 @@ export {
   formatDashboardSummary,
   loadDashboardSnapshot,
 } from "./dashboard/loadDashboardSnapshot.js";
+export {
+  extractReactJobsListings,
+  isReactJobsListingUrl,
+} from "./reactjobs/listing.js";
 
 import { runCli } from "./app/main.js";
 

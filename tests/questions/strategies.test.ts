@@ -210,6 +210,61 @@ describe("question strategies", () => {
     expect(result?.notes?.[0]).toContain("Missing profile availability data");
   });
 
+  it("answers employment reference questions from private profile references", async () => {
+    const { resolveDeterministicAnswer } = await import(
+      "../../src/questions/strategies/deterministic.js"
+    );
+    const result = resolveDeterministicAnswer(
+      {
+        type: "employment_references",
+        normalizedText: "please add employment references and their relationship",
+        confidence: 0.94,
+      },
+      {
+        ...profile,
+        references: [
+          {
+            name: "Example Reference",
+            linkedinUrl: "https://www.linkedin.com/in/example-reference/",
+            relationship: "Former colleague",
+          },
+        ],
+      },
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        answer: "Example Reference (https://www.linkedin.com/in/example-reference/) - Former colleague",
+        source: "candidate-profile",
+      }),
+    );
+  });
+
+  it("flags employment reference questions for manual review when references are missing", async () => {
+    const { resolveDeterministicAnswer } = await import(
+      "../../src/questions/strategies/deterministic.js"
+    );
+    const result = resolveDeterministicAnswer(
+      {
+        type: "employment_references",
+        normalizedText: "please add employment references and their relationship",
+        confidence: 0.94,
+      },
+      {
+        ...profile,
+        references: [],
+      },
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        answer: null,
+        confidenceLabel: "manual_review",
+        source: "manual",
+      }),
+    );
+  });
+
   it("returns null for unsupported deterministic question types", async () => {
     const { resolveDeterministicAnswer } = await import(
       "../../src/questions/strategies/deterministic.js"

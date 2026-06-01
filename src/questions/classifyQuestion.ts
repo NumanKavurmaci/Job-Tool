@@ -20,6 +20,7 @@ const RULES: Rule[] = [
   { type: "skill_experience", patterns: [/experience with/, /familiar with/, /which .* used/], confidence: 0.88 },
   { type: "education", patterns: [/degree/, /education/, /university/, /graduat/], confidence: 0.9 },
   { type: "availability", patterns: [/start date/, /available/, /notice period/], confidence: 0.88 },
+  { type: "employment_references", patterns: [/employment reference/, /professional reference/, /\breferences?\b.*\brelationship\b/], confidence: 0.94 },
   { type: "location", patterns: [/location/, /where are you based/, /current city/], confidence: 0.88 },
   { type: "contact_info", patterns: [/email/, /phone/, /contact/, /first name/, /last name/, /full name/, /address/], confidence: 0.92 },
   { type: "cover_letter", patterns: [/cover letter/, /application letter/], confidence: 0.98 },

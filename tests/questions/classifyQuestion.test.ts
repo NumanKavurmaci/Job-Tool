@@ -27,6 +27,7 @@ describe("classifyQuestion", () => {
     [{ label: "Cover Letter", inputType: "textarea" }, "cover_letter"],
     [{ label: "Tell us about a project you are proud of.", inputType: "textarea" }, "general_short_text"],
     [{ label: "When can you start? What is your notice period?", inputType: "text" }, "availability"],
+    [{ label: "Please add employment references and their relationship", inputType: "text" }, "employment_references"],
     [{ label: "Why are you interested in this role?", inputType: "textarea" }, "motivation_short_text"],
   ])("classifies common LinkedIn-style questions: %o -> %s", (question, expectedType) => {
     expect(classifyQuestion(question).type).toBe(expectedType);

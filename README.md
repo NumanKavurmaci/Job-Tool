@@ -88,6 +88,18 @@ npm run dev -- external-apply "https://example.com/apply" --dry-run
 npm run dev -- external-apply "https://example.com/apply"
 ```
 
+ReactJobs detail pages can be scored directly, and their Workable application links can use the
+existing external apply flow:
+
+```powershell
+npm run dev -- score "https://reactjobs.io/react-jobs/robusta/8446-senior-frontend-engineer-react-nextjs-octopus-by-rtg"
+npm run dev -- external-apply-dry-run "https://apply.workable.com/robusta/j/6AA24D2C5C/apply/?ref=reactjobs.io"
+```
+
+For ReactJobs result pages, import `extractReactJobsListings(page, url)` from
+`src/reactjobs/listing.ts` to collect the visible detail URLs with title, company, location,
+employment type, and posted age before scoring or applying.
+
 ## 🧠 Command Guide
 
 - `easy-apply`: LinkedIn Easy Apply only

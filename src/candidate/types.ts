@@ -60,6 +60,12 @@ export interface CandidateAvailability {
   canStartImmediately: boolean | null;
 }
 
+export interface CandidateEmploymentReference {
+  name: string;
+  linkedinUrl: string;
+  relationship: string | null;
+}
+
 export interface CandidateProfile {
   fullName: string | null;
   email: string | null;
@@ -83,6 +89,7 @@ export interface CandidateProfile {
   requiresSponsorship: boolean | null;
   regionalAuthorization?: CandidateRegionalAuthorization;
   availability?: CandidateAvailability;
+  references?: CandidateEmploymentReference[];
   willingToRelocate: boolean | null;
   remotePreference: string | null;
   remoteOnly: boolean;

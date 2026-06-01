@@ -49,6 +49,7 @@ describe("candidate profile loader", () => {
         startDate: null,
         canStartImmediately: null,
       },
+      references: [],
       linkedinUrl: null,
       githubUrl: null,
       portfolioUrl: null,

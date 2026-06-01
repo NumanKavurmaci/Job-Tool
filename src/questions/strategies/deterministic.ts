@@ -289,6 +289,29 @@ export function resolveDeterministicAnswer(
         };
       }
     /* c8 ignore stop */
+    case "employment_references":
+      {
+        const references = profile.references ?? [];
+        const answer = references.length > 0
+          ? references
+              .map((reference) =>
+                reference.relationship
+                  ? `${reference.name} (${reference.linkedinUrl}) - ${reference.relationship}`
+                  : `${reference.name} (${reference.linkedinUrl})`,
+              )
+              .join(", ")
+          : null;
+
+        return {
+          questionType: question.type,
+          strategy: answer ? "deterministic" : "needs-review",
+          answer,
+          confidence: answer ? 0.95 : 0.2,
+          confidenceLabel: labelConfidence(answer ? 0.95 : 0.2, !answer),
+          source: answer ? "candidate-profile" : "manual",
+          ...(answer ? {} : { notes: ["Missing private employment references."] }),
+        };
+      }
     case "gpa":
       return {
         questionType: question.type,

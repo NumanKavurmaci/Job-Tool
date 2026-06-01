@@ -128,7 +128,7 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
 
   if (!first) {
     throw new Error(
-      'Usage: npm run dev -- <job-url> | npm run dev -- score "<job-url>" | npm run dev -- decide "<job-url>" | npm run dev -- explore "<job-url>" | npm run dev -- explore-batch "<linkedin-collection-url>" --count 25 | npm run dev -- dashboard --limit 5 | npm run dev -- build-profile --resume "./cv.pdf" --linkedin "https://linkedin.com/in/..." | npm run dev -- answer-questions --resume "./cv.pdf" --linkedin "https://linkedin.com/in/..." --questions "./questions.json" | npm run dev -- easy-apply "<linkedin-job-url>" --dry-run | npm run dev -- apply "<linkedin-job-or-collection-url>" --dry-run --count 3 | npm run dev -- external-apply "<external-application-url>" --dry-run',
+      'Usage: npm run dev -- <job-url> | npm run dev -- score "<job-url>" | npm run dev -- decide "<job-url>" | npm run dev -- explore "<job-url>" | npm run dev -- explore-batch "<linkedin-collection-url>" --count 25 | npm run dev -- dashboard --limit 5 | npm run dev -- build-profile --resume "./cv.pdf" --linkedin "https://linkedin.com/in/..." | npm run dev -- answer-questions --resume "./cv.pdf" --linkedin "https://linkedin.com/in/..." --questions "./questions.json" | npm run dev -- easy-apply-dry-run "<linkedin-job-url>" | npm run dev -- apply-dry-run "<linkedin-job-or-collection-url>" --count 3 | npm run dev -- external-apply-dry-run "<external-application-url>"',
     );
   }
 

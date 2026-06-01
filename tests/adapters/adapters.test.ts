@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { GenericAdapter } from "../../src/adapters/GenericAdapter.js";
 import { GreenhouseAdapter } from "../../src/adapters/GreenhouseAdapter.js";
 import { LeverAdapter } from "../../src/adapters/LeverAdapter.js";
+import { ReactJobsAdapter } from "../../src/adapters/ReactJobsAdapter.js";
 import {
   linkedInAboutOnlyTitleAndLocationFixture,
   linkedInAlreadyAppliedFixture,
@@ -1352,5 +1353,39 @@ describe("LeverAdapter", () => {
 
     expect(result.title).toBe("Fallback Lever Title");
     expect(result.applyUrl).toBe("https://jobs.lever.co/company/2");
+  });
+});
+
+describe("ReactJobsAdapter", () => {
+  it("extracts ReactJobs detail pages and the external application URL", async () => {
+    const page = createMockPage({
+      currentUrl: "https://reactjobs.io/react-jobs/robusta/8446-senior-frontend-engineer",
+      selectors: {
+        "main h1": { text: "Senior Frontend Engineer" },
+        "aside a[href*='/companies/']": { text: "robusta" },
+        "dt:has-text('Location') + dd": { text: "Remote /" },
+        "a[href*='apply.workable.com']": {
+          attributes: { href: "https://apply.workable.com/robusta/j/6AA24D2C5C/apply/" },
+        },
+        "img[alt]": { attributes: { src: "https://reactjobs.io/robusta.png" } },
+        main: { text: "ReactJobs description" },
+        body: { text: "ReactJobs raw body" },
+      },
+    });
+
+    const adapter = new ReactJobsAdapter();
+    const result = await adapter.extract(page as never, page.url());
+
+    expect(adapter.canHandle(page.url())).toBe(true);
+    expect(result).toEqual(
+      expect.objectContaining({
+        title: "Senior Frontend Engineer",
+        company: "robusta",
+        location: "Remote /",
+        platform: "reactjobs",
+        applicationType: "external",
+        applyUrl: "https://apply.workable.com/robusta/j/6AA24D2C5C/apply/",
+      }),
+    );
   });
 });

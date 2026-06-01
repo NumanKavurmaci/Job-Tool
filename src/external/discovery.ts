@@ -217,9 +217,10 @@ const EXTERNAL_DISCOVERY_EVALUATE_SCRIPT = `(() => {
                         : rawInputType;
     const id = element?.getAttribute?.("id");
     const name = element?.getAttribute?.("name");
+    const dataUi = cleanText(element?.getAttribute?.("data-ui"));
     const ngModel = cleanText(element?.getAttribute?.("ng-model"));
     const labelFromFor = id ? cleanText(doc?.querySelector(\`label[for="\${id}"]\`)?.textContent) : "";
-    const wrappingLabel = cleanText(element?.closest?.("label")?.textContent);
+    const wrappingLabel = removeNestedInputs(element?.closest?.("label"));
     const checkboxOptionLabel = findCheckboxOptionLabel(element);
     const immediateHeadingLabel = findImmediateHeadingLabel(element);
     const ariaLabel = cleanText(element?.getAttribute?.("aria-label")) || labelledByText;
@@ -227,12 +228,18 @@ const EXTERNAL_DISCOVERY_EVALUATE_SCRIPT = `(() => {
     const contextualLabel = findContextualLabel(element?.closest?.("[data-block-id]") ?? element?.parentElement ?? element);
     const previousHeading = cleanText(element?.parentElement?.querySelector?.("h1,h2,h3,h4,h5,h6,label,legend")?.textContent);
     const placeholder = cleanText(element?.getAttribute?.("placeholder"));
+    const stableFileLabel =
+      inputType === "file" && dataUi ? dataUi.replace(/[_-]+/g, " ") : "";
+    const stablePhoneLabel =
+      inputType === "tel" && name ? name.replace(/[_-]+/g, " ") : "";
     const label =
+      stableFileLabel ||
       labelFromFor ||
-      wrappingLabel ||
       checkboxOptionLabel ||
       immediateHeadingLabel ||
       ariaLabel ||
+      stablePhoneLabel ||
+      wrappingLabel ||
       legend ||
       contextualLabel ||
       previousHeading ||
@@ -270,13 +277,14 @@ const EXTERNAL_DISCOVERY_EVALUATE_SCRIPT = `(() => {
     const selectorHints = [
       id ? \`[id="\${id}"]\` : "",
       name ? \`[name="\${name}"]\` : "",
+      dataUi ? \`[data-ui="\${dataUi}"]\` : "",
       ngModel ? \`[ng-model="\${ngModel}"]\` : "",
       ariaLabel ? \`[aria-label="\${ariaLabel}"]\` : "",
       placeholder ? \`[placeholder="\${placeholder}"]\` : "",
     ].filter(Boolean);
 
     return {
-      key: name || ngModel || id || \`\${tagName}-\${index + 1}\`,
+      key: name || ngModel || dataUi || id || \`\${tagName}-\${index + 1}\`,
       label,
       inputType,
       htmlTag: tagName || null,
@@ -458,6 +466,9 @@ function inferPlatform(url: string): string {
   }
   if (lower.includes("tally.so")) {
     return "tally";
+  }
+  if (lower.includes("apply.workable.com")) {
+    return "workable";
   }
 
   try {

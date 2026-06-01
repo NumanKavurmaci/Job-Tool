@@ -1180,6 +1180,45 @@ describe("external application discovery", () => {
     await page.close();
   });
 
+  it("uses stable Workable data-ui keys and ignores hidden address metadata", async () => {
+    const page = await browser.newPage();
+    await page.route("https://apply.workable.com/example/j/123/apply/", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/html",
+        body: `
+          <main><form>
+            <label>* Phone <input name="phone" type="tel" required></label>
+            <input id="city" name="city" type="text" aria-hidden="true">
+            <label id="resume_label">* Resume</label>
+            <label>Choose file
+              <input data-ui="resume" type="file" required aria-labelledby="resume_label">
+            </label>
+          </form></main>
+        `,
+      });
+    });
+    await page.goto("https://apply.workable.com/example/j/123/apply/");
+
+    const result = await inspectExternalApplicationPage(
+      page,
+      "https://apply.workable.com/example/j/123/apply/",
+    );
+
+    expect(result.platform).toBe("workable");
+    expect(result.fields.map((field) => field.key)).toEqual(["phone", "resume"]);
+    expect(result.fields[0]?.label).toBe("phone");
+    expect(result.fields[1]).toEqual(
+      expect.objectContaining({
+        key: "resume",
+        label: "resume",
+        semanticKey: "resume.upload",
+      }),
+    );
+
+    await page.close();
+  });
+
   it("extracts cleaned page text and falls back to empty string on evaluation failure", async () => {
     const cleaned = await extractExternalPageText({
       evaluate: vi.fn().mockResolvedValue("Hello world from form"),

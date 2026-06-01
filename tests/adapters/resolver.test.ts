@@ -3,6 +3,7 @@ import { GenericAdapter } from "../../src/adapters/GenericAdapter.js";
 import { GreenhouseAdapter } from "../../src/adapters/GreenhouseAdapter.js";
 import { LeverAdapter } from "../../src/adapters/LeverAdapter.js";
 import { LinkedInAdapter } from "../../src/adapters/LinkedInAdapter.js";
+import { ReactJobsAdapter } from "../../src/adapters/ReactJobsAdapter.js";
 import { resolveAdapter } from "../../src/adapters/resolveAdapter.js";
 
 describe("resolveAdapter", () => {
@@ -26,5 +27,11 @@ describe("resolveAdapter", () => {
     expect(resolveAdapter("https://www.linkedin.com/jobs/view/1234567890/")).toBeInstanceOf(
       LinkedInAdapter,
     );
+  });
+
+  it("resolves ReactJobs detail urls", () => {
+    expect(
+      resolveAdapter("https://reactjobs.io/react-jobs/robusta/8446-senior-frontend-engineer"),
+    ).toBeInstanceOf(ReactJobsAdapter);
   });
 });
