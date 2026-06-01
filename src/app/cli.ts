@@ -5,6 +5,7 @@ import {
   resolveLinkedInSingleJobUrl,
   isLinkedInCollectionUrl,
 } from "./constants.js";
+import { isReactJobsListingUrl } from "../reactjobs/listing.js";
 
 export type ScoringMode = "local" | "ai";
 
@@ -213,7 +214,7 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
 
   if (
     normalizedFirst === "apply" &&
-    looksLikeImplicitLinkedInBatch({
+    looksLikeImplicitApplyBatch({
       dryRun,
       hasCountFlag: hasFlag("--count"),
       positionalArgs: getPositionalTailArgs(),
@@ -309,7 +310,7 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
       hasFlag,
       scoringMode,
     });
-    assertLinkedInCollectionMode("apply-batch", batchOptions.url);
+    assertSupportedApplyBatchUrl(batchOptions.url);
     return {
       mode: "apply-batch",
       ...batchOptions,
@@ -387,6 +388,18 @@ function looksLikeImplicitLinkedInBatch(args: {
   );
 }
 
+function looksLikeImplicitApplyBatch(args: {
+  dryRun: boolean;
+  hasCountFlag: boolean;
+  positionalArgs: string[];
+  originalCommand?: string;
+}) {
+  return (
+    looksLikeImplicitLinkedInBatch(args) ||
+    isReactJobsListingUrl(args.positionalArgs[0] ?? "")
+  );
+}
+
 function readLinkedInBatchShape(args: {
   positionalArgs: string[];
   getIntegerFlag: (name: string) => number | undefined;
@@ -449,6 +462,14 @@ function assertLinkedInCollectionMode(mode: LinkedInBatchMode, url: string) {
   }
 }
 
+function assertSupportedApplyBatchUrl(url: string) {
+  if (!isLinkedInCollectionUrl(url) && !isReactJobsListingUrl(url)) {
+    throw new Error(
+      "apply-batch requires a supported collection URL (LinkedIn or ReactJobs).",
+    );
+  }
+}
+
 function parseExplicitLinkedInSingleCommand(args: {
   mode: LinkedInSingleMode;
   resumePath: string;
@@ -482,7 +503,11 @@ function parseLinkedInFamilyCommand(args: {
   const normalizedUrl =
     batchShape.count === 1 ? resolveLinkedInSingleJobUrl(batchShape.url) : batchShape.url;
 
-  if (isLinkedInCollectionUrl(normalizedUrl) || batchShape.count > 1) {
+  if (
+    isLinkedInCollectionUrl(normalizedUrl) ||
+    isReactJobsListingUrl(normalizedUrl) ||
+    batchShape.count > 1
+  ) {
     return {
       mode: `${args.family}-batch` as const,
       url: normalizedUrl,

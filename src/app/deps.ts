@@ -23,6 +23,8 @@ import { scoreJob } from "../scoring/scoreJob.js";
 import { scoreJobWithAi } from "../scoring/scoreJobWithAi.js";
 import { logger } from "../utils/logger.js";
 import { writeRunReport } from "../utils/runReports.js";
+import { extractReactJobsListings } from "../reactjobs/listing.js";
+import { createBatchJobEvaluator } from "./flowHelpers.js";
 
 export const appDeps = {
   withPage,
@@ -30,6 +32,8 @@ export const appDeps = {
   loadCandidateMasterProfile,
   resolveAnswer,
   extractJobText,
+  extractReactJobsListings,
+  createBatchJobEvaluator,
   formatJobForLLM,
   parseJob,
   completePrompt,

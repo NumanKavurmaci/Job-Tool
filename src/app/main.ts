@@ -52,6 +52,25 @@ function renderCliSummary(
     return formatDashboardSummary(result.dashboard);
   }
 
+  if ("applyBatch" in result) {
+    const reportPath =
+      "reportPath" in result && typeof result.reportPath === "string"
+        ? result.reportPath
+        : undefined;
+
+    return formatBatchTerminalSummary({
+      label: result.dryRun ? "Apply batch dry run" : "Apply batch",
+      status: result.applyBatch.status,
+      requestedCount: result.applyBatch.requestedCount,
+      attemptedCount: result.applyBatch.attemptedCount,
+      evaluatedCount: result.applyBatch.evaluatedCount,
+      skippedCount: result.applyBatch.skippedCount,
+      pagesVisited: result.applyBatch.pagesVisited,
+      stopReason: result.applyBatch.stopReason,
+      ...(reportPath ? { reportPath } : {}),
+    });
+  }
+
   if ("resumeIncomplete" in result) {
     return (
       [

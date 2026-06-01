@@ -9,12 +9,13 @@ import {
   gotoJobPage,
   optionalText,
 } from "./helpers.js";
+import { isReactJobsDetailUrl } from "../reactjobs/listing.js";
 
 export class ReactJobsAdapter implements JobAdapter {
   name = "reactjobs";
 
   canHandle(url: string): boolean {
-    return /reactjobs\.io\/react-jobs\/[^/]+\/\d+-/i.test(url);
+    return isReactJobsDetailUrl(url);
   }
 
   async extract(page: Page, url: string): Promise<ExtractedJobContent> {

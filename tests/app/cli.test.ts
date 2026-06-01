@@ -144,6 +144,28 @@ describe("app cli", () => {
     });
   });
 
+  it("parses ReactJobs result pages as apply batches", () => {
+    expect(
+      parseCliArgs([
+        "apply-batch",
+        "https://reactjobs.io/jobs/nextjs/remote?search=Nextjs&isRemote=true",
+        "--count",
+        "5",
+        "--scoring",
+        "ai",
+      ]),
+    ).toEqual({
+      mode: "apply-batch",
+      url: "https://reactjobs.io/jobs/nextjs/remote?search=Nextjs&isRemote=true",
+      resumePath: expect.any(String),
+      count: 5,
+      disableAiEvaluation: false,
+      scoreThreshold: 40,
+      scoringMode: "ai",
+      dryRun: false,
+    });
+  });
+
   it("parses explore batch commands without any apply or resume arguments", () => {
     expect(
       parseCliArgs([
@@ -211,7 +233,7 @@ describe("app cli", () => {
   it("rejects missing or invalid URLs for explicit apply commands", () => {
     expect(() => parseCliArgs(["external-apply"])).toThrow("--url is required for external-apply.");
     expect(() => parseCliArgs(["apply-batch", "https://www.linkedin.com/jobs/view/1"])).toThrow(
-      "apply-batch requires a LinkedIn collection URL or the default collection.",
+      "apply-batch requires a supported collection URL (LinkedIn or ReactJobs).",
     );
     expect(() =>
       parseCliArgs(["easy-apply-batch", "https://www.linkedin.com/jobs/view/1"]),

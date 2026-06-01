@@ -33,8 +33,7 @@ That lets the system decide whether a role is a fit, explain why, prepare applic
 - site-feedback capture and one-shot AI correction retries
 - `explore` mode for single-job recommendation snapshots
 - `explore-batch` mode for collection-based recommendation discovery
-- `easy-apply` mode for LinkedIn Easy Apply only
-- `apply` mode for LinkedIn apply plus optional external continuation
+- `apply` mode for LinkedIn, ReactJobs, and external application pages
 - Prisma + SQLite persistence
 - structured logs, JSON artifacts, and review history tracking
 - test coverage with focused local and integration checks
@@ -76,16 +75,12 @@ npm run dev -- explore-batch "https://www.linkedin.com/jobs/collections/top-appl
 npm run dev -- score "https://job-link-here"
 npm run dev -- build-profile --resume "./cv.pdf" --linkedin "https://linkedin.com/in/your-handle"
 npm run dev -- answer-questions --resume "./cv.pdf" --questions "./questions.json"
-npm run dev -- easy-apply "https://www.linkedin.com/jobs/view/123" --dry-run
-npm run dev -- easy-apply "https://www.linkedin.com/jobs/view/123"
-npm run dev -- easy-apply-batch --count 5 --dry-run
-npm run dev -- easy-apply-batch "https://www.linkedin.com/jobs/collections/easy-apply" --count 5
-npm run dev -- apply "https://www.linkedin.com/jobs/view/123" --dry-run
+npm run dev -- apply-dry-run "https://www.linkedin.com/jobs/view/123"
 npm run dev -- apply "https://www.linkedin.com/jobs/view/123"
-npm run dev -- apply-batch "https://www.linkedin.com/jobs/collections/hiring-in-network" --count 10 --dry-run
+npm run dev -- apply-dry-run "https://www.linkedin.com/jobs/collections/hiring-in-network" --count 10
 npm run dev -- apply-batch "https://www.linkedin.com/jobs/collections/hiring-in-network" --count 10
-npm run dev -- external-apply "https://example.com/apply" --dry-run
-npm run dev -- external-apply "https://example.com/apply"
+npm run dev -- apply-dry-run "https://example.com/apply"
+npm run dev -- apply "https://example.com/apply"
 ```
 
 ReactJobs detail pages can be scored directly, and their Workable application links can use the
@@ -93,22 +88,20 @@ existing external apply flow:
 
 ```powershell
 npm run dev -- score "https://reactjobs.io/react-jobs/robusta/8446-senior-frontend-engineer-react-nextjs-octopus-by-rtg"
-npm run dev -- external-apply-dry-run "https://apply.workable.com/robusta/j/6AA24D2C5C/apply/?ref=reactjobs.io"
+npm run dev -- apply-dry-run "https://reactjobs.io/react-jobs/robusta/8446-senior-frontend-engineer-react-nextjs-octopus-by-rtg"
+npm run dev -- apply-dry-run "https://apply.workable.com/robusta/j/6AA24D2C5C/apply/?ref=reactjobs.io"
+npm run dev -- apply-dry-run "https://reactjobs.io/jobs/nextjs/remote?search=Nextjs&isRemote=true" --count 5
 ```
 
-For ReactJobs result pages, import `extractReactJobsListings(page, url)` from
-`src/reactjobs/listing.ts` to collect the visible detail URLs with title, company, location,
-employment type, and posted age before scoring or applying.
+ReactJobs result pages are expanded into visible detail URLs before scoring and applying.
 
 ## 🧠 Command Guide
 
-- `easy-apply`: LinkedIn Easy Apply only
 - `dashboard`: prints a dashboard snapshot from persisted recommendations, reviews, and firm stats
 - `explore`: evaluates one job and saves a recommendation snapshot without applying
 - `explore-batch`: evaluates jobs from a LinkedIn collection and saves recommendation records without entering any apply flow
-- `easy-apply-batch`: Easy Apply-only batch mode; defaults to [LinkedIn Easy Apply jobs](https://www.linkedin.com/jobs/collections/easy-apply) if no URL is provided
-- `apply`: LinkedIn apply flow with optional external continuation
-- `apply-batch`: batch version of the full LinkedIn apply flow
+- `apply`: applies through LinkedIn, ReactJobs detail pages, or direct external application pages
+- `apply-batch`: applies from supported LinkedIn collections or ReactJobs result pages
 
 ### Batch flags
 
@@ -134,15 +127,17 @@ employment type, and posted age before scoring or applying.
 - `--scoring ai` asks the configured LLM to produce the job score directly
 - legacy `--ai-score-adjustment` still maps to `--scoring ai` for compatibility
 
-### External apply behavior
+### Apply behavior
 
-- `external-apply --dry-run` explores the site, plans answers, fills what it can, captures feedback, and stops before final submit
-- `external-apply` follows the same flow but may trigger the final submit action when the form is ready
+- `apply-dry-run` explores the target, plans answers, fills what it can, captures feedback, and stops before final submit
+- `apply` follows the same flow but may trigger the final submit action when the form is ready
 
 ### Legacy aliases
 
+- `easy-apply`
+- `easy-apply-batch`
 - `easy-apply-dry-run`
-- `apply-dry-run`
+- `external-apply`
 - `external-apply-dry-run`
 
 ## ✅ Testing

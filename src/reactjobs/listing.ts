@@ -37,6 +37,10 @@ export function isReactJobsListingUrl(url: string): boolean {
   return /reactjobs\.io\/jobs(?:\/|$)/i.test(url);
 }
 
+export function isReactJobsDetailUrl(url: string): boolean {
+  return /reactjobs\.io\/react-jobs\/[^/]+\/\d+-/i.test(url);
+}
+
 export async function extractReactJobsListings(page: Page, url: string): Promise<ReactJobsListing[]> {
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
   await page.waitForTimeout(1_000);
