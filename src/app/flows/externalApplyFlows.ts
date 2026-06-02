@@ -12,6 +12,7 @@ import {
   planExternalApplicationAnswers,
 } from "../../external/discovery.js";
 import { fillExternalApplicationPage } from "../../external/fill.js";
+import type { CookiePromptAcceptance } from "../../browser/cookies.js";
 import { persistRunArtifact, persistSystemEvent } from "../observability.js";
 import type {
   ExternalApplicationPlannedAnswer,
@@ -159,6 +160,29 @@ interface RunExternalApplyOptions {
 
 const MAX_EXTERNAL_APPLICATION_STEPS = 6;
 
+function appendCookiePromptAcceptances(
+  target: CookiePromptAcceptance[],
+  acceptances: CookiePromptAcceptance[] | undefined,
+): void {
+  for (const acceptance of acceptances ?? []) {
+    target.push(acceptance);
+  }
+}
+
+function isExternalJobNotFound(
+  discovery: Pick<Awaited<ReturnType<typeof discoverExternalApplication>>, "finalUrl" | "platform">,
+): boolean {
+  if (discovery.platform !== "workable") {
+    return false;
+  }
+
+  try {
+    return new URL(discovery.finalUrl).searchParams.get("not_found") === "true";
+  } catch {
+    return /[?&]not_found=true(?:&|$)/i.test(discovery.finalUrl);
+  }
+}
+
 function buildExternalStepSignature(
   discovery: Pick<Awaited<ReturnType<typeof discoverExternalApplication>>, "finalUrl" | "fields">,
 ): string {
@@ -271,6 +295,7 @@ function determineExternalFinalStage(args: {
 function inferExternalFailureMetadata(args: {
   fillResult: Awaited<ReturnType<typeof fillExternalApplicationPage>>;
   finalStage: string;
+  discovery: Awaited<ReturnType<typeof discoverExternalApplication>>;
 }): {
   failureReasonCode: string | null;
   retryable: boolean;
@@ -289,7 +314,10 @@ function inferExternalFailureMetadata(args: {
   const rootCauseHints: string[] = [];
   let failureReasonCode: string | null = null;
 
-  if (/checkbox|input of type "checkbox"|non-text form control .*checkbox/.test(failureText)) {
+  if (isExternalJobNotFound(args.discovery)) {
+    failureReasonCode = "external.job_not_found";
+    rootCauseHints.push("The external job board redirected to its not-found page because the posting is stale or removed.");
+  } else if (/checkbox|input of type "checkbox"|non-text form control .*checkbox/.test(failureText)) {
     failureReasonCode = "external.checkbox_fill_mismatch";
     rootCauseHints.push("A checkbox-like control was not filled through checkbox-specific actions.");
   } else if (skippedRequired.length > 0) {
@@ -312,7 +340,7 @@ function inferExternalFailureMetadata(args: {
 
   return {
     failureReasonCode,
-    retryable: Boolean(failureReasonCode),
+    retryable: Boolean(failureReasonCode && failureReasonCode !== "external.job_not_found"),
     missingProfileData: [...missingProfileData],
     rootCauseHints,
   };
@@ -345,7 +373,56 @@ function buildExternalStepSnapshot(args: {
       warnings: args.fillResult.siteFeedback.warnings,
       infos: args.fillResult.siteFeedback.infos,
     },
+    cookiePromptAcceptances: [
+      ...(args.discovery.cookiePromptAcceptances ?? []),
+      ...args.fillResult.cookiePromptAcceptances,
+    ],
   };
+}
+
+async function persistExternalApplyCheckpoint(args: {
+  deps: AppDeps;
+  runType: ExternalApplyRunType;
+  sourceUrl: string;
+  stepIndex: number;
+  phase: "discovered" | "processed";
+  discovery: Awaited<ReturnType<typeof discoverExternalApplication>>;
+  steps: ExternalApplicationStepSnapshot[];
+  answerPlan: ExternalApplicationPlannedAnswer[];
+  pageTextSample: string | null;
+  cookiePromptAcceptances: CookiePromptAcceptance[];
+}): Promise<void> {
+  await persistRunArtifact({
+    category: "external-apply-runs",
+    prefix: `${args.runType}-checkpoint-step-${args.stepIndex}-${args.phase}`,
+    payload: {
+      mode: "external-apply-checkpoint",
+      runType: args.runType,
+      checkpoint: {
+        stepIndex: args.stepIndex,
+        phase: args.phase,
+        capturedAt: new Date().toISOString(),
+      },
+      sourceUrl: args.sourceUrl,
+      discovery: args.discovery,
+      steps: args.steps,
+      answerPlan: args.answerPlan,
+      pageTextSample: args.pageTextSample,
+      cookiePromptAcceptances: args.cookiePromptAcceptances,
+    },
+    deps: args.deps,
+  }).catch((error) => {
+    args.deps.logger.error?.(
+      {
+        event: "external.apply.checkpoint.failed",
+        sourceUrl: args.sourceUrl,
+        stepIndex: args.stepIndex,
+        phase: args.phase,
+        error: serializeError(error),
+      },
+      "Failed to persist external application checkpoint",
+    );
+  });
 }
 
 async function runExternalApplyCore({
@@ -361,6 +438,8 @@ async function runExternalApplyCore({
   try {
     const result = await deps.withPage(async (page) => {
       let discovery = await discoverExternalApplication(page, args.url);
+      const cookiePromptAcceptances: CookiePromptAcceptance[] = [];
+      appendCookiePromptAcceptances(cookiePromptAcceptances, discovery.cookiePromptAcceptances);
       const initialPageText = await extractExternalPageText(page);
       let aiAdvisory: PromptCompletionResult | null = null;
       let recommendedAction: "stay" | "follow" = "stay";
@@ -403,6 +482,7 @@ async function runExternalApplyCore({
             args.url,
             recommendedLink.href,
           );
+          appendCookiePromptAcceptances(cookiePromptAcceptances, discovery.cookiePromptAcceptances);
         }
       }
       const steps: ExternalApplicationStepSnapshot[] = [];
@@ -425,6 +505,18 @@ async function runExternalApplyCore({
         seenStepSignatures.add(buildExternalStepSignature(discovery));
         const currentPageText = await extractExternalPageText(page);
         latestPageTextSample = truncate(currentPageText, 2500);
+        await persistExternalApplyCheckpoint({
+          deps,
+          runType,
+          sourceUrl: args.url,
+          stepIndex,
+          phase: "discovered",
+          discovery,
+          steps,
+          answerPlan: allAnswerPlans,
+          pageTextSample: latestPageTextSample,
+          cookiePromptAcceptances,
+        });
         const answerPlan = await planExternalApplicationAnswers({
           fields: discovery.fields,
           candidateProfile,
@@ -444,10 +536,12 @@ async function runExternalApplyCore({
           submit,
         });
         latestFillResult = fillResult;
+        appendCookiePromptAcceptances(cookiePromptAcceptances, fillResult.cookiePromptAcceptances);
 
         const postFillDiscovery = fillResult.advanced
           ? await inspectExternalApplicationPage(page, args.url)
           : null;
+        appendCookiePromptAcceptances(cookiePromptAcceptances, postFillDiscovery?.cookiePromptAcceptances);
         latestPostFillDiscovery = postFillDiscovery;
         const postFillPageText = fillResult.advanced
           ? await extractExternalPageText(page)
@@ -462,6 +556,9 @@ async function runExternalApplyCore({
           postAdvancePageText: postFillPageText,
           postAdvanceDiscovery: postFillDiscovery,
         });
+        if (isExternalJobNotFound(discovery)) {
+          finalStage = "job_not_found";
+        }
 
         const filledCount = fillResult.fieldResults.filter(
           (r) => r.status === "filled",
@@ -478,6 +575,7 @@ async function runExternalApplyCore({
         failureMetadata = inferExternalFailureMetadata({
           fillResult,
           finalStage,
+          discovery,
         });
 
         const repeatedStepDetected =
@@ -506,6 +604,18 @@ async function runExternalApplyCore({
             stopReason,
           }),
         );
+        await persistExternalApplyCheckpoint({
+          deps,
+          runType,
+          sourceUrl: args.url,
+          stepIndex,
+          phase: "processed",
+          discovery,
+          steps,
+          answerPlan: allAnswerPlans,
+          pageTextSample: latestPageTextSample,
+          cookiePromptAcceptances,
+        });
 
         if (!fillResult.advanced || finalStage !== "form_step") {
           break;
@@ -526,6 +636,7 @@ async function runExternalApplyCore({
           blockingRequiredFields: [],
           siteFeedback: { errors: [], warnings: [], infos: [], messages: [] },
           aiCorrectionAttempts: [],
+          cookiePromptAcceptances: [],
         } as Awaited<ReturnType<typeof fillExternalApplicationPage>>);
 
       return {
@@ -558,6 +669,7 @@ async function runExternalApplyCore({
         retryable: failureMetadata.retryable,
         missingProfileData: failureMetadata.missingProfileData,
         rootCauseHints: failureMetadata.rootCauseHints,
+        cookiePromptAcceptances,
       };
     });
 
@@ -715,6 +827,9 @@ function buildStopReason({
     null;
 
   if (discovery.fields.length === 0) {
+    if (isExternalJobNotFound(discovery)) {
+      return "The external job posting is no longer available. The job board redirected to its not-found page.";
+    }
     if (discovery.authWall) {
       const base =
         discovery.authWallReason ??

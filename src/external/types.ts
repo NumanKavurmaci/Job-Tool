@@ -1,4 +1,5 @@
 import type { InputQuestion } from "../questions/types.js";
+import type { CookiePromptAcceptance } from "../browser/cookies.js";
 
 export type ExternalApplicationFieldType =
   | "short_text"
@@ -69,6 +70,7 @@ export type ExternalApplicationDiscovery = {
     href: string;
   }[];
   followedPrecursorLink: string | null;
+  cookiePromptAcceptances?: CookiePromptAcceptance[];
 };
 
 export type ExternalAiCorrectionAttempt = {
@@ -112,4 +114,5 @@ export type ExternalApplicationStepSnapshot = {
     warnings: string[];
     infos: string[];
   };
+  cookiePromptAcceptances?: CookiePromptAcceptance[];
 };

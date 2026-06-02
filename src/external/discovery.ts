@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import type { InputQuestion } from "../questions/types.js";
 import type { CandidateProfile } from "../candidate/types.js";
 import { resolveAnswer } from "../answers/resolveAnswer.js";
+import { acceptAllCookiePrompts } from "../browser/cookies.js";
 import type {
   ExternalApplicationDiscovery,
   ExternalApplicationField,
@@ -682,6 +683,7 @@ export async function inspectExternalApplicationPage(
   page: Page,
   sourceUrl: string,
 ): Promise<ExternalApplicationDiscovery> {
+  const cookiePromptAcceptances = await acceptAllCookiePrompts(page).catch(() => []);
   /* c8 ignore start -- browser-context DOM traversal is exercised through Playwright, not node unit tests */
   const inspectedRaw = await page.evaluate(EXTERNAL_DISCOVERY_EVALUATE_SCRIPT) as {
     url: string;
@@ -793,6 +795,7 @@ export async function inspectExternalApplicationPage(
     precursorSignals: inspected.precursorSignals ?? [],
     precursorLinks: inspected.precursorLinks,
     followedPrecursorLink: null,
+    cookiePromptAcceptances,
   };
 }
 
@@ -802,7 +805,10 @@ async function inspectExternalApplicationPageWithRetry(
   retryPolicy: ExternalDiscoveryRetryPolicy = DEFAULT_EXTERNAL_DISCOVERY_RETRY_POLICY,
 ): Promise<ExternalApplicationDiscovery> {
   let inspection = await inspectExternalApplicationPage(page, sourceUrl);
-  if (inspection.fields.length > 0) {
+  if (
+    inspection.fields.length > 0 ||
+    (inspection.platform === "workable" && /[?&]not_found=true(?:&|$)/i.test(inspection.finalUrl))
+  ) {
     return inspection;
   }
 

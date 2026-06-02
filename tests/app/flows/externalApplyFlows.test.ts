@@ -352,6 +352,65 @@ describe("external apply flows", () => {
     expect(result.stopReason).toContain("require login");
   });
 
+  it("classifies stale Workable application URLs as non-retryable job-not-found results", async () => {
+    const goto = vi.fn();
+    const waitForTimeout = vi.fn(async () => undefined);
+    const evaluate = vi.fn().mockResolvedValue({
+      url: "https://apply.workable.com/stackbuilders/?not_found=true",
+      title: "Stack Builders - Current Openings",
+      fields: [],
+      precursorLinks: [],
+    });
+    const writeRunReport = vi.fn().mockResolvedValue("artifacts/external-apply-runs/report.json");
+
+    const deps = {
+      loadCandidateMasterProfile: vi.fn().mockResolvedValue(buildCandidateProfile()),
+      prisma: {
+        jobPosting: { findUnique: vi.fn().mockResolvedValue(null) },
+        candidateProfileSnapshot: { create: vi.fn().mockResolvedValue({ id: "snapshot_1" }) },
+        preparedAnswerSet: { create: vi.fn().mockResolvedValue({ id: "prepared_1" }) },
+        systemLog: { create: vi.fn().mockResolvedValue({}) },
+      },
+      withPage: vi.fn(async (fn: (page: unknown) => Promise<unknown>) =>
+        fn({
+          ...createFlowPage({ goto, evaluate }),
+          waitForTimeout,
+        })),
+      completePrompt: vi.fn(),
+      writeRunReport,
+      logger: {
+        info: vi.fn(),
+        error: vi.fn(),
+      },
+    } as any;
+
+    const result = await runExternalApplyFlow(
+      {
+        mode: "external-apply",
+        url: "https://apply.workable.com/stackbuilders/j/7A405AC852/apply/",
+        resumePath: "./user/resume.pdf",
+        dryRun: false,
+      },
+      deps,
+    );
+
+    expect(result.finalStage).toBe("job_not_found");
+    expect(result.failureReasonCode).toBe("external.job_not_found");
+    expect(result.retryable).toBe(false);
+    expect(result.stopReason).toContain("no longer available");
+    expect(waitForTimeout).not.toHaveBeenCalled();
+    expect(writeRunReport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prefix: "external-apply-checkpoint-step-1-discovered",
+      }),
+    );
+    expect(writeRunReport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prefix: "external-apply-checkpoint-step-1-processed",
+      }),
+    );
+  });
+
   it("falls back to the first discovered precursor link when AI advice is invalid or unavailable", async () => {
     const goto = vi.fn();
     const evaluate = vi
@@ -1021,6 +1080,148 @@ describe("external apply flows", () => {
         ),
       }),
     });
+  });
+
+  it("accepts cookie banners before external discovery so blocked forms can still be inspected", async () => {
+    const goto = vi.fn();
+    let cookieAccepted = false;
+    const page = {
+      goto,
+      frames() {
+        return [page];
+      },
+      evaluate(callback: unknown, ...rest: unknown[]) {
+        if (typeof callback === "function") {
+          const callbackText = String(callback);
+          if (callbackText.includes("matchesAcceptAll")) {
+            if (cookieAccepted) {
+              return Promise.resolve(null);
+            }
+            cookieAccepted = true;
+            return Promise.resolve("Accept all cookies");
+          }
+          if (callbackText.includes("querySelectorAll")) {
+            return Promise.resolve([]);
+          }
+          return Promise.resolve("");
+        }
+
+        return Promise.resolve(
+          cookieAccepted
+            ? {
+                url: "https://example.com/apply",
+                title: "Application form",
+                fields: [
+                  {
+                    key: "email",
+                    label: "Email",
+                    inputType: "email",
+                    required: true,
+                    options: [],
+                    placeholder: "name@example.com",
+                    helpText: null,
+                    accept: null,
+                  },
+                ],
+                precursorLinks: [],
+              }
+            : {
+                url: "https://example.com/apply",
+                title: "Cookie wall",
+                fields: [],
+                precursorLinks: [],
+              },
+        );
+      },
+      waitForTimeout: vi.fn(async () => undefined),
+      locator(selector: string) {
+        return {
+          first() {
+            return this;
+          },
+          async count() {
+            return selector === `[id="email"]` || selector === `[name="email"]` ? 1 : 0;
+          },
+          async click() {
+            return undefined;
+          },
+          async fill() {
+            return undefined;
+          },
+          async selectOption() {
+            return undefined;
+          },
+          async press() {
+            return undefined;
+          },
+          async blur() {
+            return undefined;
+          },
+          async setInputFiles() {
+            return undefined;
+          },
+        };
+      },
+    };
+
+    const deps = {
+      loadCandidateMasterProfile: vi.fn().mockResolvedValue(buildCandidateProfile()),
+      prisma: {
+        jobPosting: {
+          findUnique: vi.fn().mockResolvedValue(null),
+        },
+        candidateProfileSnapshot: {
+          create: vi.fn().mockResolvedValue({ id: "snapshot_1" }),
+        },
+        preparedAnswerSet: {
+          create: vi.fn().mockResolvedValue({ id: "prepared_1" }),
+        },
+        systemLog: {
+          create: vi.fn().mockResolvedValue({}),
+        },
+      },
+      withPage: vi.fn(async (fn: (page: unknown) => Promise<unknown>) => fn(page)),
+      completePrompt: vi.fn(),
+      writeRunReport: vi.fn().mockResolvedValue("artifacts/external-apply-runs/report.json"),
+      logger: {
+        info: vi.fn(),
+        error: vi.fn(),
+      },
+    } as any;
+
+    const result = await runExternalApplyDryRunFlow(
+      {
+        mode: "external-apply",
+        url: "https://example.com/apply",
+        resumePath: "./user/resume.pdf",
+        dryRun: true,
+      },
+      deps,
+    );
+
+    expect(result.discovery.fields).toEqual([
+      expect.objectContaining({
+        key: "email",
+      }),
+    ]);
+    expect(cookieAccepted).toBe(true);
+    expect(result.cookiePromptAcceptances).toEqual([
+      expect.objectContaining({
+        label: "Accept all cookies",
+      }),
+    ]);
+    expect(deps.writeRunReport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prefix: "external-apply-dry-run",
+        payload: expect.objectContaining({
+          cookiePromptAcceptances: [
+            expect.objectContaining({
+              label: "Accept all cookies",
+            }),
+          ],
+        }),
+      }),
+    );
   });
 
 });

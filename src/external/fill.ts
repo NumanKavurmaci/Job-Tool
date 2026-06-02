@@ -1,6 +1,10 @@
 import { existsSync } from "node:fs";
 import type { Page } from "@playwright/test";
 import type { CandidateProfile } from "../candidate/types.js";
+import {
+  acceptAllCookiePrompts,
+  type CookiePromptAcceptance,
+} from "../browser/cookies.js";
 import type {
   ExternalAiCorrectionAttempt,
   ExternalApplicationDiscovery,
@@ -55,6 +59,7 @@ export type ExternalFillResult = {
   blockingRequiredFields: string[];
   siteFeedback: SiteFeedbackSnapshot;
   aiCorrectionAttempts: ExternalAiCorrectionAttempt[];
+  cookiePromptAcceptances: CookiePromptAcceptance[];
 };
 
 function escapeAttributeValue(value: string): string {
@@ -1096,6 +1101,7 @@ export async function fillExternalApplicationPage(args: {
   // Captures page text once so AI correction retries can reuse the same page context consistently.
   const fieldResults: ExternalFieldFillResult[] = [];
   const aiCorrectionAttempts: ExternalAiCorrectionAttempt[] = [];
+  const cookiePromptAcceptances = await acceptAllCookiePrompts(args.page).catch(() => []);
   const pageText = await args.page.evaluate(() =>
     String((globalThis as { document?: { body?: { innerText?: string } } }).document?.body?.innerText ?? "")
       .replace(/\s+/g, " ")
@@ -1139,5 +1145,6 @@ export async function fillExternalApplicationPage(args: {
     blockingRequiredFields,
     siteFeedback: mergeSiteFeedbackSnapshots(preAdvanceFeedback, postAdvanceFeedback),
     aiCorrectionAttempts,
+    cookiePromptAcceptances,
   };
 }
