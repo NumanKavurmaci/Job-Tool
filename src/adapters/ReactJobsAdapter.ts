@@ -37,8 +37,10 @@ export class ReactJobsAdapter implements JobAdapter {
         page,
         [
           "a[href*='apply.workable.com']",
+          "a[href*='jobs.ashbyhq.com']",
           "a[href*='/apply/']",
           "a[href*='apply']",
+          "a:has-text('Apply now')",
         ],
         "href",
       )) ?? (await getCurrentUrl(page));

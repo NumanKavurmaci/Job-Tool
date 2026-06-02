@@ -1388,4 +1388,26 @@ describe("ReactJobsAdapter", () => {
       }),
     );
   });
+
+  it("extracts Ashby Apply now links from ReactJobs detail pages", async () => {
+    const page = createMockPage({
+      currentUrl: "https://reactjobs.io/react-jobs/hopper/8429-sr-front-end-engineer",
+      selectors: {
+        "main h1": { text: "Sr Front-end Engineer" },
+        "a[href*='jobs.ashbyhq.com']": {
+          attributes: {
+            href: "https://jobs.ashbyhq.com/hopper/585e8def-4d44-41a0-b57a-d902328c3d75?ref=reactjobs.io",
+          },
+        },
+        main: { text: "ReactJobs description" },
+        body: { text: "ReactJobs raw body" },
+      },
+    });
+
+    const result = await new ReactJobsAdapter().extract(page as never, page.url());
+
+    expect(result.applyUrl).toBe(
+      "https://jobs.ashbyhq.com/hopper/585e8def-4d44-41a0-b57a-d902328c3d75?ref=reactjobs.io",
+    );
+  });
 });

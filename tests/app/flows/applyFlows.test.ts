@@ -46,6 +46,14 @@ function createDeps(): AppDeps {
       policyAllowed: true,
     })),
     loadCandidateProfile: vi.fn(async () => ({})),
+    prisma: {
+      jobReviewHistory: {
+        findMany: vi.fn(async () => []),
+      },
+    },
+    logger: {
+      warn: vi.fn(),
+    },
     writeRunReport: vi.fn(async () => "artifacts/batch-runs/apply-batch.json"),
   } as unknown as AppDeps;
 }
@@ -110,6 +118,18 @@ describe("apply flows", () => {
       attemptedCount: 1,
       failedCount: 0,
     });
+    expect(deps.prisma.jobReviewHistory.findMany).toHaveBeenCalledWith({
+      where: {
+        jobUrl: { in: [detailUrl] },
+        source: "apply-batch",
+      },
+      orderBy: [{ jobUrl: "asc" }, { createdAt: "desc" }],
+    });
+    expect(deps.createBatchJobEvaluator).toHaveBeenCalledWith(
+      expect.objectContaining({
+        preloadedReviews: expect.any(Map),
+      }),
+    );
   });
 
   it("uses the external application driver directly for non-LinkedIn pages", async () => {

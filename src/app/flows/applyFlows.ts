@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import type { CliArgs } from "../cli.js";
 import type { AppDeps } from "../deps.js";
 import { persistRunArtifact } from "../observability.js";
+import { getLatestJobReviewsByUrl } from "../../utils/jobHistory.js";
 import {
   isReactJobsDetailUrl,
   isReactJobsListingUrl,
@@ -74,6 +75,12 @@ async function runReactJobsApplyBatchFlow(
       0,
       args.count,
     );
+    const preloadedReviews = await getLatestJobReviewsByUrl({
+      prisma: deps.prisma,
+      jobUrls: listings.map((listing) => listing.url),
+      source: "apply-batch",
+      logger: deps.logger,
+    });
     const evaluateJob = deps.createBatchJobEvaluator({
       disableAiEvaluation: args.disableAiEvaluation,
       scoreThreshold: args.scoreThreshold,
@@ -83,6 +90,7 @@ async function runReactJobsApplyBatchFlow(
       recommendationPolicy: "apply-only",
       scoringProfile,
       evaluationPage: page,
+      preloadedReviews,
       deps,
     });
 
