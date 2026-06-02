@@ -23,7 +23,10 @@ import { scoreJob } from "../scoring/scoreJob.js";
 import { scoreJobWithAi } from "../scoring/scoreJobWithAi.js";
 import { logger } from "../utils/logger.js";
 import { writeRunReport } from "../utils/runReports.js";
-import { extractReactJobsListings } from "../reactjobs/listing.js";
+import {
+  extractReactJobsListings,
+  extractReactJobsListingsBatch,
+} from "../reactjobs/listing.js";
 import { createBatchJobEvaluator } from "./flowHelpers.js";
 
 export const appDeps = {
@@ -33,6 +36,7 @@ export const appDeps = {
   resolveAnswer,
   extractJobText,
   extractReactJobsListings,
+  extractReactJobsListingsBatch,
   createBatchJobEvaluator,
   formatJobForLLM,
   parseJob,

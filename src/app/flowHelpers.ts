@@ -88,20 +88,6 @@ export function createBatchJobEvaluator(args: {
     }
   };
 
-  if (args.disableAiEvaluation) {
-    return async (_url: string) => ({
-      shouldApply: true,
-      finalDecision: "APPLY" as const,
-      score: 0,
-      reason: "AI evaluation disabled for this batch run.",
-      policyAllowed: true,
-      diagnostics: {
-        metadataRead: false,
-        companyInfoRead: false,
-      },
-    });
-  }
-
   const retryApprovedJobIfStillOpen = async (evaluationPage: Page, url: string) => {
     const driver = await deps.createEasyApplyDriver(evaluationPage);
     await driver.ensureAuthenticated(url);
@@ -227,6 +213,20 @@ export function createBatchJobEvaluator(args: {
           policyAllowed: latestReview.policyAllowed ?? true,
         };
       }
+    }
+
+    if (args.disableAiEvaluation) {
+      return {
+        shouldApply: true,
+        finalDecision: "APPLY" as const,
+        score: 0,
+        reason: "AI evaluation disabled for this batch run.",
+        policyAllowed: true,
+        diagnostics: {
+          metadataRead: false,
+          companyInfoRead: false,
+        },
+      };
     }
 
     const extracted = await time("job.extractText", () =>

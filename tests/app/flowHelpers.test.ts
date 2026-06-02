@@ -124,6 +124,7 @@ describe("app flow helpers", () => {
       scoreThreshold: 60,
       scoringMode: "local",
       scoringProfile: {} as any,
+      evaluationPage: { fake: true } as any,
       deps,
     });
 
@@ -137,6 +138,35 @@ describe("app flow helpers", () => {
         metadataRead: false,
         companyInfoRead: false,
       },
+    });
+    expect(deps.extractJobText).not.toHaveBeenCalled();
+  });
+
+  it("still skips duplicate reviews when AI evaluation is disabled", async () => {
+    const deps = createDeps();
+    deps.prisma.jobReviewHistory.findFirst.mockResolvedValue({
+      createdAt: new Date("2026-03-29T00:00:00.000Z"),
+      status: "SUBMITTED",
+      decision: "APPLY",
+      score: 47,
+      policyAllowed: true,
+    });
+
+    const evaluate = createBatchJobEvaluator({
+      disableAiEvaluation: true,
+      scoreThreshold: 60,
+      scoringMode: "local",
+      scoringProfile: {} as any,
+      evaluationPage: { fake: true } as any,
+      deps,
+    });
+
+    await expect(evaluate("https://example.com/job")).resolves.toEqual({
+      shouldApply: false,
+      finalDecision: "SKIP",
+      score: 47,
+      reason: "Job was already reviewed on 2026-03-29 with status SUBMITTED, score 47, decision APPLY.",
+      policyAllowed: true,
     });
     expect(deps.extractJobText).not.toHaveBeenCalled();
   });

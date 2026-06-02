@@ -38,6 +38,19 @@ function createDeps(): AppDeps {
         posted: "1d",
       },
     ]),
+    extractReactJobsListingsBatch: vi.fn(async () => ({
+      listings: [
+        {
+          url: detailUrl,
+          title: "Senior Frontend Engineer",
+          company: "Robusta",
+          location: "Remote",
+          employmentType: "Full-time",
+          posted: "1d",
+        },
+      ],
+      pagesVisited: 1,
+    })),
     createBatchJobEvaluator: vi.fn(() => async () => ({
       shouldApply: true,
       finalDecision: "APPLY",
@@ -49,6 +62,7 @@ function createDeps(): AppDeps {
     prisma: {
       jobReviewHistory: {
         findMany: vi.fn(async () => []),
+        create: vi.fn(async () => ({})),
       },
     },
     logger: {
@@ -117,11 +131,11 @@ describe("apply flows", () => {
       evaluatedCount: 1,
       attemptedCount: 1,
       failedCount: 0,
+      pagesVisited: 1,
     });
     expect(deps.prisma.jobReviewHistory.findMany).toHaveBeenCalledWith({
       where: {
         jobUrl: { in: [detailUrl] },
-        source: "apply-batch",
       },
       orderBy: [{ jobUrl: "asc" }, { createdAt: "desc" }],
     });
@@ -130,6 +144,57 @@ describe("apply flows", () => {
         preloadedReviews: expect.any(Map),
       }),
     );
+  });
+
+  it("paginates ReactJobs result pages until enough listings are collected", async () => {
+    const deps = createDeps();
+    (deps.extractReactJobsListingsBatch as any).mockResolvedValue({
+      listings: [
+        {
+          url: "https://reactjobs.io/react-jobs/company/1-role",
+          title: "Role 1",
+          company: "One",
+          location: "Remote",
+          employmentType: "Full-time",
+          posted: "1d",
+        },
+        {
+          url: "https://reactjobs.io/react-jobs/company/2-role",
+          title: "Role 2",
+          company: "Two",
+          location: "Remote",
+          employmentType: "Full-time",
+          posted: "2d",
+        },
+      ],
+      pagesVisited: 2,
+    });
+
+    const result = await runApplyBatchFlow(
+      {
+        mode: "apply-batch",
+        url: "https://reactjobs.io/jobs/nextjs/remote?search=Nextjs&isRemote=true",
+        resumePath: "./user/resume.pdf",
+        count: 2,
+        disableAiEvaluation: true,
+        scoreThreshold: 40,
+        scoringMode: "local",
+        dryRun: true,
+      },
+      deps,
+    );
+
+    expect(deps.extractReactJobsListingsBatch).toHaveBeenCalledWith(
+      expect.anything(),
+      "https://reactjobs.io/jobs/nextjs/remote?search=Nextjs&isRemote=true",
+      2,
+    );
+    expect(result.applyBatch).toMatchObject({
+      requestedCount: 2,
+      evaluatedCount: 2,
+      attemptedCount: 2,
+      pagesVisited: 2,
+    });
   });
 
   it("uses the external application driver directly for non-LinkedIn pages", async () => {
@@ -231,6 +296,94 @@ describe("apply flows", () => {
     expect(externalMocks.live).not.toHaveBeenCalled();
   });
 
+  it("persists ReactJobs submission history on the original listing URL", async () => {
+    const deps = createDeps();
+    externalMocks.live.mockResolvedValue({
+      finalStage: "completed",
+      stopReason: "Submitted the application successfully.",
+    });
+
+    await runApplyBatchFlow(
+      {
+        mode: "apply-batch",
+        url: "https://reactjobs.io/jobs/nextjs/remote",
+        resumePath: "./user/resume.pdf",
+        count: 1,
+        disableAiEvaluation: true,
+        scoreThreshold: 40,
+        scoringMode: "local",
+      },
+      deps,
+    );
+
+    expect(deps.prisma.jobReviewHistory.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        jobUrl: detailUrl,
+        source: "apply-batch",
+        status: "SUBMITTED",
+        decision: "APPLY",
+        score: 0,
+        threshold: 40,
+        policyAllowed: true,
+        summary: "Submitted the application successfully.",
+      }),
+    });
+  });
+
+  it("skips ReactJobs listings that were already submitted in a previous run even when AI evaluation is disabled", async () => {
+    const deps = createDeps();
+    (deps.prisma.jobReviewHistory.findMany as any).mockResolvedValue([
+      {
+        jobUrl: detailUrl,
+        createdAt: new Date("2026-06-01T10:00:00.000Z"),
+        status: "SUBMITTED",
+        decision: "APPLY",
+        score: 55,
+        policyAllowed: true,
+      },
+    ]);
+    (deps.createBatchJobEvaluator as any).mockImplementation(
+      ({ preloadedReviews }: { preloadedReviews: Map<string, { score: number; policyAllowed: boolean }> }) =>
+        async (url: string) =>
+          preloadedReviews.has(url)
+            ? {
+                shouldApply: false,
+                finalDecision: "SKIP",
+                score: preloadedReviews.get(url)?.score ?? 0,
+                reason: "Already reviewed.",
+                policyAllowed: preloadedReviews.get(url)?.policyAllowed ?? true,
+              }
+            : {
+                shouldApply: true,
+                finalDecision: "APPLY",
+                score: 0,
+                reason: "AI evaluation disabled for this batch run.",
+                policyAllowed: true,
+              },
+    );
+
+    const result = await runApplyBatchFlow(
+      {
+        mode: "apply-batch",
+        url: "https://reactjobs.io/jobs/nextjs/remote",
+        resumePath: "./user/resume.pdf",
+        count: 1,
+        disableAiEvaluation: true,
+        scoreThreshold: 40,
+        scoringMode: "local",
+      },
+      deps,
+    );
+
+    expect(result.applyBatch).toMatchObject({
+      attemptedCount: 0,
+      skippedCount: 1,
+      failedCount: 0,
+    });
+    expect(externalMocks.live).not.toHaveBeenCalled();
+    expect(externalMocks.dryRun).not.toHaveBeenCalled();
+  });
+
   it("rejects ReactJobs detail pages without an external Apply link", async () => {
     const deps = createDeps();
     (deps.extractJobText as any).mockResolvedValue({ applyUrl: null });
@@ -250,7 +403,10 @@ describe("apply flows", () => {
 
   it("reports empty ReactJobs result pages", async () => {
     const deps = createDeps();
-    (deps.extractReactJobsListings as any).mockResolvedValue([]);
+    (deps.extractReactJobsListingsBatch as any).mockResolvedValue({
+      listings: [],
+      pagesVisited: 1,
+    });
 
     const result = await runApplyBatchFlow(
       {

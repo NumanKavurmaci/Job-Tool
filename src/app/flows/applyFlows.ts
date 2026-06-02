@@ -1,7 +1,7 @@
 import type { Page } from "@playwright/test";
 import type { CliArgs } from "../cli.js";
 import type { AppDeps } from "../deps.js";
-import { persistRunArtifact } from "../observability.js";
+import { persistJobHistory, persistRunArtifact } from "../observability.js";
 import { getLatestJobReviewsByUrl } from "../../utils/jobHistory.js";
 import {
   isReactJobsDetailUrl,
@@ -22,6 +22,21 @@ type ApplyBatchArgs = Extract<CliArgs, { mode: "apply-batch" }>;
 
 function isLinkedInUrl(url: string) {
   return /linkedin\.com\//i.test(url);
+}
+
+function mapExternalApplicationToHistoryStatus(args: {
+  dryRun: boolean;
+  finalStage?: string | null;
+}): "READY_TO_SUBMIT" | "SUBMITTED" | "FAILED" {
+  if (args.finalStage === "completed") {
+    return args.dryRun ? "READY_TO_SUBMIT" : "SUBMITTED";
+  }
+
+  if (args.finalStage === "final_submit_step") {
+    return "READY_TO_SUBMIT";
+  }
+
+  return "FAILED";
 }
 
 async function resolveExternalApplyUrl(
@@ -70,15 +85,12 @@ async function runReactJobsApplyBatchFlow(
   deps: AppDeps,
 ) {
   const scoringProfile = await deps.loadCandidateProfile();
-  const jobs = await deps.withPage(async (page) => {
-    const listings = (await deps.extractReactJobsListings(page, args.url)).slice(
-      0,
-      args.count,
-    );
+  const { jobs, pagesVisited } = await deps.withPage(async (page) => {
+    const listingBatch = await deps.extractReactJobsListingsBatch(page, args.url, args.count);
+    const listings = listingBatch.listings.slice(0, args.count);
     const preloadedReviews = await getLatestJobReviewsByUrl({
       prisma: deps.prisma,
       jobUrls: listings.map((listing) => listing.url),
-      source: "apply-batch",
       logger: deps.logger,
     });
     const evaluateJob = deps.createBatchJobEvaluator({
@@ -117,6 +129,29 @@ async function runReactJobsApplyBatchFlow(
           : await runExternalApplyFlow(externalArgs, deps, {
               originalJobUrl: listing.url,
             });
+        await persistJobHistory(
+          {
+            jobUrl: listing.url,
+            source: "apply-batch",
+            status: mapExternalApplicationToHistoryStatus({
+              dryRun: Boolean(args.dryRun),
+              finalStage: application.finalStage,
+            }),
+            score: evaluation.score,
+            threshold: args.scoreThreshold,
+            decision: evaluation.finalDecision,
+            policyAllowed: evaluation.policyAllowed,
+            reasons: [application.stopReason],
+            summary: application.stopReason,
+            details: {
+              shouldApply: evaluation.shouldApply,
+              finalDecision: evaluation.finalDecision,
+              applyUrl,
+              externalFinalStage: application.finalStage,
+            },
+          },
+          deps,
+        );
 
         jobs.push({
           ...listing,
@@ -134,7 +169,10 @@ async function runReactJobsApplyBatchFlow(
       }
     }
 
-    return jobs;
+    return {
+      jobs,
+      pagesVisited: listingBatch.pagesVisited,
+    };
   });
   const attemptedCount = jobs.filter((job) => job.status === "processed").length;
   const skippedCount = jobs.filter((job) => job.status === "skipped").length;
@@ -150,7 +188,7 @@ async function runReactJobsApplyBatchFlow(
       attemptedCount,
       skippedCount,
       failedCount,
-      pagesVisited: 1,
+      pagesVisited,
       stopReason:
         jobs.length === 0
           ? "No ReactJobs listings were discovered."

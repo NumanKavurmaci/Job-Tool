@@ -90,6 +90,7 @@ async function clickAcceptAllInFrame(frame: Page | Frame): Promise<string | null
             "#CybotCookiebotDialog",
             "#onetrust-banner-sdk",
             "#onetrust-consent-sdk",
+            "[data-ui='cookie-consent']",
             "[id*='cookie']",
             "[class*='cookie']",
             "[id*='consent']",
@@ -109,6 +110,7 @@ async function clickAcceptAllInFrame(frame: Page | Frame): Promise<string | null
           container?.getAttribute?.("id"),
           container?.getAttribute?.("class"),
           container?.getAttribute?.("aria-label"),
+          container?.getAttribute?.("data-ui"),
           container?.getAttribute?.("data-testid"),
         ]
           .filter(Boolean)
@@ -121,7 +123,14 @@ async function clickAcceptAllInFrame(frame: Page | Frame): Promise<string | null
 
     const candidates = Array.from(
       doc?.querySelectorAll?.(
-        "button, a, [role='button'], input[type='button'], input[type='submit']",
+        [
+          "[data-ui='cookie-consent'] [data-ui='cookie-consent-accept']",
+          "button",
+          "a",
+          "[role='button']",
+          "input[type='button']",
+          "input[type='submit']",
+        ].join(", "),
       ) ?? [],
     );
 

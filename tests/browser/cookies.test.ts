@@ -55,6 +55,31 @@ describe("acceptAllCookiePrompts", () => {
     await page.close();
   });
 
+  it("accepts Workable cookie consent banners using their stable data-ui hooks", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <div data-ui="cookie-consent" role="dialog" aria-modal="true" aria-label="Cookie Consent">
+        <span>This website uses cookies to improve user's experience.</span>
+        <div>
+          <button data-ui="cookie-consent-settings">Cookies settings</button>
+          <button data-ui="cookie-consent-accept" onclick="this.closest('[data-ui=cookie-consent]').remove()">Accept all</button>
+          <button data-ui="cookie-consent-decline">Decline all</button>
+        </div>
+      </div>
+    `);
+
+    const accepted = await acceptAllCookiePrompts(page);
+
+    expect(accepted).toEqual([
+      expect.objectContaining({
+        label: "Accept all",
+      }),
+    ]);
+    expect(await page.locator("[data-ui='cookie-consent']").count()).toBe(0);
+
+    await page.close();
+  });
+
   it("ignores frames that cannot evaluate DOM code", async () => {
     const accepted = await acceptAllCookiePrompts({
       frames: () => [{ url: () => "https://example.com/frame" }],

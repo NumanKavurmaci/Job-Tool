@@ -9,6 +9,11 @@ export type ReactJobsListing = {
   posted: string | null;
 };
 
+export interface ReactJobsListingBatch {
+  listings: ReactJobsListing[];
+  pagesVisited: number;
+}
+
 const REACTJOBS_LISTING_SCRIPT = `(() => {
   const clean = (value) => String(value ?? "").replace(/\\s+/g, " ").trim();
   const readDefinition = (container, term) => {
@@ -45,4 +50,97 @@ export async function extractReactJobsListings(page: Page, url: string): Promise
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
   await page.waitForTimeout(1_000);
   return page.evaluate(REACTJOBS_LISTING_SCRIPT);
+}
+
+function normalizeReactJobsListing(listing: ReactJobsListing): ReactJobsListing {
+  return {
+    url: listing.url,
+    title: listing.title,
+    company: listing.company ?? null,
+    location: listing.location ?? null,
+    employmentType: listing.employmentType ?? null,
+    posted: listing.posted ?? null,
+  };
+}
+
+async function readCurrentPageNumber(page: Page): Promise<number | null> {
+  return page.evaluate(() => {
+    const current = document.querySelector("[aria-current='page']");
+    const text = current?.textContent?.trim() ?? "";
+    const parsed = Number.parseInt(text, 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  });
+}
+
+async function goToNextReactJobsResultsPage(page: Page): Promise<boolean> {
+  const nextButton = page.locator(
+    "button[wire\\:click*='nextPage'], button[dusk='nextPage.before']",
+  ).first();
+
+  if ((await nextButton.count()) === 0) {
+    return false;
+  }
+
+  if (await nextButton.isDisabled().catch(() => false)) {
+    return false;
+  }
+
+  const previousPageNumber = await readCurrentPageNumber(page);
+  await nextButton.click();
+
+  if (previousPageNumber != null) {
+    await page.waitForFunction(
+      (expectedPage) => {
+        const current = document.querySelector("[aria-current='page']");
+        const text = current?.textContent?.trim() ?? "";
+        const parsed = Number.parseInt(text, 10);
+        return Number.isFinite(parsed) && parsed > expectedPage;
+      },
+      previousPageNumber,
+      { timeout: 15_000 },
+    ).catch(() => undefined);
+  }
+
+  await page.waitForTimeout(1_000);
+  return true;
+}
+
+export async function extractReactJobsListingsBatch(
+  page: Page,
+  url: string,
+  targetCount: number,
+): Promise<ReactJobsListingBatch> {
+  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  await page.waitForTimeout(1_000);
+
+  const uniqueListings = new Map<string, ReactJobsListing>();
+  let pagesVisited = 0;
+
+  while (uniqueListings.size < targetCount) {
+    const listings = await page.evaluate(REACTJOBS_LISTING_SCRIPT) as ReactJobsListing[];
+    for (const listing of listings) {
+      if (!uniqueListings.has(listing.url)) {
+        uniqueListings.set(listing.url, normalizeReactJobsListing(listing));
+      }
+
+      if (uniqueListings.size >= targetCount) {
+        break;
+      }
+    }
+
+    pagesVisited += 1;
+    if (uniqueListings.size >= targetCount) {
+      break;
+    }
+
+    const advanced = await goToNextReactJobsResultsPage(page);
+    if (!advanced) {
+      break;
+    }
+  }
+
+  return {
+    listings: Array.from(uniqueListings.values()),
+    pagesVisited,
+  };
 }
