@@ -142,37 +142,38 @@ export function resolveDeterministicAnswer(
         };
       }
 
-      return {
-        questionType: question.type,
-        strategy: "deterministic",
-        answer: /accommodation|reasonable accommodation|access needs/.test(
+      {
+        const disabilityTypes = profile.disability.disabilities.map((item) =>
+          item.type.trim().toLowerCase(),
+        );
+        const asksAccommodation = /accommodation|reasonable accommodation|access needs/.test(
           question.normalizedText,
-        )
+        );
+        const asksVisualDisability =
+          /\bvisual|vision|blind|low vision\b/.test(question.normalizedText);
+        const hasVisualDisability = disabilityTypes.some((type) =>
+          /\bvisual|vision|blind|low vision\b/.test(type),
+        );
+        const answer = asksAccommodation
           ? profile.disability.requiresAccommodation
-          : profile.disability.hasVisualDisability,
-        confidence:
-          /accommodation|reasonable accommodation|access needs/.test(
-            question.normalizedText,
-          ) && profile.disability.requiresAccommodation == null
-            ? 0.3
-            : 0.95,
-        confidenceLabel: labelConfidence(
-          /accommodation|reasonable accommodation|access needs/.test(
-            question.normalizedText,
-          ) && profile.disability.requiresAccommodation == null
-            ? 0.3
-            : 0.95,
-          /accommodation|reasonable accommodation|access needs/.test(
-            question.normalizedText,
-          ) && profile.disability.requiresAccommodation == null,
-        ),
-        source:
-          /accommodation|reasonable accommodation|access needs/.test(
-            question.normalizedText,
-          ) && profile.disability.requiresAccommodation == null
-            ? "manual"
-            : "candidate-profile",
-      };
+          : asksVisualDisability
+            ? hasVisualDisability
+            : profile.disability.hasDisability;
+        const missingAccommodation = asksAccommodation
+          && profile.disability.requiresAccommodation == null;
+
+        return {
+          questionType: question.type,
+          strategy: "deterministic",
+          answer,
+          confidence: missingAccommodation ? 0.3 : 0.95,
+          confidenceLabel: labelConfidence(
+            missingAccommodation ? 0.3 : 0.95,
+            missingAccommodation,
+          ),
+          source: missingAccommodation ? "manual" : "candidate-profile",
+        };
+      }
     case "relocation":
       return {
         questionType: question.type,

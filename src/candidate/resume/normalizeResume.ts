@@ -113,8 +113,8 @@ export function normalizeResume(
       sexualOrientation: null,
     },
     disability: {
-      hasVisualDisability: false,
-      disabilityPercentage: null,
+      hasDisability: false,
+      disabilities: [],
       requiresAccommodation: null,
       accommodationNotes: null,
       disclosurePreference: "manual-review",

@@ -71,8 +71,8 @@ describe("candidate profile loader", () => {
         sexualOrientation: null,
       },
       disability: {
-        hasVisualDisability: false,
-        disabilityPercentage: null,
+        hasDisability: false,
+        disabilities: [],
         requiresAccommodation: null,
         accommodationNotes: null,
         disclosurePreference: "manual-review",
@@ -130,8 +130,14 @@ describe("candidate profile loader", () => {
             sexualOrientation: "Prefer not to answer",
           },
           disability: {
-            hasVisualDisability: true,
-            disabilityPercentage: 46,
+            hasDisability: true,
+            disabilities: [
+              {
+                type: "visual",
+                percentage: 46,
+                notes: null,
+              },
+            ],
             requiresAccommodation: null,
             accommodationNotes: null,
             disclosurePreference: "manual-review",
@@ -178,7 +184,14 @@ describe("candidate profile loader", () => {
     expect(profile.demographics.pronouns).toBe("he/him/his");
     expect(profile.demographics.ethnicity).toBe("Turkish");
     expect(profile.demographics.sexualOrientation).toBe("Prefer not to answer");
-    expect(profile.disability.hasVisualDisability).toBe(true);
+    expect(profile.disability.hasDisability).toBe(true);
+    expect(profile.disability.disabilities).toEqual([
+      {
+        type: "visual",
+        percentage: 46,
+        notes: null,
+      },
+    ]);
   });
 
   it("accepts numeric salary expectations from nested JSON", async () => {
@@ -221,8 +234,8 @@ describe("candidate profile loader", () => {
             sexualOrientation: null,
           },
           disability: {
-            hasVisualDisability: false,
-            disabilityPercentage: null,
+            hasDisability: false,
+            disabilities: [],
             requiresAccommodation: null,
             accommodationNotes: null,
             disclosurePreference: "manual-review",
@@ -290,5 +303,41 @@ describe("candidate profile loader", () => {
     await expect(module.loadCandidateProfile("C:/missing/profile.json")).rejects.toThrow(
       "broken example",
     );
+  });
+
+  it("migrates legacy visual-only disability profile fields into the global structure", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "job-tool-profile-"));
+    const profilePath = path.join(tempDir, "profile.json");
+
+    await writeFile(
+      profilePath,
+      JSON.stringify({
+        personal: {
+          disability: {
+            hasVisualDisability: true,
+            disabilityPercentage: 46,
+            requiresAccommodation: false,
+            accommodationNotes: null,
+            disclosurePreference: "disclose",
+          },
+        },
+      }),
+      "utf8",
+    );
+
+    const profile = await loadCandidateProfile(profilePath);
+    expect(profile.disability).toEqual({
+      hasDisability: true,
+      disabilities: [
+        {
+          type: "visual",
+          percentage: 46,
+          notes: null,
+        },
+      ],
+      requiresAccommodation: false,
+      accommodationNotes: null,
+      disclosurePreference: "disclose",
+    });
   });
 });

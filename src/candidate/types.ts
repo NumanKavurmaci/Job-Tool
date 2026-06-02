@@ -21,9 +21,15 @@ export interface CandidateProject {
   technologies: string[];
 }
 
+export interface CandidateDisabilityItem {
+  type: string;
+  percentage: number | null;
+  notes: string | null;
+}
+
 export interface CandidateDisabilityProfile {
-  hasVisualDisability: boolean;
-  disabilityPercentage: number | null;
+  hasDisability: boolean;
+  disabilities: CandidateDisabilityItem[];
   requiresAccommodation: boolean | null;
   accommodationNotes: string | null;
   disclosurePreference: "manual-review" | "disclose" | "prefer-not-to-say";

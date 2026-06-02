@@ -37,8 +37,14 @@ const profile = {
   remotePreference: "remote",
   remoteOnly: true,
   disability: {
-    hasVisualDisability: true,
-    disabilityPercentage: 46,
+    hasDisability: true,
+    disabilities: [
+      {
+        type: "visual",
+        percentage: 46,
+        notes: null,
+      },
+    ],
     requiresAccommodation: null,
     accommodationNotes: null,
     disclosurePreference: "manual-review",
@@ -340,6 +346,25 @@ describe("question strategies", () => {
 
     expect(disabilityResult?.answer).toBe(true);
     expect(accommodationResult?.answer).toBe(true);
+  });
+
+  it("answers visual disability questions from the generalized disability list", async () => {
+    const { resolveDeterministicAnswer } = await import(
+      "../../src/questions/strategies/deterministic.js"
+    );
+
+    const result = resolveDeterministicAnswer(
+      { type: "accessibility", normalizedText: "do you have a visual disability", confidence: 0.9 },
+      {
+        ...profile,
+        disability: {
+          ...profile.disability,
+          disclosurePreference: "disclose",
+        },
+      },
+    );
+
+    expect(result?.answer).toBe(true);
   });
 
   it("resolves resume-aware answers for years, skills, and education", async () => {

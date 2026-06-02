@@ -13,23 +13,71 @@ export const DEFAULT_CANDIDATE_PROFILE_EXAMPLE_PATH = path.resolve(
   "profile.example.json",
 );
 
-const DisabilitySchema = z
+const DisabilityItemSchema = z.object({
+  type: z.string().trim().min(1),
+  percentage: z.number().min(0).max(100).nullable().default(null),
+  notes: z.string().nullable().default(null),
+});
+
+const DisabilitySchema = z.preprocess((raw) => {
+  if (!raw || typeof raw !== "object") {
+    return raw;
+  }
+
+  const value = raw as {
+    hasVisualDisability?: unknown;
+    disabilityPercentage?: unknown;
+    requiresAccommodation?: unknown;
+    accommodationNotes?: unknown;
+    disclosurePreference?: unknown;
+  };
+
+  if (!("hasVisualDisability" in value) && !("disabilityPercentage" in value)) {
+    return raw;
+  }
+
+  const hasDisability = value.hasVisualDisability === true;
+  return {
+    hasDisability,
+    disabilities: hasDisability
+      ? [
+          {
+            type: "visual",
+            percentage:
+              typeof value.disabilityPercentage === "number"
+                ? value.disabilityPercentage
+                : value.disabilityPercentage == null
+                  ? null
+                  : Number(value.disabilityPercentage),
+            notes: null,
+          },
+        ]
+      : [],
+    requiresAccommodation: value.requiresAccommodation ?? null,
+    accommodationNotes: value.accommodationNotes ?? null,
+    disclosurePreference: value.disclosurePreference ?? "manual-review",
+  };
+}, z
   .object({
-    hasVisualDisability: z.boolean().default(false),
-    disabilityPercentage: z.number().min(0).max(100).nullable().default(null),
+    hasDisability: z.boolean().default(false),
+    disabilities: z.array(DisabilityItemSchema).default([]),
     requiresAccommodation: z.boolean().nullable().default(null),
     accommodationNotes: z.string().nullable().default(null),
     disclosurePreference: z
       .enum(["manual-review", "disclose", "prefer-not-to-say"])
       .default("manual-review"),
   })
+  .transform((value) => ({
+    ...value,
+    hasDisability: value.hasDisability || value.disabilities.length > 0,
+  }))
   .default({
-    hasVisualDisability: false,
-    disabilityPercentage: null,
+    hasDisability: false,
+    disabilities: [],
     requiresAccommodation: null,
     accommodationNotes: null,
     disclosurePreference: "manual-review",
-  });
+  }));
 
 const DemographicsSchema = z
   .object({
@@ -188,8 +236,8 @@ const CandidateProfileFileSchema = z.object({
         sexualOrientation: null,
       },
       disability: {
-        hasVisualDisability: false,
-        disabilityPercentage: null,
+        hasDisability: false,
+        disabilities: [],
         requiresAccommodation: null,
         accommodationNotes: null,
         disclosurePreference: "manual-review",

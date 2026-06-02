@@ -27,8 +27,8 @@ const candidateProfile = {
   remotePreference: "remote",
   remoteOnly: true,
   disability: {
-    hasVisualDisability: false,
-    disabilityPercentage: null,
+    hasDisability: false,
+    disabilities: [],
     requiresAccommodation: null,
     accommodationNotes: null,
     disclosurePreference: "manual-review",

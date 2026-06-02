@@ -29,8 +29,8 @@ describe("answer helpers", () => {
       remotePreference: null,
       remoteOnly: false,
       disability: {
-        hasVisualDisability: false,
-        disabilityPercentage: null,
+        hasDisability: false,
+        disabilities: [],
         requiresAccommodation: null,
         accommodationNotes: null,
         disclosurePreference: "manual-review",

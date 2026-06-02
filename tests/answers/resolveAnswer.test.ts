@@ -54,8 +54,14 @@ const profile = {
   remotePreference: "remote",
   remoteOnly: true,
   disability: {
-    hasVisualDisability: true,
-    disabilityPercentage: 46,
+    hasDisability: true,
+    disabilities: [
+      {
+        type: "visual",
+        percentage: 46,
+        notes: null,
+      },
+    ],
     requiresAccommodation: null,
     accommodationNotes: null,
     disclosurePreference: "manual-review",
