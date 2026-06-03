@@ -6,6 +6,7 @@ import {
   isLinkedInCollectionUrl,
 } from "./constants.js";
 import { isReactJobsListingUrl } from "../reactjobs/listing.js";
+import { isAshbyListingUrl } from "../ashby/listing.js";
 
 export type ScoringMode = "local" | "ai";
 
@@ -396,7 +397,8 @@ function looksLikeImplicitApplyBatch(args: {
 }) {
   return (
     looksLikeImplicitLinkedInBatch(args) ||
-    isReactJobsListingUrl(args.positionalArgs[0] ?? "")
+    isReactJobsListingUrl(args.positionalArgs[0] ?? "") ||
+    isAshbyListingUrl(args.positionalArgs[0] ?? "")
   );
 }
 
@@ -463,9 +465,9 @@ function assertLinkedInCollectionMode(mode: LinkedInBatchMode, url: string) {
 }
 
 function assertSupportedApplyBatchUrl(url: string) {
-  if (!isLinkedInCollectionUrl(url) && !isReactJobsListingUrl(url)) {
+  if (!isLinkedInCollectionUrl(url) && !isReactJobsListingUrl(url) && !isAshbyListingUrl(url)) {
     throw new Error(
-      "apply-batch requires a supported collection URL (LinkedIn or ReactJobs).",
+      "apply-batch requires a supported collection URL (LinkedIn, ReactJobs, or Ashby).",
     );
   }
 }
@@ -506,6 +508,7 @@ function parseLinkedInFamilyCommand(args: {
   if (
     isLinkedInCollectionUrl(normalizedUrl) ||
     isReactJobsListingUrl(normalizedUrl) ||
+    isAshbyListingUrl(normalizedUrl) ||
     batchShape.count > 1
   ) {
     return {

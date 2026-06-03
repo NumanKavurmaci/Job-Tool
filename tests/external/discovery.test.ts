@@ -889,6 +889,137 @@ describe("external application discovery", () => {
     await page.close();
   });
 
+  it("discovers Ashby application fields from app data, including custom widgets", async () => {
+    const page = await browser.newPage();
+    await page.route("https://jobs.ashbyhq.com/ruby-labs/05254f35-7380-4e94-b780-91bde2469db9/application?utm_source=test", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/html",
+        body: `
+          <html>
+            <head><title>Full-Stack Developer @ Ruby Labs</title></head>
+            <body>
+              <script>
+                window.__appData = {
+                  posting: {
+                    applicationForm: {
+                      fieldEntries: [
+                        {
+                          isRequired: true,
+                          field: { path: "_systemfield_name", title: "Full Name:", type: "String" }
+                        },
+                        {
+                          isRequired: true,
+                          field: { path: "_systemfield_email", title: "Email address:", type: "Email" }
+                        },
+                        {
+                          isRequired: true,
+                          field: { path: "_systemfield_phone", title: "Phone number:", type: "Phone" }
+                        },
+                        {
+                          isRequired: true,
+                          field: { path: "_systemfield_resume", title: "Resume:", type: "File" }
+                        },
+                        {
+                          isRequired: false,
+                          field: { path: "salary_expectation", title: "Salary expectation:", type: "Number" }
+                        },
+                        {
+                          isRequired: false,
+                          field: { path: "motivation", title: "Why do you want to work here?", type: "LongText" }
+                        },
+                        {
+                          isRequired: true,
+                          field: { path: "_systemfield_location", title: "What is your country of residence?", type: "Location", locationTypes: ["Country"] }
+                        },
+                        {
+                          isRequired: true,
+                          field: { path: "cet_range", title: "Are you located within a ±4 hour range from the Central European Time (CET) zone?", type: "Boolean" }
+                        },
+                        {
+                          isRequired: true,
+                          descriptionHtml: "<p>Please select an answer based on relevant experience.</p>",
+                          field: {
+                            path: "relevant_experience",
+                            title: "How many years of relevant experience do you have?",
+                            type: "ValueSelect",
+                            selectableValues: [
+                              { label: "Less than 1 year", value: "Less than 1 year" },
+                              { label: "1-3 years", value: "1-3 years" },
+                              { label: "4-6 years", value: "4-6 years" }
+                            ]
+                          }
+                        },
+                        {
+                          isRequired: true,
+                          field: {
+                            path: "english_level",
+                            title: "What is your English proficiency level?",
+                            type: "ValueSelect",
+                            selectableValues: [
+                              { label: "Advanced (C1)", value: "Advanced (C1)" },
+                              { label: "Proficient (C2)", value: "Proficient (C2)" }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                };
+              </script>
+              <div id="form" role="tabpanel">Application</div>
+            </body>
+          </html>
+        `,
+      });
+    });
+
+    const result = await discoverExternalApplication(
+      page,
+      "https://jobs.ashbyhq.com/ruby-labs/05254f35-7380-4e94-b780-91bde2469db9/application?utm_source=test",
+    );
+
+    expect(result.platform).toBe("ashby");
+    expect(result.fields).toEqual([
+      expect.objectContaining({ key: "_systemfield_name", label: "Full Name:", type: "short_text" }),
+      expect.objectContaining({ key: "_systemfield_email", label: "Email address:", type: "email" }),
+      expect.objectContaining({ key: "_systemfield_phone", label: "Phone number:", type: "phone" }),
+      expect.objectContaining({ key: "_systemfield_resume", type: "file", semanticKey: "resume.upload" }),
+      expect.objectContaining({ key: "salary_expectation", type: "number" }),
+      expect.objectContaining({ key: "motivation", type: "long_text" }),
+      expect.objectContaining({
+        key: "_systemfield_location",
+        type: "single_select",
+        semanticKey: "location.country",
+      }),
+      expect.objectContaining({
+        key: "cet_range",
+        type: "boolean",
+        options: ["Yes", "No"],
+        semanticKey: "timezone.cet_range",
+      }),
+      expect.objectContaining({
+        key: "relevant_experience",
+        label: "How many years of relevant experience do you have?",
+        type: "single_select",
+        options: ["Less than 1 year", "1-3 years", "4-6 years"],
+        semanticKey: "experience.years",
+      }),
+      expect.objectContaining({
+        key: "english_level",
+        type: "single_select",
+        semanticKey: "language.english_proficiency",
+      }),
+    ]);
+    expect(result.fields.find((field) => field.key === "_systemfield_location")?.selectorHints).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('[role="combobox"]'),
+      ]),
+    );
+
+    await page.close();
+  });
+
   it("follows a generic embedded iCIMS iframe when the host page has no direct fields", async () => {
     const page = await browser.newPage();
     await page.route("https://globalcareers-githubinc.icims.com/jobs/5151/login?iis=Job%20Board&iisn=LinkedIn", async (route) => {
@@ -1890,6 +2021,179 @@ describe("external application discovery", () => {
         fieldKey: "resume",
         answer: null,
         confidenceLabel: "manual_review",
+      }),
+    ]);
+  });
+
+  it("plans Ashby-specific semantic answers for country, CET range, and experience buckets", async () => {
+    const result = await planExternalApplicationAnswers({
+      fields: [
+        {
+          key: "_systemfield_location",
+          label: "What is your country of residence?",
+          type: "single_select",
+          semanticKey: "location.country",
+          required: true,
+          options: [],
+          placeholder: null,
+          helpText: null,
+          accept: null,
+        },
+        {
+          key: "cet_range",
+          label: "Are you located within a ±4 hour range from the Central European Time (CET) zone?",
+          type: "boolean",
+          semanticKey: "timezone.cet_range",
+          required: true,
+          options: ["Yes", "No"],
+          placeholder: null,
+          helpText: null,
+          accept: null,
+        },
+        {
+          key: "relevant_experience",
+          label: "How many years of relevant experience do you have?",
+          type: "single_select",
+          semanticKey: "experience.years",
+          required: true,
+          options: ["Less than 1 year", "1-3 years", "4-6 years", "More than 10 years"],
+          placeholder: null,
+          helpText: null,
+          accept: null,
+        },
+      ],
+      candidateProfile: buildCandidateProfile({
+        location: "Samsun, TÃ¼rkiye",
+        yearsOfExperienceTotal: 4,
+      }),
+      pageContext: {
+        title: "Ashby application",
+        text: "Country of residence and CET eligibility",
+        sourceUrl: "https://jobs.ashbyhq.com/ruby-labs/job/application",
+      },
+    });
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        fieldKey: "_systemfield_location",
+        answer: "Turkey",
+        resolutionStrategy: "semantic:location-country",
+      }),
+      expect.objectContaining({
+        fieldKey: "cet_range",
+        answer: "Yes",
+        resolutionStrategy: "semantic:timezone-cet-range",
+      }),
+      expect.objectContaining({
+        fieldKey: "relevant_experience",
+        answer: "4-6 years",
+        resolutionStrategy: "semantic:experience-years-bucket",
+      }),
+    ]);
+  });
+
+  it("leaves Ashby semantic answers for manual review when profile data is insufficient", async () => {
+    const result = await planExternalApplicationAnswers({
+      fields: [
+        {
+          key: "cet_range",
+          label: "Are you located within a CET-friendly range?",
+          type: "boolean",
+          semanticKey: "timezone.cet_range",
+          required: true,
+          options: [],
+          placeholder: null,
+          helpText: null,
+          accept: null,
+        },
+        {
+          key: "relevant_experience",
+          label: "How many years of relevant experience do you have?",
+          type: "single_select",
+          semanticKey: "experience.years",
+          required: true,
+          options: ["Less than 1 year", "1-3 years", "4-6 years"],
+          placeholder: null,
+          helpText: null,
+          accept: null,
+        },
+        {
+          key: "english_level",
+          label: "What is your English proficiency level?",
+          type: "single_select",
+          semanticKey: "language.english_proficiency",
+          required: true,
+          options: ["Beginner", "Intermediate"],
+          placeholder: null,
+          helpText: null,
+          accept: null,
+        },
+      ],
+      candidateProfile: buildCandidateProfile({
+        location: "",
+        yearsOfExperienceTotal: null,
+        languages: [],
+      }),
+      pageContext: {
+        title: "Ashby application",
+        text: "CET eligibility, experience, and English proficiency",
+        sourceUrl: "https://jobs.ashbyhq.com/ruby-labs/job/application",
+      },
+    });
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        fieldKey: "cet_range",
+        answer: null,
+        confidenceLabel: "manual_review",
+        resolutionStrategy: "semantic:timezone-cet-range",
+      }),
+      expect.objectContaining({
+        fieldKey: "relevant_experience",
+        answer: null,
+        confidenceLabel: "manual_review",
+        resolutionStrategy: "semantic:experience-years",
+      }),
+      expect.objectContaining({
+        fieldKey: "english_level",
+        answer: null,
+        confidenceLabel: "manual_review",
+        resolutionStrategy: "semantic:english-proficiency",
+      }),
+    ]);
+  });
+
+  it("uses candidate English language text when Ashby does not provide proficiency options", async () => {
+    const result = await planExternalApplicationAnswers({
+      fields: [
+        {
+          key: "english_level",
+          label: "What is your English proficiency level?",
+          type: "short_text",
+          semanticKey: "language.english_proficiency",
+          required: true,
+          options: [],
+          placeholder: null,
+          helpText: null,
+          accept: null,
+        },
+      ],
+      candidateProfile: buildCandidateProfile({
+        languages: ["English - Professional working proficiency"],
+      }),
+      pageContext: {
+        title: "Ashby application",
+        text: "English proficiency",
+        sourceUrl: "https://jobs.ashbyhq.com/ruby-labs/job/application",
+      },
+    });
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        fieldKey: "english_level",
+        answer: "English - Professional working proficiency",
+        confidenceLabel: "medium",
+        resolutionStrategy: "semantic:english-proficiency",
       }),
     ]);
   });

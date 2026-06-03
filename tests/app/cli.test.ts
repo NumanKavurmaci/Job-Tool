@@ -166,6 +166,46 @@ describe("app cli", () => {
     });
   });
 
+  it("parses Ashby listing pages as apply batches", () => {
+    expect(
+      parseCliArgs([
+        "apply-batch",
+        "https://jobs.ashbyhq.com/ruby-labs?workplaceType=Remote",
+        "--count",
+        "2",
+      ]),
+    ).toEqual({
+      mode: "apply-batch",
+      url: "https://jobs.ashbyhq.com/ruby-labs?workplaceType=Remote",
+      resumePath: expect.any(String),
+      count: 2,
+      disableAiEvaluation: false,
+      scoreThreshold: 40,
+      scoringMode: "local",
+      dryRun: false,
+    });
+  });
+
+  it("treats apply dry runs for Ashby listing pages as apply batches", () => {
+    expect(
+      parseCliArgs([
+        "apply-dry-run",
+        "https://jobs.ashbyhq.com/ruby-labs?workplaceType=Remote",
+        "--count",
+        "1",
+      ]),
+    ).toEqual({
+      mode: "apply-batch",
+      url: "https://jobs.ashbyhq.com/ruby-labs?workplaceType=Remote",
+      resumePath: expect.any(String),
+      count: 1,
+      disableAiEvaluation: false,
+      scoreThreshold: 40,
+      scoringMode: "local",
+      dryRun: true,
+    });
+  });
+
   it("parses explore batch commands without any apply or resume arguments", () => {
     expect(
       parseCliArgs([
@@ -233,7 +273,7 @@ describe("app cli", () => {
   it("rejects missing or invalid URLs for explicit apply commands", () => {
     expect(() => parseCliArgs(["external-apply"])).toThrow("--url is required for external-apply.");
     expect(() => parseCliArgs(["apply-batch", "https://www.linkedin.com/jobs/view/1"])).toThrow(
-      "apply-batch requires a supported collection URL (LinkedIn or ReactJobs).",
+      "apply-batch requires a supported collection URL (LinkedIn, ReactJobs, or Ashby).",
     );
     expect(() =>
       parseCliArgs(["easy-apply-batch", "https://www.linkedin.com/jobs/view/1"]),

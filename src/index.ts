@@ -12,6 +12,10 @@ export {
   extractReactJobsListings,
   isReactJobsListingUrl,
 } from "./reactjobs/listing.js";
+export {
+  extractAshbyListings,
+  isAshbyListingUrl,
+} from "./ashby/listing.js";
 
 import { runCli } from "./app/main.js";
 

@@ -513,6 +513,174 @@ function mapHtmlInputTypeToFieldType(inputType: string, options: string[]): Exte
   return "short_text";
 }
 
+function mapAshbyFieldTypeToFieldType(inputType: string): ExternalApplicationFieldType {
+  switch (inputType) {
+    case "LongText":
+      return "long_text";
+    case "Number":
+      return "number";
+    case "Email":
+      return "email";
+    case "Phone":
+      return "phone";
+    case "File":
+      return "file";
+    case "Boolean":
+      return "boolean";
+    case "ValueSelect":
+    case "Location":
+      return "single_select";
+    case "String":
+    default:
+      return "short_text";
+  }
+}
+
+function escapePlaywrightText(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function buildAshbySelectorHints(input: {
+  key: string;
+  label: string;
+  type: ExternalApplicationFieldType;
+  options: string[];
+}): string[] {
+  const key = escapePlaywrightText(input.key);
+  const label = escapePlaywrightText(input.label);
+  const scopedEntry = `.ashby-application-form-field-entry:has(.ashby-application-form-question-title:has-text("${label}"))`;
+  const selectors = [
+    `[id="${key}"]`,
+    `[name="${key}"]`,
+    `input[id*="${key}"]`,
+    `textarea[id*="${key}"]`,
+    `input[name$="_${key}"]`,
+    `${scopedEntry} input`,
+    `${scopedEntry} textarea`,
+    `${scopedEntry} select`,
+  ];
+
+  if (input.type === "file") {
+    selectors.unshift(`${scopedEntry} input[type="file"]`);
+  }
+  if (input.type === "single_select" && input.options.length > 0) {
+    selectors.unshift(`${scopedEntry} input[type="radio"]`);
+  }
+  if (input.type === "single_select" && input.options.length === 0) {
+    selectors.unshift(`${scopedEntry} [role="combobox"]`);
+  }
+  if (input.type === "boolean") {
+    selectors.unshift(`${scopedEntry} input[type="checkbox"]`, `${scopedEntry} input[type="radio"]`);
+  }
+
+  return [...new Set(selectors)];
+}
+
+async function inspectAshbyApplicationFields(page: Page): Promise<ExternalApplicationField[]> {
+  if (typeof (page as Page & { evaluate?: unknown }).evaluate !== "function") {
+    return [];
+  }
+
+  /* c8 ignore start -- browser-context DOM traversal is exercised through Playwright, not node unit tests */
+  const rawFields = await page.evaluate(() => {
+    const doc = (globalThis as any).document;
+    const cleanText = (value: unknown) => String(value ?? "").replace(/\s+/g, " ").trim();
+    const htmlToText = (html: unknown) => {
+      const template = doc.createElement("template");
+      template.innerHTML = String(html ?? "");
+      return cleanText(template.content.textContent);
+    };
+    const fieldEntries = (globalThis as {
+      __appData?: {
+        posting?: {
+          applicationForm?: {
+            fieldEntries?: Array<{
+              isRequired?: boolean;
+              descriptionHtml?: string | null;
+              field?: {
+                path?: string;
+                id?: string;
+                title?: string;
+                type?: string;
+                selectableValues?: Array<{ label?: string; value?: string }>;
+              };
+            }>;
+          };
+        } | null;
+      };
+    }).__appData?.posting?.applicationForm?.fieldEntries;
+
+    return Array.isArray(fieldEntries)
+      ? fieldEntries
+          .map((entry) => {
+            const field = entry.field;
+            const key = cleanText(field?.path || field?.id);
+            const label = cleanText(field?.title || field?.path || field?.id);
+            const inputType = cleanText(field?.type);
+            if (!key || !label || !inputType) {
+              return null;
+            }
+            return {
+              key,
+              label,
+              inputType,
+              required: entry.isRequired === true,
+              options: (field?.selectableValues ?? [])
+                .map((option) => cleanText(option.label || option.value))
+                .filter(Boolean),
+              placeholder: null,
+              helpText: htmlToText(entry.descriptionHtml),
+              accept: inputType === "File" ? "application/pdf,.pdf,.doc,.docx" : null,
+            };
+          })
+          .filter(Boolean)
+      : [];
+  }).catch(() => []);
+  /* c8 ignore stop */
+
+  if (!Array.isArray(rawFields)) {
+    return [];
+  }
+
+  return rawFields.map((field) => {
+    const typedField = field as {
+      key: string;
+      label: string;
+      inputType: string;
+      required: boolean;
+      options: string[];
+      placeholder: string | null;
+      helpText: string | null;
+      accept: string | null;
+    };
+    const type = mapAshbyFieldTypeToFieldType(typedField.inputType);
+    return {
+      key: typedField.key,
+      label: typedField.label,
+      type,
+      htmlInputType:
+        typedField.inputType === "ValueSelect"
+          ? "radio"
+          : typedField.inputType === "Location"
+            ? "select"
+            : typedField.inputType.toLowerCase(),
+      required: typedField.required,
+      options: typedField.inputType === "Boolean" && typedField.options.length === 0
+        ? ["Yes", "No"]
+        : typedField.options,
+      placeholder: typedField.placeholder,
+      helpText: typedField.helpText || null,
+      accept: typedField.accept,
+      selectorHints: buildAshbySelectorHints({
+        key: typedField.key,
+        label: typedField.label,
+        type,
+        options: typedField.options,
+      }),
+    };
+  });
+}
+
 function inferAuthWall(args: {
   finalUrl: string;
   pageTitle: string;
@@ -724,7 +892,12 @@ export async function inspectExternalApplicationPage(
         };
   /* c8 ignore stop */
 
-  const normalizedFields: ExternalApplicationField[] = inspected.fields.map((field) => ({
+  const shouldPreferAshbyFields =
+    inferPlatform(inspected.url) === "ashby" && /\/application(?:[/?#]|$)/i.test(inspected.url);
+  const ashbyFields = shouldPreferAshbyFields
+    ? await inspectAshbyApplicationFields(page)
+    : [];
+  const normalizedFields: ExternalApplicationField[] = (ashbyFields.length > 0 ? ashbyFields : inspected.fields.map((field) => ({
     key: field.key,
     label: field.label,
     type: mapHtmlInputTypeToFieldType(field.inputType, field.options),
@@ -737,7 +910,7 @@ export async function inspectExternalApplicationPage(
     helpText: field.helpText,
     accept: field.accept,
     selectorHints: field.selectorHints,
-  }));
+  })));
   const fields = annotateSemanticFieldsWithPlatform(normalizedFields).filter((field, _, allFields) => {
     if (looksNonApplicationField(field)) {
       return false;

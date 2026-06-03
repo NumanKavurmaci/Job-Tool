@@ -65,7 +65,7 @@ function normalizeReactJobsListing(listing: ReactJobsListing): ReactJobsListing 
 
 async function readCurrentPageNumber(page: Page): Promise<number | null> {
   return page.evaluate(() => {
-    const current = document.querySelector("[aria-current='page']");
+    const current = (globalThis as any).document?.querySelector?.("[aria-current='page']");
     const text = current?.textContent?.trim() ?? "";
     const parsed = Number.parseInt(text, 10);
     return Number.isFinite(parsed) ? parsed : null;
@@ -91,7 +91,7 @@ async function goToNextReactJobsResultsPage(page: Page): Promise<boolean> {
   if (previousPageNumber != null) {
     await page.waitForFunction(
       (expectedPage) => {
-        const current = document.querySelector("[aria-current='page']");
+        const current = (globalThis as any).document?.querySelector?.("[aria-current='page']");
         const text = current?.textContent?.trim() ?? "";
         const parsed = Number.parseInt(text, 10);
         return Number.isFinite(parsed) && parsed > expectedPage;

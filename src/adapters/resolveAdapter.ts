@@ -1,3 +1,4 @@
+import { AshbyAdapter } from "./AshbyAdapter.js";
 import { GenericAdapter } from "./GenericAdapter.js";
 import { GreenhouseAdapter } from "./GreenhouseAdapter.js";
 import { LeverAdapter } from "./LeverAdapter.js";
@@ -8,6 +9,7 @@ import type { JobAdapter } from "./types.js";
 const adapters: JobAdapter[] = [
   new GreenhouseAdapter(),
   new LeverAdapter(),
+  new AshbyAdapter(),
   new LinkedInAdapter(),
   new ReactJobsAdapter(),
   new GenericAdapter(),

@@ -25,6 +25,10 @@ This file maps all test files to the behavior they protect.
 - [tests/adapters/helpers.test.ts](../tests/adapters/helpers.test.ts): Shared adapter helper coverage.
 - [tests/adapters/resolver.test.ts](../tests/adapters/resolver.test.ts): Adapter resolution by URL/domain.
 
+## `tests/ashby/`
+
+- [tests/ashby/listing.test.ts](../tests/ashby/listing.test.ts): Ashby listing URL detection and rendered/app-data job-card extraction.
+
 ## `tests/answers/`
 
 - [tests/answers/cache.test.ts](../tests/answers/cache.test.ts): Answer cache persistence behavior.

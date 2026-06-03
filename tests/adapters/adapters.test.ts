@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { AshbyAdapter } from "../../src/adapters/AshbyAdapter.js";
 import { GenericAdapter } from "../../src/adapters/GenericAdapter.js";
 import { GreenhouseAdapter } from "../../src/adapters/GreenhouseAdapter.js";
 import { LeverAdapter } from "../../src/adapters/LeverAdapter.js";
@@ -1353,6 +1354,191 @@ describe("LeverAdapter", () => {
 
     expect(result.title).toBe("Fallback Lever Title");
     expect(result.applyUrl).toBe("https://jobs.lever.co/company/2");
+  });
+});
+
+describe("AshbyAdapter", () => {
+  it("matches Ashby job detail and application urls but not listing urls", () => {
+    const adapter = new AshbyAdapter();
+
+    expect(
+      adapter.canHandle("https://jobs.ashbyhq.com/ruby-labs/05254f35-7380-4e94-b780-91bde2469db9"),
+    ).toBe(true);
+    expect(
+      adapter.canHandle("https://jobs.ashbyhq.com/ruby-labs/05254f35-7380-4e94-b780-91bde2469db9/application?utm_source=abc"),
+    ).toBe(true);
+    expect(adapter.canHandle("jobs.ashbyhq.com/ruby-labs/05254f35-7380-4e94-b780-91bde2469db9")).toBe(true);
+    expect(adapter.canHandle("https://jobs.ashbyhq.com/ruby-labs?workplaceType=Remote")).toBe(false);
+  });
+
+  it("extracts Ashby job content and canonical application urls from rendered selectors", async () => {
+    const page = createMockPage({
+      currentUrl: "https://jobs.ashbyhq.com/ruby-labs/05254f35-7380-4e94-b780-91bde2469db9",
+      title: "Full-Stack Developer @ Ruby Labs",
+      selectors: {
+        ".ashby-job-posting-heading": { text: "Full-Stack Developer" },
+        ".ashby-job-posting-left-pane": { text: "Location\nTurkey\nEmployment Type\nFull time\nLocation Type\nRemote" },
+        "a[href*='/application']": {
+          attributes: {
+            href: "https://jobs.ashbyhq.com/ruby-labs/05254f35-7380-4e94-b780-91bde2469db9/application?utm_source=abc",
+          },
+        },
+        ".ashby-job-posting-right-pane-overview-tab": {
+          text: "About us\nBuild products.\nQualifications\nNext.js and Node.js.\nBenefits\nRemote work.",
+        },
+        "meta[property='og:image']": {
+          attributes: { content: "https://example.com/logo.png" },
+        },
+        body: { text: "Ashby raw body" },
+      },
+    });
+
+    const result = await new AshbyAdapter().extract(page as never, page.url());
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        title: "Full-Stack Developer",
+        location: "Location\nTurkey\nEmployment Type\nFull time\nLocation Type\nRemote",
+        platform: "ashby",
+        applicationType: "external",
+        applyUrl:
+          "https://jobs.ashbyhq.com/ruby-labs/05254f35-7380-4e94-b780-91bde2469db9/application?utm_source=abc",
+        companyLogoUrl: "https://example.com/logo.png",
+      }),
+    );
+  });
+
+  it("prefers Ashby app data when available", async () => {
+    const page = {
+      goto: vi.fn(async () => undefined),
+      waitForTimeout: vi.fn(async () => undefined),
+      url: () => "https://jobs.ashbyhq.com/acme/05254f35-7380-4e94-b780-91bde2469db9",
+      title: vi.fn(async () => "Fallback"),
+      locator(selector: string) {
+        return {
+          first() {
+            return this;
+          },
+          count: vi.fn(async () => selector === "body" ? 1 : 0),
+          innerText: vi.fn(async () => "Raw body"),
+          getAttribute: vi.fn(async () => null),
+        };
+      },
+      evaluate: vi.fn(async (callback: unknown) => {
+        if (typeof callback !== "function") {
+          return null;
+        }
+        const previousDocument = (globalThis as any).document;
+        const previousAppData = (globalThis as any).__appData;
+        (globalThis as any).document = {
+          createElement: () => ({
+            innerHTML: "",
+            content: { textContent: "Build APIs. Qualifications TypeScript. Benefits Equity." },
+          }),
+          querySelectorAll: () => [],
+        };
+        (globalThis as any).__appData = {
+          organization: {
+            name: "Acme",
+            theme: { logoWordmarkImageUrl: "https://example.com/wordmark.png" },
+          },
+          posting: {
+            title: "Backend Engineer",
+            locationName: "Turkey",
+            secondaryLocationNames: ["European Union"],
+            workplaceType: "Remote",
+            employmentType: "FullTime",
+            departmentName: "Engineering",
+            descriptionPlainText: "About us Build APIs. Qualifications TypeScript. Benefits Equity.",
+          },
+        };
+        try {
+          return (callback as () => unknown)();
+        } finally {
+          (globalThis as any).document = previousDocument;
+          (globalThis as any).__appData = previousAppData;
+        }
+      }),
+    };
+
+    const result = await new AshbyAdapter().extract(page as never, page.url());
+
+    expect(result.title).toBe("Backend Engineer");
+    expect(result.company).toBe("Acme");
+    expect(result.location).toBe("Turkey; European Union");
+    expect(result.rawText).toContain("Workplace Type: Remote");
+    expect(result.rawWorkplaceType).toBe("remote");
+    expect(result.requirementsText).toContain("TypeScript");
+  });
+
+  it("falls back to the current url when an invalid Ashby-like url cannot be canonicalized", async () => {
+    const page = createMockPage({
+      currentUrl: "jobs.ashbyhq.com/ruby-labs/05254f35-7380-4e94-b780-91bde2469db9",
+      title: "Fallback Ashby Title",
+      selectors: {
+        h1: { text: "Fallback Ashby Role" },
+        main: { text: "Fallback Ashby description" },
+        body: { text: "Fallback Ashby body" },
+      },
+    });
+
+    const result = await new AshbyAdapter().extract(page as never, page.url());
+
+    expect(result.applyUrl).toBe("jobs.ashbyhq.com/ruby-labs/05254f35-7380-4e94-b780-91bde2469db9");
+    expect(result.title).toBe("Fallback Ashby Role");
+  });
+
+  it("normalizes Ashby hybrid and onsite workplace types", async () => {
+    const makePage = (workplaceType: string) => ({
+      goto: vi.fn(async () => undefined),
+      waitForTimeout: vi.fn(async () => undefined),
+      url: () => `https://jobs.ashbyhq.com/acme/05254f35-7380-4e94-b780-91bde2469db9-${workplaceType}`,
+      title: vi.fn(async () => "Fallback"),
+      locator() {
+        return {
+          first() {
+            return this;
+          },
+          count: vi.fn(async () => 0),
+          innerText: vi.fn(async () => ""),
+          getAttribute: vi.fn(async () => null),
+        };
+      },
+      evaluate: vi.fn(async (callback: unknown) => {
+        if (typeof callback !== "function") {
+          return null;
+        }
+        const previousDocument = (globalThis as any).document;
+        const previousAppData = (globalThis as any).__appData;
+        (globalThis as any).document = {
+          createElement: () => ({
+            innerHTML: "",
+            content: { textContent: "Build products." },
+          }),
+          querySelectorAll: () => [],
+        };
+        (globalThis as any).__appData = {
+          organization: { name: "Acme" },
+          posting: {
+            title: `${workplaceType} Engineer`,
+            locationName: "Berlin",
+            workplaceType,
+            descriptionPlainText: "Build products.",
+          },
+        };
+        try {
+          return (callback as () => unknown)();
+        } finally {
+          (globalThis as any).document = previousDocument;
+          (globalThis as any).__appData = previousAppData;
+        }
+      }),
+    });
+
+    await expect(new AshbyAdapter().extract(makePage("Hybrid") as never, "https://jobs.ashbyhq.com/acme/05254f35-7380-4e94-b780-91bde2469db9"))
+      .resolves.toEqual(expect.objectContaining({ rawWorkplaceType: "hybrid" }));
+    await expect(new AshbyAdapter().extract(makePage("On-site") as never, "https://jobs.ashbyhq.com/acme/05254f35-7380-4e94-b780-91bde2469db9"))
+      .resolves.toEqual(expect.objectContaining({ rawWorkplaceType: "onsite" }));
   });
 });
 

@@ -32,7 +32,12 @@ This file maps all `src/` files to their purpose.
 - [src/adapters/GenericAdapter.ts](../src/adapters/GenericAdapter.ts): Generic fallback extractor for unsupported job sites.
 - [src/adapters/GreenhouseAdapter.ts](../src/adapters/GreenhouseAdapter.ts): Greenhouse-specific extraction logic.
 - [src/adapters/LeverAdapter.ts](../src/adapters/LeverAdapter.ts): Lever-specific extraction logic.
+- [src/adapters/AshbyAdapter.ts](../src/adapters/AshbyAdapter.ts): Ashby-specific job extraction using rendered page metadata and application URLs.
 - [src/adapters/LinkedInAdapter.ts](../src/adapters/LinkedInAdapter.ts): LinkedIn-specific page extraction plus LinkedIn auth handling.
+
+## `src/ashby/`
+
+- [src/ashby/listing.ts](../src/ashby/listing.ts): Ashby listing URL detection and one-page job-card extraction for apply batches.
 
 ## `src/answers/`
 

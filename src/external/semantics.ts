@@ -174,7 +174,7 @@ function inferSalaryContext(field: ExternalApplicationField): {
   const combined = buildCombinedFieldText(field);
   const preferredCurrency = combined.includes("usd")
     ? "USD"
-    : combined.includes("eur") || combined.includes("euro")
+    : combined.includes("eur") || combined.includes("euro") || combined.includes("€")
       ? "EUR"
       : combined.includes("try") || combined.includes("turkish lira") || combined.includes(" tl ")
         ? "TRY"
@@ -196,6 +196,21 @@ function extractCityFromLocation(location: string | null | undefined): string | 
     .replace(/\bTurkiye\b/gi, "Turkey")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function extractCountryFromLocation(location: string | null | undefined): string | null {
+  const normalized = String(location ?? "")
+    .replace(/\bTÃ¼rkiye\b/gi, "Turkey")
+    .replace(/\bTurkiye\b/gi, "Turkey")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const parts = normalized.split(",").map((part) => part.trim()).filter(Boolean);
+  const country = parts.at(-1) ?? normalized;
+  return /t[üu]rkiye|turkey/i.test(country) ? "Turkey" : country;
 }
 
 function normalizePhoneNumberForLocalField(phone: string | null | undefined): string | null {
@@ -285,6 +300,65 @@ function findWorkAuthorizationOption(options: string[], workAuthorization: strin
   }
 
   return null;
+}
+
+function findExperienceBucketOption(options: string[], years: number | null | undefined): string | null {
+  if (years == null || !Number.isFinite(years)) {
+    return null;
+  }
+
+  const roundedYears = Math.max(0, years);
+  for (const option of options) {
+    const normalized = normalizeSemanticText(option);
+    if (/less than\s*1|<\s*1/.test(normalized) && roundedYears < 1) {
+      return option;
+    }
+
+    const range = normalized.match(/(\d+)\s*[-–]\s*(\d+)\s*years?/);
+    if (range?.[1] && range?.[2]) {
+      const min = Number(range[1]);
+      const max = Number(range[2]);
+      if (roundedYears >= min && roundedYears <= max) {
+        return option;
+      }
+    }
+
+    const moreThan = normalized.match(/(?:more than|over|greater than)\s*(\d+)\s*years?/);
+    if (moreThan?.[1] && roundedYears > Number(moreThan[1])) {
+      return option;
+    }
+  }
+
+  return null;
+}
+
+function inferCETRangeEligibility(candidateProfile: CandidateProfile): boolean | null {
+  const location = normalizeSemanticText(candidateProfile.location);
+  if (!location) {
+    return null;
+  }
+
+  return includesAny(location, [
+    "turkey",
+    "tã¼rkiye",
+    "türkiye",
+    "serbia",
+    "ukraine",
+    "europe",
+    "european union",
+    "germany",
+    "france",
+    "spain",
+    "portugal",
+    "netherlands",
+    "poland",
+    "romania",
+    "bulgaria",
+    "greece",
+    "italy",
+  ])
+    ? true
+    : null;
 }
 
 function inferRegionFromPageContext(pageContext?: {
@@ -564,6 +638,15 @@ export function analyzeFieldSemantics(field: ExternalApplicationField): Semantic
     };
   }
 
+  pushSignal(signals, includesAny(combined, ["country of residence", "current country"]), "text:country");
+  if (signals.includes("text:country")) {
+    return {
+      semanticKey: "location.country",
+      semanticSignals: [...signals],
+      semanticConfidence: selectConfidence(signals, 1, 1),
+    };
+  }
+
   pushSignal(signals, includesAny(combined, ["countrycode", "country code", "dial code", "phone code"]), "text:phone-country-code");
   if (signals.includes("text:phone-country-code")) {
     return {
@@ -609,10 +692,37 @@ export function analyzeFieldSemantics(field: ExternalApplicationField): Semantic
     };
   }
 
-  pushSignal(signals, includesAny(combined, ["years of experience", "years experience", "yoe"]), "text:experience-years");
+  pushSignal(signals, includesAny(combined, ["years of experience", "years of relevant experience", "years experience", "yoe"]), "text:experience-years");
   if (signals.includes("text:experience-years")) {
     return {
       semanticKey: "experience.years",
+      semanticSignals: [...signals],
+      semanticConfidence: selectConfidence(signals, 1, 1),
+    };
+  }
+
+  pushSignal(signals, includesAny(combined, ["availability to start", "start a new role", "start date", "notice period"]), "text:availability-start");
+  if (signals.includes("text:availability-start")) {
+    return {
+      semanticKey: "availability.start",
+      semanticSignals: [...signals],
+      semanticConfidence: selectConfidence(signals, 1, 1),
+    };
+  }
+
+  pushSignal(signals, includesAny(combined, ["central european time", "cet", "±4 hour", "+/-4 hour"]), "text:cet-range");
+  if (signals.includes("text:cet-range")) {
+    return {
+      semanticKey: "timezone.cet_range",
+      semanticSignals: [...signals],
+      semanticConfidence: selectConfidence(signals, 1, 1),
+    };
+  }
+
+  pushSignal(signals, includesAny(combined, ["english proficiency", "english level", "proficiency level"]), "text:english-proficiency");
+  if (signals.includes("text:english-proficiency")) {
+    return {
+      semanticKey: "language.english_proficiency",
       semanticSignals: [...signals],
       semanticConfidence: selectConfidence(signals, 1, 1),
     };
@@ -636,7 +746,7 @@ export function annotateSemanticFields(fields: ExternalApplicationField[]): Exte
       (field.selectorHints ?? []).some((hint) => hint.includes("react-select-"));
     const semanticSelectLike =
       looksLikeReactSelect &&
-      ["sponsorship.required", "work.authorization", "relocation.willing", "phone.country_code"].includes(
+      ["sponsorship.required", "work.authorization", "relocation.willing", "phone.country_code", "location.country"].includes(
         analysis.semanticKey,
       );
 
@@ -876,6 +986,18 @@ export function resolveSemanticExternalAnswer(args: {
           : { notes: "No structured city value was available in the candidate profile." }),
       };
     }
+    case "location.country": {
+      const answer = extractCountryFromLocation(args.candidateProfile.location);
+      return {
+        answer,
+        source: "candidate-profile",
+        confidenceLabel: answer ? "high" : "manual_review",
+        resolutionStrategy: "semantic:location-country",
+        ...(answer
+          ? { notes: "Resolved from candidate country of residence." }
+          : { notes: "No country value could be inferred from the candidate profile." }),
+      };
+    }
     case "phone.country_code": {
       const normalizedLocation = normalizeSemanticText(args.candidateProfile.location);
       const normalizedPhone = normalizeSemanticText(args.candidateProfile.phone);
@@ -954,19 +1076,79 @@ export function resolveSemanticExternalAnswer(args: {
           : { notes: "No portfolio URL was available in the candidate profile." }),
       };
     case "experience.years":
+      const bucketedYears = findExperienceBucketOption(
+        args.field.options,
+        args.candidateProfile.yearsOfExperienceTotal,
+      );
       const normalizedYears =
-        args.candidateProfile.yearsOfExperienceTotal == null
+        bucketedYears ??
+        (args.candidateProfile.yearsOfExperienceTotal == null
           ? null
-          : String(Math.round(args.candidateProfile.yearsOfExperienceTotal));
+          : String(Math.round(args.candidateProfile.yearsOfExperienceTotal)));
       return {
         answer: normalizedYears,
         source: "candidate-profile",
         confidenceLabel: normalizedYears == null ? "manual_review" : "high",
-        resolutionStrategy: "semantic:experience-years",
+        resolutionStrategy: bucketedYears ? "semantic:experience-years-bucket" : "semantic:experience-years",
         ...(normalizedYears == null
           ? { notes: "No structured years-of-experience value was available." }
-          : { notes: "Resolved from candidate years-of-experience total and normalized to a whole number." }),
+          : {
+              notes: bucketedYears
+                ? "Resolved from candidate years-of-experience total and matched to the available range option."
+                : "Resolved from candidate years-of-experience total and normalized to a whole number.",
+            }),
       };
+    case "availability.start":
+      return {
+        answer: null,
+        source: "manual",
+        confidenceLabel: "manual_review",
+        resolutionStrategy: "semantic:availability-start",
+        notes: "Start availability is intentionally left for manual review unless profile availability data is configured.",
+      };
+    case "timezone.cet_range": {
+      const value = inferCETRangeEligibility(args.candidateProfile);
+      const answer =
+        value == null
+          ? null
+          : args.field.options.length > 0
+            ? (findBooleanStyleOption(args.field.options, value) ?? (value ? "Yes" : "No"))
+            : value
+              ? "Yes"
+              : "No";
+      return {
+        answer,
+        source: value == null ? "manual" : "candidate-profile",
+        confidenceLabel: value == null ? "manual_review" : "medium",
+        resolutionStrategy: "semantic:timezone-cet-range",
+        ...(answer
+          ? { notes: "Inferred CET-range eligibility from candidate location." }
+          : { notes: "Could not infer CET-range eligibility from the candidate profile." }),
+      };
+    }
+    case "language.english_proficiency": {
+      const english = args.candidateProfile.languages.find((language) =>
+        /english/i.test(language),
+      );
+      const matchedOption = english
+        ? findOptionByKeywords(args.field.options, [
+            "proficient",
+            "advanced",
+            "c2",
+            "c1",
+            "upper intermediate",
+          ]) ?? english
+        : null;
+      return {
+        answer: matchedOption,
+        source: matchedOption ? "candidate-profile" : "manual",
+        confidenceLabel: matchedOption ? "medium" : "manual_review",
+        resolutionStrategy: "semantic:english-proficiency",
+        ...(matchedOption
+          ? { notes: "Resolved from candidate language profile and matched to a proficiency option." }
+          : { notes: "No English proficiency answer was available in the candidate profile." }),
+      };
+    }
     case "resume.upload":
       return {
         answer: args.candidateProfile.sourceMetadata.resumePath ?? null,

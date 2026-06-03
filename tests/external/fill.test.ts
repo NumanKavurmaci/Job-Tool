@@ -501,6 +501,206 @@ describe("external fill", () => {
     );
   });
 
+  it("clicks Ashby options within the matching question container", async () => {
+    const { page, register, actions } = createLocatorRecorder();
+    register(
+      `.ashby-application-form-field-entry:has(.ashby-application-form-question-title:has-text("How many years of relevant experience do you have?")) input[type="radio"]`,
+      `.ashby-application-form-field-entry:has(.ashby-application-form-question-title:has-text("How many years of relevant experience do you have?")) label:has-text("4-6 years")`,
+      `button:has-text("Submit")`,
+    );
+
+    const result = await fillExternalApplicationPage({
+      page: page as never,
+      discovery: {
+        sourceUrl: "https://jobs.ashbyhq.com/acme/job/application",
+        finalUrl: "https://jobs.ashbyhq.com/acme/job/application",
+        pageTitle: "Ashby form",
+        platform: "ashby",
+        precursorPage: false,
+        precursorSignals: [],
+        precursorLinks: [],
+        followedPrecursorLink: null,
+        fields: [
+          {
+            key: "relevant_experience",
+            label: "How many years of relevant experience do you have?",
+            type: "single_select",
+            required: true,
+            options: ["Less than 1 year", "1-3 years", "4-6 years"],
+            placeholder: null,
+            helpText: null,
+            accept: null,
+            selectorHints: [
+              `.ashby-application-form-field-entry:has(.ashby-application-form-question-title:has-text("How many years of relevant experience do you have?")) input[type="radio"]`,
+            ],
+          },
+        ],
+      },
+      answerPlan: [
+        {
+          fieldKey: "relevant_experience",
+          fieldLabel: "How many years of relevant experience do you have?",
+          fieldType: "single_select",
+          question: {
+            label: "How many years of relevant experience do you have?",
+            inputType: "single_select",
+            options: ["Less than 1 year", "1-3 years", "4-6 years"],
+          },
+          answer: "4-6 years",
+          source: "candidate-profile",
+          confidenceLabel: "high",
+        },
+      ],
+      candidateProfile,
+    });
+
+    expect(result.fieldResults[0]).toEqual(
+      expect.objectContaining({
+        status: "filled",
+        details: "Selected a visible option.",
+      }),
+    );
+    expect(actions).toContainEqual({
+      type: "click",
+      selector: `.ashby-application-form-field-entry:has(.ashby-application-form-question-title:has-text("How many years of relevant experience do you have?")) label:has-text("4-6 years")`,
+    });
+  });
+
+  it("selects Ashby country fields from the combobox option list using CV-derived country aliases", async () => {
+    const { page, register, actions } = createLocatorRecorder();
+    const countryCombobox =
+      `.ashby-application-form-field-entry:has(.ashby-application-form-question-title:has-text("What is your country of residence?")) input[role="combobox"]`;
+    register(
+      countryCombobox,
+      `[role="option"]:has-text("Türkiye")`,
+      `button:has-text("Submit")`,
+    );
+
+    const result = await fillExternalApplicationPage({
+      page: page as never,
+      discovery: {
+        sourceUrl: "https://jobs.ashbyhq.com/acme/job/application",
+        finalUrl: "https://jobs.ashbyhq.com/acme/job/application",
+        pageTitle: "Ashby form",
+        platform: "ashby",
+        precursorPage: false,
+        precursorSignals: [],
+        precursorLinks: [],
+        followedPrecursorLink: null,
+        fields: [
+          {
+            key: "_systemfield_location",
+            label: "What is your country of residence?",
+            type: "single_select",
+            htmlInputType: "select",
+            semanticKey: "location.country",
+            required: true,
+            options: [],
+            placeholder: null,
+            helpText: null,
+            accept: null,
+            selectorHints: [countryCombobox],
+          },
+        ],
+      },
+      answerPlan: [
+        {
+          fieldKey: "_systemfield_location",
+          fieldLabel: "What is your country of residence?",
+          fieldType: "single_select",
+          question: {
+            label: "What is your country of residence?",
+            inputType: "single_select",
+          },
+          answer: "Turkey",
+          source: "candidate-profile",
+          confidenceLabel: "high",
+          resolutionStrategy: "semantic:location-country",
+        },
+      ],
+      candidateProfile,
+    });
+
+    expect(result.fieldResults[0]).toEqual(
+      expect.objectContaining({
+        status: "filled",
+        details: "Selected an Ashby country option from the combobox.",
+      }),
+    );
+    expect(actions).toEqual(
+      expect.arrayContaining([
+        { type: "fill", selector: countryCombobox, value: "Turkey" },
+        { type: "click", selector: `[role="option"]:has-text("Türkiye")` },
+      ]),
+    );
+  });
+
+  it("does not mark Ashby country fields complete when no combobox option can be selected", async () => {
+    const { page, register, actions } = createLocatorRecorder();
+    const countryCombobox =
+      `.ashby-application-form-field-entry:has(.ashby-application-form-question-title:has-text("What is your country of residence?")) input[role="combobox"]`;
+    register(countryCombobox, `button:has-text("Submit")`);
+
+    const result = await fillExternalApplicationPage({
+      page: page as never,
+      discovery: {
+        sourceUrl: "https://jobs.ashbyhq.com/acme/job/application",
+        finalUrl: "https://jobs.ashbyhq.com/acme/job/application",
+        pageTitle: "Ashby form",
+        platform: "ashby",
+        precursorPage: false,
+        precursorSignals: [],
+        precursorLinks: [],
+        followedPrecursorLink: null,
+        fields: [
+          {
+            key: "_systemfield_location",
+            label: "What is your country of residence?",
+            type: "single_select",
+            htmlInputType: "select",
+            semanticKey: "location.country",
+            required: true,
+            options: [],
+            placeholder: null,
+            helpText: null,
+            accept: null,
+            selectorHints: [countryCombobox],
+          },
+        ],
+      },
+      answerPlan: [
+        {
+          fieldKey: "_systemfield_location",
+          fieldLabel: "What is your country of residence?",
+          fieldType: "single_select",
+          question: {
+            label: "What is your country of residence?",
+            inputType: "single_select",
+          },
+          answer: "Turkey",
+          source: "candidate-profile",
+          confidenceLabel: "high",
+          resolutionStrategy: "semantic:location-country",
+        },
+      ],
+      candidateProfile,
+    });
+
+    expect(result.fieldResults[0]).toEqual(
+      expect.objectContaining({
+        status: "failed",
+        details: "Could not select a matching Ashby country option from the combobox.",
+      }),
+    );
+    expect(result.blockingRequiredFields).toEqual(["What is your country of residence?"]);
+    expect(result.advanced).toBe(false);
+    expect(actions).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "click", selector: `button:has-text("Submit")` }),
+      ]),
+    );
+  });
+
   it("selects a self-describing selectable control when the answer is affirmative", async () => {
     const { page, register, actions } = createLocatorRecorder();
     register(`label:has-text("I'm actively looking for a job")`, `button:has-text("Next")`);

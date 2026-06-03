@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { AshbyAdapter } from "../../src/adapters/AshbyAdapter.js";
 import { GenericAdapter } from "../../src/adapters/GenericAdapter.js";
 import { GreenhouseAdapter } from "../../src/adapters/GreenhouseAdapter.js";
 import { LeverAdapter } from "../../src/adapters/LeverAdapter.js";
@@ -33,5 +34,14 @@ describe("resolveAdapter", () => {
     expect(
       resolveAdapter("https://reactjobs.io/react-jobs/robusta/8446-senior-frontend-engineer"),
     ).toBeInstanceOf(ReactJobsAdapter);
+  });
+
+  it("resolves Ashby job detail and application urls", () => {
+    expect(
+      resolveAdapter("https://jobs.ashbyhq.com/ruby-labs/05254f35-7380-4e94-b780-91bde2469db9"),
+    ).toBeInstanceOf(AshbyAdapter);
+    expect(
+      resolveAdapter("https://jobs.ashbyhq.com/ruby-labs/05254f35-7380-4e94-b780-91bde2469db9/application?utm_source=abc"),
+    ).toBeInstanceOf(AshbyAdapter);
   });
 });

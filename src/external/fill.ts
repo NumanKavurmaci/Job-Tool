@@ -229,6 +229,28 @@ function isRadioControl(field: ExternalApplicationField): boolean {
   return field.htmlInputType?.toLowerCase() === "radio";
 }
 
+function isAshbyField(field: ExternalApplicationField): boolean {
+  return (field.selectorHints ?? []).some((hint) => hint.includes("ashby-application-form-field-entry"));
+}
+
+function isAshbyCountryComboboxField(field: ExternalApplicationField): boolean {
+  return isAshbyField(field) && field.semanticKey === "location.country";
+}
+
+function getAshbyOptionAliases(answer: string): string[] {
+  const normalized = answer.trim();
+  if (!normalized) {
+    return [];
+  }
+
+  const aliases = [normalized];
+  if (/^(turkey|turkiye|türkiye)$/i.test(normalized)) {
+    aliases.push("T\u00fcrkiye", "Turkiye", "Turkey");
+  }
+
+  return [...new Set(aliases)];
+}
+
 /* c8 ignore start */
 async function getLocatorControlKind(
   locator: Awaited<ReturnType<typeof findFirstLocator>>,
@@ -341,8 +363,20 @@ function normalizeUrlAnswer(answer: string): string {
   }
 }
 
-async function clickVisibleOption(page: Page, answer: string): Promise<boolean> {
+async function clickVisibleOption(
+  page: Page,
+  answer: string,
+  field?: ExternalApplicationField,
+): Promise<boolean> {
+  const scopedSelectors = field?.label
+    ? [
+        `.ashby-application-form-field-entry:has(.ashby-application-form-question-title:has-text("${escapeAttributeValue(field.label)}")) label:has-text("${escapeAttributeValue(answer)}")`,
+        `.ashby-application-form-field-entry:has(.ashby-application-form-question-title:has-text("${escapeAttributeValue(field.label)}")) [role="option"]:has-text("${escapeAttributeValue(answer)}")`,
+        `.ashby-application-form-field-entry:has(.ashby-application-form-question-title:has-text("${escapeAttributeValue(field.label)}")) [class*="option"]:has-text("${escapeAttributeValue(answer)}")`,
+      ]
+    : [];
   const optionSelectors = [
+    ...scopedSelectors,
     `[title="${escapeAttributeValue(answer)}"]`,
     `.list-item:has-text("${escapeAttributeValue(answer)}")`,
     `[role="option"]:has-text("${escapeAttributeValue(answer)}")`,
@@ -360,6 +394,88 @@ async function clickVisibleOption(page: Page, answer: string): Promise<boolean> 
 
   await locator.click();
   return true;
+}
+
+/* c8 ignore start -- browser-context DOM option matching is exercised through Playwright checks */
+async function clickVisibleOptionByNormalizedText(page: Page, answers: string[]): Promise<boolean> {
+  if (typeof (page as Page & { evaluate?: unknown }).evaluate !== "function") {
+    return false;
+  }
+
+  return (page as Page & {
+    evaluate: <T>(callback: (input: { answers: string[] }) => T, input: { answers: string[] }) => Promise<T>;
+  }).evaluate(({ answers: optionAnswers }) => {
+    const normalize = (value: unknown) =>
+      String(value ?? "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase();
+    const expected = new Set(optionAnswers.map(normalize).filter(Boolean));
+    const candidates = Array.from(
+      (globalThis as {
+        document?: { querySelectorAll?: (selector: string) => Iterable<unknown> };
+      }).document?.querySelectorAll?.("[role='option'], [class*='result'], [class*='option'], li") ?? [],
+    );
+    for (const candidate of candidates) {
+      const element = candidate as { textContent?: string | null; click?: () => void };
+      const text = normalize(element.textContent);
+      if (!text || !expected.has(text)) {
+        continue;
+      }
+      element.click?.();
+      return true;
+    }
+
+    return false;
+  }, { answers }).catch(() => false);
+}
+/* c8 ignore stop */
+
+async function selectAshbyComboboxOption(
+  page: Page,
+  field: ExternalApplicationField,
+  answer: string,
+): Promise<boolean> {
+  const key = escapeAttributeValue(field.key);
+  const label = escapeAttributeValue(field.label);
+  const scopedEntries = [
+    `.ashby-application-form-field-entry[data-field-path="${key}"]`,
+    `.ashby-application-form-field-entry:has(.ashby-application-form-question-title:has-text("${label}"))`,
+  ];
+  const combobox = await findFirstLocator(
+    page,
+    scopedEntries.flatMap((entry) => [
+      `${entry} input[role="combobox"]`,
+      `${entry} input[aria-autocomplete="list"]`,
+      `${entry} [role="combobox"]`,
+    ]),
+  );
+  if (!combobox) {
+    return false;
+  }
+
+  const aliases = getAshbyOptionAliases(answer);
+  for (const alias of aliases) {
+    await combobox.click().catch(() => undefined);
+    await combobox.fill(alias);
+    await page.waitForTimeout(900);
+
+    const clickedNormalizedOption = await clickVisibleOptionByNormalizedText(page, aliases);
+    if (clickedNormalizedOption === true) {
+      return true;
+    }
+
+    for (const optionAlias of aliases) {
+      const clickedOption = await clickVisibleOption(page, optionAlias, field).catch(() => false);
+      if (clickedOption) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 async function selectNativeOption(
@@ -480,6 +596,7 @@ async function fillSingleField(
         const clickedOption = await clickVisibleOption(
           page,
           booleanAnswer.matchedOption ?? answer,
+          field,
         ).catch(() => false);
 
         if (!clickedOption) {
@@ -536,7 +653,7 @@ async function fillSingleField(
       }
 
       if (isRadioControl(field) || controlKind?.inputType === "radio") {
-        const clickedOption = await clickVisibleOption(page, answer).catch(() => false);
+        const clickedOption = await clickVisibleOption(page, answer, field).catch(() => false);
         if (!clickedOption) {
           return {
             fieldKey: field.key,
@@ -555,6 +672,20 @@ async function fillSingleField(
         };
       }
       /* c8 ignore stop */
+
+      if (isAshbyCountryComboboxField(field)) {
+        const selectedAshbyOption = await selectAshbyComboboxOption(page, field, answer).catch(() => false);
+        await locator.blur().catch(() => undefined);
+        return {
+          fieldKey: field.key,
+          fieldLabel: field.label,
+          required: field.required,
+          status: selectedAshbyOption ? "filled" : "failed",
+          details: selectedAshbyOption
+            ? "Selected an Ashby country option from the combobox."
+            : "Could not select a matching Ashby country option from the combobox.",
+        };
+      }
 
       if (isSelfDescribingSelectable(field)) {
         const booleanLike = normalizeBooleanAnswer(answer, ["Yes", "No"]);
@@ -577,7 +708,7 @@ async function fillSingleField(
       const selectedNativeOption = await selectNativeOption(locator, answer).catch(() => false);
       const clickedOption = selectedNativeOption
         ? false
-        : await clickVisibleOption(page, answer).catch(() => false);
+        : await clickVisibleOption(page, answer, field).catch(() => false);
       const clickedLabelControl =
         selectedNativeOption || clickedOption || !isSelfDescribingSelectable(field)
           ? false
@@ -638,7 +769,7 @@ async function fillSingleField(
       ]);
       const selectedCityOption = selectedAutocompleteContainer
         ? await selectedAutocompleteContainer.click().then(() => true).catch(() => false)
-        : await clickVisibleOption(page, fillValue).catch(() => false);
+        : await clickVisibleOption(page, fillValue, field).catch(() => false);
       if (!selectedCityOption) {
         await locator.press("ArrowDown").catch(() => undefined);
         await locator.press("Enter").catch(() => undefined);

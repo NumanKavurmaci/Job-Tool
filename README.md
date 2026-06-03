@@ -33,7 +33,7 @@ That lets the system decide whether a role is a fit, explain why, prepare applic
 - site-feedback capture and one-shot AI correction retries
 - `explore` mode for single-job recommendation snapshots
 - `explore-batch` mode for collection-based recommendation discovery
-- `apply` mode for LinkedIn, ReactJobs, and external application pages
+- `apply` mode for LinkedIn, ReactJobs, Ashby, and external application pages
 - Prisma + SQLite persistence
 - structured logs, JSON artifacts, and review history tracking
 - test coverage with focused local and integration checks
@@ -79,6 +79,8 @@ npm run dev -- apply-dry-run "https://www.linkedin.com/jobs/view/123"
 npm run dev -- apply "https://www.linkedin.com/jobs/view/123"
 npm run dev -- apply-dry-run "https://www.linkedin.com/jobs/collections/hiring-in-network" --count 10
 npm run dev -- apply-batch "https://www.linkedin.com/jobs/collections/hiring-in-network" --count 10
+npm run dev -- apply-dry-run "https://jobs.ashbyhq.com/ruby-labs/05254f35-7380-4e94-b780-91bde2469db9"
+npm run dev -- apply-dry-run "https://jobs.ashbyhq.com/ruby-labs?workplaceType=Remote" --count 5
 npm run dev -- apply-dry-run "https://example.com/apply"
 npm run dev -- apply "https://example.com/apply"
 ```
@@ -94,14 +96,15 @@ npm run dev -- apply-dry-run "https://reactjobs.io/jobs/nextjs/remote?search=Nex
 ```
 
 ReactJobs result pages are expanded into visible detail URLs before scoring and applying.
+Ashby job detail pages are extracted directly, and Ashby listing pages are expanded into visible job detail URLs before scoring and applying.
 
 ## 🧠 Command Guide
 
 - `dashboard`: prints a dashboard snapshot from persisted recommendations, reviews, and firm stats
 - `explore`: evaluates one job and saves a recommendation snapshot without applying
 - `explore-batch`: evaluates jobs from a LinkedIn collection and saves recommendation records without entering any apply flow
-- `apply`: applies through LinkedIn, ReactJobs detail pages, or direct external application pages
-- `apply-batch`: applies from supported LinkedIn collections or ReactJobs result pages
+- `apply`: applies through LinkedIn, ReactJobs detail pages, Ashby job pages, or direct external application pages
+- `apply-batch`: applies from supported LinkedIn collections, ReactJobs result pages, or Ashby listing pages
 
 ### Batch flags
 

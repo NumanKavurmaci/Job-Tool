@@ -51,6 +51,31 @@ function createDeps(): AppDeps {
       ],
       pagesVisited: 1,
     })),
+    extractAshbyListings: vi.fn(async () => [
+      {
+        url: "https://jobs.ashbyhq.com/ruby-labs/19d7a5d4-4938-4b4e-80d6-42d475c72393",
+        title: "AI Engineer",
+        company: "Ruby Labs",
+        location: "Turkey",
+        employmentType: "Full time",
+        workplaceType: "Remote",
+        department: "Engineering",
+      },
+    ]),
+    extractAshbyListingsBatch: vi.fn(async () => ({
+      listings: [
+        {
+          url: "https://jobs.ashbyhq.com/ruby-labs/19d7a5d4-4938-4b4e-80d6-42d475c72393",
+          title: "AI Engineer",
+          company: "Ruby Labs",
+          location: "Turkey",
+          employmentType: "Full time",
+          workplaceType: "Remote",
+          department: "Engineering",
+        },
+      ],
+      pagesVisited: 1,
+    })),
     createBatchJobEvaluator: vi.fn(() => async () => ({
       shouldApply: true,
       finalDecision: "APPLY",
@@ -143,6 +168,39 @@ describe("apply flows", () => {
       expect.objectContaining({
         preloadedReviews: expect.any(Map),
       }),
+    );
+  });
+
+  it("expands Ashby listing pages and processes direct Ashby applications", async () => {
+    const deps = createDeps();
+    const ashbyUrl = "https://jobs.ashbyhq.com/ruby-labs/19d7a5d4-4938-4b4e-80d6-42d475c72393";
+
+    const result = await runApplyBatchFlow(
+      {
+        mode: "apply-batch",
+        url: "https://jobs.ashbyhq.com/ruby-labs?workplaceType=Remote",
+        resumePath: "./user/resume.pdf",
+        count: 1,
+        disableAiEvaluation: true,
+        scoreThreshold: 40,
+        scoringMode: "local",
+        dryRun: true,
+      },
+      deps,
+    );
+
+    expect(deps.extractAshbyListingsBatch).toHaveBeenCalledWith(
+      {},
+      "https://jobs.ashbyhq.com/ruby-labs?workplaceType=Remote",
+      1,
+    );
+    expect(externalMocks.dryRun).toHaveBeenCalledWith(
+      expect.objectContaining({ url: ashbyUrl, dryRun: true }),
+      deps,
+      { originalJobUrl: ashbyUrl },
+    );
+    expect(result.applyBatch.stopReason).toBe(
+      "Processed 1 Ashby application(s), skipped 0, and failed 0.",
     );
   });
 

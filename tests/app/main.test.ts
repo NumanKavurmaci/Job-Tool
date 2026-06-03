@@ -2008,7 +2008,7 @@ describe("phase 5 index flows", () => {
     );
 
     expect(mocks.checkLocalLlmConnectionMock).not.toHaveBeenCalled();
-    expect(mocks.withPageMock).toHaveBeenCalledTimes(1);
+    expect(mocks.withPageMock).toHaveBeenCalledTimes(2);
   });
 
   it("runs explore-batch without entering any apply flow and persists recommendations", async () => {
