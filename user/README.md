@@ -1,8 +1,20 @@
-# User Directory
+# 🔐 User Directory
 
-- `profile.json`: local personal candidate profile used by the app. Keep this file private.
-- `profile.example.json`: generic starter profile for new users.
-- `resume.pdf` or another supported resume file: optional local default resume used by CLI commands when `--resume` is omitted.
+This folder is for local candidate data. Keep personal files private and out of Git.
 
-The loader reads `user/profile.json` first. If it is missing, it falls back to
-`user/profile.example.json`, and only then to the built-in generic defaults in code.
+## 📁 Files
+
+| File | Purpose | Commit? |
+| --- | --- | --- |
+| `profile.example.json` | Generic starter profile for new users and tests. | Yes |
+| `profile.json` | Your personal candidate profile override. | No |
+| `resume.pdf` | Optional default resume used by commands when `--resume` is omitted. | No |
+| Other resume files | Alternate local resumes for experiments. | No |
+
+## 🔎 Load Order
+
+1. `user/profile.json`
+2. `user/profile.example.json`
+3. built-in generic defaults
+
+Use `profile.example.json` as the shape reference, then create a local `profile.json` with your own data.

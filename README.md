@@ -1,203 +1,161 @@
-# Job Tool
+# 🚀 Job Tool
 
-🚀 `Job Tool` is a TypeScript-powered job evaluation and application workflow engine.
+> A local-first TypeScript engine for evaluating jobs, scoring fit, preparing application answers, and running controlled apply workflows.
 
-It helps you:
+[![TypeScript](https://img.shields.io/badge/TypeScript-engine-3178c6)](https://www.typescriptlang.org/)
+[![Prisma](https://img.shields.io/badge/Prisma-SQLite-2d3748)](https://www.prisma.io/)
+[![Playwright](https://img.shields.io/badge/Playwright-browser%20automation-45ba4b)](https://playwright.dev/)
+[![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)](./LICENSE)
 
-- 🔎 read and parse job postings
-- 🧠 score jobs against a reusable candidate profile
-- ⭐ explore LinkedIn collections and save recommendations
-- ✍️ prepare answers for application questions
-- 🛡️ automate LinkedIn and external apply flows with safety gates
+Job Tool is the automation engine behind the Job Tool workspace. It reads job postings, compares them against a candidate profile, scores the match, records the decision trail, and can continue into LinkedIn Easy Apply or external application flows when configured.
 
-> Source-available under the [PolyForm Noncommercial 1.0.0](./LICENSE) license. Personal and non-commercial use are allowed. Commercial use is not allowed.
+The companion UI lives in the sibling `Job Tool Dashboard` project.
 
 ## ✨ What It Does
 
-Job Tool combines three inputs:
+| Area | Purpose |
+| --- | --- |
+| Job extraction | Reads LinkedIn, ReactJobs, Ashby, Greenhouse, Lever, Workable-style, and generic job/application pages. |
+| Scoring | Uses deterministic policy checks or a configured LLM scoring mode. |
+| Candidate context | Builds and reuses a local candidate profile and resume-derived facts. |
+| Apply automation | Supports LinkedIn Easy Apply and external apply handoff flows, including dry runs. |
+| Persistence | Writes review history, recommendations, decisions, logs, and JSON artifacts. |
+| Observability | Produces structured logs and run reports that the dashboard can read live. |
 
-- job posting data
-- a reusable candidate profile
-- resume-based candidate information
+## 🧭 Workspace Shape
 
-That lets the system decide whether a role is a fit, explain why, prepare application answers, and only continue when the configured rules allow it.
+```text
+Desktop/
+  Job Tool/             # engine, CLI, database, logs, artifacts
+  Job Tool Dashboard/   # Next.js UI connected through ENGINE_ROOT
+```
 
-## 🧩 Highlights
+The engine is intentionally local-first. Secrets, browser sessions, personal profile data, resumes, logs, and generated artifacts stay in your machine-local workspace.
 
-- adapter-based job extraction
-- OpenAI and local LM Studio support
-- profile-aware scoring and policy filtering
-- resume ingestion and candidate master profile building
-- LinkedIn Easy Apply question classification and answer preparation
-- external application discovery, answer planning, and form filling
-- site-feedback capture and one-shot AI correction retries
-- `explore` mode for single-job recommendation snapshots
-- `explore-batch` mode for collection-based recommendation discovery
-- `apply` mode for LinkedIn, ReactJobs, Ashby, and external application pages
-- Prisma + SQLite persistence
-- structured logs, JSON artifacts, and review history tracking
-- test coverage with focused local and integration checks
-
-## 🛠️ Quick Start
-
-### 1. Install dependencies
+## ⚡ Quick Start
 
 ```bash
 npm install
-```
-
-### 2. Create your local environment file
-
-```bash
 cp .env.example .env
-```
-
-### 3. Generate Prisma client and apply the schema
-
-```bash
 npx prisma generate
 npx prisma migrate dev
+npm run type-check
 ```
 
-### 4. Run a first command
+Then run a first read-only command:
 
 ```bash
-npm run dev -- decide "https://job-link-here"
-```
-
-## ⚡ Common Commands
-
-```bash
-npm run dev -- decide "https://job-link-here"
-npm run dev -- explore "https://job-link-here"
 npm run dev -- dashboard --limit 5
-npm run dev -- explore-batch "https://www.linkedin.com/jobs/collections/top-applicant" --count 25
-npm run dev -- score "https://job-link-here"
-npm run dev -- build-profile --resume "./cv.pdf" --linkedin "https://linkedin.com/in/your-handle"
-npm run dev -- answer-questions --resume "./cv.pdf" --questions "./questions.json"
-npm run dev -- apply-dry-run "https://www.linkedin.com/jobs/view/123"
-npm run dev -- apply "https://www.linkedin.com/jobs/view/123"
-npm run dev -- apply-dry-run "https://www.linkedin.com/jobs/collections/hiring-in-network" --count 10
-npm run dev -- apply-batch "https://www.linkedin.com/jobs/collections/hiring-in-network" --count 10
-npm run dev -- apply-dry-run "https://jobs.ashbyhq.com/ruby-labs/05254f35-7380-4e94-b780-91bde2469db9"
-npm run dev -- apply-dry-run "https://jobs.ashbyhq.com/ruby-labs?workplaceType=Remote" --count 5
-npm run dev -- apply-dry-run "https://example.com/apply"
-npm run dev -- apply "https://example.com/apply"
 ```
 
-ReactJobs detail pages can be scored directly, and their Workable application links can use the
-existing external apply flow:
+## 🔧 Environment
 
-```powershell
-npm run dev -- score "https://reactjobs.io/react-jobs/robusta/8446-senior-frontend-engineer-react-nextjs-octopus-by-rtg"
-npm run dev -- apply-dry-run "https://reactjobs.io/react-jobs/robusta/8446-senior-frontend-engineer-react-nextjs-octopus-by-rtg"
-npm run dev -- apply-dry-run "https://apply.workable.com/robusta/j/6AA24D2C5C/apply/?ref=reactjobs.io"
-npm run dev -- apply-dry-run "https://reactjobs.io/jobs/nextjs/remote?search=Nextjs&isRemote=true" --count 5
+Create `.env` from `.env.example`, then fill only the values you need:
+
+```env
+LLM_PROVIDER=local
+LOCAL_LLM_BASE_URL=http://127.0.0.1:1234/v1
+LOCAL_LLM_MODEL=openai/gpt-oss-20b
+DATABASE_URL="file:./dev.db"
+LINKEDIN_SESSION_STATE_PATH=.auth/linkedin-session.json
+LINKEDIN_BROWSER_PROFILE_PATH=.auth/linkedin-profile
 ```
 
-ReactJobs result pages are expanded into visible detail URLs before scoring and applying.
-Ashby job detail pages are extracted directly, and Ashby listing pages are expanded into visible job detail URLs before scoring and applying.
+OpenAI-compatible local providers such as LM Studio work through `LOCAL_LLM_BASE_URL`. The dashboard checks this same configuration when it reports local readiness.
 
-## 🧠 Command Guide
+## 🧪 Common Commands
 
-- `dashboard`: prints a dashboard snapshot from persisted recommendations, reviews, and firm stats
-- `explore`: evaluates one job and saves a recommendation snapshot without applying
-- `explore-batch`: evaluates jobs from a LinkedIn collection and saves recommendation records without entering any apply flow
-- `apply`: applies through LinkedIn, ReactJobs detail pages, Ashby job pages, or direct external application pages
-- `apply-batch`: applies from supported LinkedIn collections, ReactJobs result pages, or Ashby listing pages
+```bash
+# Snapshot persisted data
+npm run dev -- dashboard --limit 10
 
-### Batch flags
+# Evaluate a single job without applying
+npm run dev -- decide "https://www.linkedin.com/jobs/view/123"
+npm run dev -- score "https://www.linkedin.com/jobs/view/123" --scoring ai
+npm run dev -- explore "https://www.linkedin.com/jobs/view/123"
 
-- `--count <number>` controls how many jobs are processed
-- `--score-threshold <number>` controls the minimum score required
-- `--scoring local|ai` selects deterministic local scoring or direct LLM scoring
-- `--disable-ai-evaluation` skips AI evaluation and processes matching jobs directly
+# Evaluate a LinkedIn collection and save recommendations only
+npm run dev -- explore-batch "https://www.linkedin.com/jobs/collections/top-applicant" --count 25 --score-threshold 40 --scoring ai
 
-### Explore flags
+# Dry-run application flows
+npm run dev -- apply "https://www.linkedin.com/jobs/view/123" --dry-run --resume "./user/resume.pdf"
+npm run dev -- apply-batch "https://www.linkedin.com/jobs/collections/easy-apply" --count 25 --dry-run --resume "./user/resume.pdf"
 
-- `--count <number>` controls how many jobs are evaluated
-- `--score-threshold <number>` controls which jobs become recommendations
-- `--scoring local|ai` selects deterministic local scoring or direct LLM scoring
-- `--disable-ai-evaluation` marks discovered jobs as recommended without extraction/scoring
+# Live apply flows
+npm run dev -- apply "https://www.linkedin.com/jobs/view/123" --resume "./user/resume.pdf"
+npm run dev -- apply-batch "https://www.linkedin.com/jobs/collections/easy-apply" --count 25 --score-threshold 40 --resume "./user/resume.pdf" --scoring ai
 
-### Dashboard flags
+# Candidate and answer utilities
+npm run dev -- build-profile --resume "./user/resume.pdf" --linkedin "https://linkedin.com/in/your-handle"
+npm run dev -- answer-questions --resume "./user/resume.pdf" --questions "./questions.json"
+npm run dev -- resume-incomplete --report "./artifacts/batch-runs/latest-apply-batch.json"
+```
 
-- `--limit <number>` controls how many recommendations and recent reviews are shown
+Legacy aliases such as `easy-apply`, `easy-apply-batch`, `easy-apply-dry-run`, `external-apply`, and `external-apply-dry-run` are still supported for older workflows.
 
-### Scoring modes
+## 🎛️ Modes At A Glance
 
-- `--scoring local` uses the built-in deterministic scorer
-- `--scoring ai` asks the configured LLM to produce the job score directly
-- legacy `--ai-score-adjustment` still maps to `--scoring ai` for compatibility
+| Mode | Applies? | Writes DB? | Best for |
+| --- | --- | --- | --- |
+| `dashboard` | No | No | CLI summary of persisted data. |
+| `decide` / `score` | No | Yes | Single-job fit checks. |
+| `explore` | No | Yes | Saving one recommendation. |
+| `explore-batch` | No | Yes | Building a recommendation queue from a collection. |
+| `apply --dry-run` | No final submit | Yes | Rehearsing forms and answer logic. |
+| `apply` | Can submit | Yes | Applying to one approved job. |
+| `apply-batch --dry-run` | No final submit | Yes | Batch rehearsal. |
+| `apply-batch` | Can submit | Yes | Batch apply with scoring gates. |
 
-### Apply behavior
+## 🔄 Engine To Dashboard Flow
 
-- `apply-dry-run` explores the target, plans answers, fills what it can, captures feedback, and stops before final submit
-- `apply` follows the same flow but may trigger the final submit action when the form is ready
+```mermaid
+flowchart LR
+  CLI["Job Tool CLI"] --> DB["prisma/dev.db"]
+  CLI --> Logs["logs/app.log"]
+  CLI --> Artifacts["artifacts/*.json"]
+  Dashboard["Job Tool Dashboard"] --> DB
+  Dashboard --> Logs
+  Dashboard --> Artifacts
+```
 
-### Legacy aliases
-
-- `easy-apply`
-- `easy-apply-batch`
-- `easy-apply-dry-run`
-- `external-apply`
-- `external-apply-dry-run`
+The dashboard does not replace the engine. It reads the engine's database/logs/artifacts, starts engine commands through local API routes, and follows progress from the same persisted outputs.
 
 ## ✅ Testing
 
-### Full default suite
-
 ```bash
+npm run type-check
 npm test
 ```
 
-### Focused local checks
-
-```bash
-npm run type-check
-npx vitest run tests/linkedin/easyApply.test.ts
-npx vitest run tests/external/fill.test.ts
-npx vitest run tests/questions/aiCorrection.test.ts
-```
-
-### Live LM Studio tests
+Live provider-backed tests are separate:
 
 ```bash
 npm run test:local-llm
 ```
 
-The default suite does not require LM Studio or OpenAI access.
+The default suite is designed to run without LM Studio, OpenAI, or a live LinkedIn session.
 
-## 🔐 LinkedIn Notes
+## 🔐 Local Files
 
-- saved browser session state is used from `.auth/linkedin-session.json`
-- checkpoint or security pages stop the run with a specific auth error
-- `LINKEDIN_MANUAL_AUTH_WINDOW_MS` controls the manual recovery window and defaults to 2 minutes
-- dry run always stops before final submit
-- site-visible feedback can trigger a one-shot AI repair attempt
+| Path | Purpose |
+| --- | --- |
+| `user/profile.example.json` | Tracked starter profile. |
+| `user/profile.json` | Local personal profile override. Ignored by Git. |
+| `user/resume.pdf` | Optional default resume input. Ignored by Git. |
+| `.auth/linkedin-session.json` | Local browser session state. Ignored by Git. |
+| `.auth/linkedin-profile/` | Persistent Playwright profile. Ignored by Git. |
+| `logs/app.log` | Structured runtime log. |
+| `artifacts/` | JSON reports, screenshots, and run diagnostics. |
 
 ## 📚 Documentation
 
-The docs in [docs/README.md](./docs/README.md) are the source of truth for navigation and responsibility mapping.
-
-### User-local profile files
-
-- [user/profile.example.json](./user/profile.example.json): tracked starter profile
-- `user/profile.json`: local personal override loaded first when present
-- `user/resume.pdf`: optional default resume file
-
-### AI-first navigation docs
-
-- [docs/README.md](./docs/README.md)
-- [docs/ROOT_FILE_MAP.md](./docs/ROOT_FILE_MAP.md)
-- [docs/SOURCE_FILE_MAP.md](./docs/SOURCE_FILE_MAP.md)
-- [docs/FUNCTION_INDEX.md](./docs/FUNCTION_INDEX.md)
-- [docs/TASK_GUIDE.md](./docs/TASK_GUIDE.md)
-- [docs/TEST_FILE_MAP.md](./docs/TEST_FILE_MAP.md)
-- [docs/PRISMA_FILE_MAP.md](./docs/PRISMA_FILE_MAP.md)
+- [docs/README.md](./docs/README.md): documentation entrypoint
+- [docs/TASK_GUIDE.md](./docs/TASK_GUIDE.md): where to start for common changes
+- [docs/SOURCE_FILE_MAP.md](./docs/SOURCE_FILE_MAP.md): source ownership map
+- [docs/FUNCTION_INDEX.md](./docs/FUNCTION_INDEX.md): function-level index
+- [docs/TEST_STRATEGY.md](./docs/TEST_STRATEGY.md): test coverage strategy
+- [example-scripts.md](./example-scripts.md): copyable PowerShell `tsx` wrappers
 
 ## 📄 License
 
-This project is source-available under the [PolyForm Noncommercial 1.0.0](./LICENSE) license.
-You can inspect, study, and use it for personal or other non-commercial purposes.
-Commercial use is not permitted without separate permission from the copyright holder.
+Source-available under the [PolyForm Noncommercial 1.0.0](./LICENSE) license. Personal and non-commercial use are allowed. Commercial use requires separate permission.
