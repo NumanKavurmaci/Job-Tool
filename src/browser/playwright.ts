@@ -19,9 +19,11 @@ interface BrowserRuntime {
 
 function getLaunchOptions() {
   const slowMo = Number.parseInt(process.env.PLAYWRIGHT_SLOW_MO_MS ?? "", 10);
+  const startMinimized = process.env.PLAYWRIGHT_START_MINIMIZED !== "false";
 
   return {
     headless: false,
+    ...(startMinimized ? { args: ["--start-minimized"] } : {}),
     ...(Number.isFinite(slowMo) && slowMo > 0 ? { slowMo } : {}),
   };
 }
@@ -124,7 +126,11 @@ export async function withPage<T>(
 
   const runtime = await createBrowserRuntime(options);
   const page = await runtime.context.newPage();
-  if ("bringToFront" in page && typeof page.bringToFront === "function") {
+  if (
+    process.env.PLAYWRIGHT_BRING_TO_FRONT === "true" &&
+    "bringToFront" in page &&
+    typeof page.bringToFront === "function"
+  ) {
     await page.bringToFront().catch(() => undefined);
   }
   logger.info(

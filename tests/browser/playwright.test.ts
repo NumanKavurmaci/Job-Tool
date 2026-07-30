@@ -40,6 +40,8 @@ describe("withPage", () => {
     loggerWarnMock.mockReset();
     loggerErrorMock.mockReset();
     delete process.env.PLAYWRIGHT_SLOW_MO_MS;
+    delete process.env.PLAYWRIGHT_START_MINIMIZED;
+    delete process.env.PLAYWRIGHT_BRING_TO_FRONT;
   });
 
   it("opens a browser, creates a page, and closes it after success", async () => {
@@ -61,7 +63,7 @@ describe("withPage", () => {
       return "done";
     });
 
-    expect(launchMock).toHaveBeenCalledWith({ headless: false });
+    expect(launchMock).toHaveBeenCalledWith({ headless: false, args: ["--start-minimized"] });
     expect(newContextMock).toHaveBeenCalledWith({});
     expect(result).toBe("done");
     expect(closeMock).toHaveBeenCalledTimes(1);
@@ -141,6 +143,7 @@ describe("withPage", () => {
 
       expect(launchPersistentContextMock).toHaveBeenCalledWith(persistentProfilePath, {
         headless: false,
+        args: ["--start-minimized"],
       });
       expect(launchMock).not.toHaveBeenCalled();
       expect(storageStateMock).toHaveBeenCalledWith({
@@ -168,7 +171,11 @@ describe("withPage", () => {
     const { withPage } = await import("../../src/browser/playwright.js");
     await withPage(async () => "done");
 
-    expect(launchMock).toHaveBeenCalledWith({ headless: false, slowMo: 250 });
+    expect(launchMock).toHaveBeenCalledWith({
+      headless: false,
+      args: ["--start-minimized"],
+      slowMo: 250,
+    });
   });
 
   it("closes the browser when the callback throws", async () => {

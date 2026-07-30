@@ -441,7 +441,9 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
 
       if (popupNavigated && !this.isBlankPage(popup)) {
         this.page = popup;
-        await this.page.bringToFront().catch(() => undefined);
+        if (process.env.PLAYWRIGHT_BRING_TO_FRONT === "true") {
+          await this.page.bringToFront().catch(() => undefined);
+        }
       } else {
         await popup.close().catch(() => undefined);
         this.page = originalPage;
@@ -630,7 +632,9 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
   }
 
   async confirmExternalApplicationFinished(): Promise<boolean> {
-    await this.page.bringToFront().catch(() => undefined);
+    if (process.env.PLAYWRIGHT_BRING_TO_FRONT === "true") {
+      await this.page.bringToFront().catch(() => undefined);
+    }
     const prompt = this.page.locator(EXTERNAL_APPLICATION_FINISHED_PROMPT_SELECTOR).first();
     if ((await prompt.count().catch(() => 0)) === 0) {
       return false;
