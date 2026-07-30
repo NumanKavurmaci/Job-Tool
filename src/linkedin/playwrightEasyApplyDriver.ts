@@ -10,6 +10,13 @@ import type {
 } from "./easyApply.js";
 import { chooseRadioValue } from "./easyApply.js";
 import type { ResolvedAnswer } from "../answers/types.js";
+
+const LINKEDIN_JOB_CARD_SELECTOR = [
+  ".jobs-search-results__list-item",
+  "li.scaffold-layout__list-item",
+  "li[data-occludable-job-id]",
+].join(", ");
+const LINKEDIN_JOB_RESULT_SELECTOR = `${LINKEDIN_JOB_CARD_SELECTOR}, a[href*='/jobs/view/']`;
 import { createEmptySiteFeedbackSnapshot, type SiteFeedbackSnapshot } from "../browser/siteFeedback.js";
 import {
   buildLinkedInJobSurfaceSelector,
@@ -474,6 +481,11 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
 
   async openCollection(url: string): Promise<void> {
     await this.open(url);
+    await this.page
+      .locator(LINKEDIN_JOB_RESULT_SELECTOR)
+      .first()
+      .waitFor({ state: "attached", timeout: 10_000 })
+      .catch(() => undefined);
   }
 
   async ensureAuthenticated(url: string): Promise<void> {
@@ -637,15 +649,24 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
   }
 
   async collectVisibleJobs() {
-    const cards = await this.page.locator(".jobs-search-results__list-item, li.scaffold-layout__list-item")
+    const cards = await this.page.locator(LINKEDIN_JOB_RESULT_SELECTOR)
       .evaluateAll((elements) =>
         elements.map((element) => {
           const htmlElement = element as any;
-          const anchor = htmlElement.querySelector(
-            "a[href*='/jobs/view/'], .job-card-container__link, .job-card-list__title",
-          );
+          const anchor =
+            htmlElement.matches?.("a[href*='/jobs/view/']")
+              ? htmlElement
+              : htmlElement.querySelector(
+                  "a[href*='/jobs/view/'], .job-card-container__link, .job-card-list__title",
+                );
           const href = anchor?.getAttribute("href") ?? "";
-          const text = (htmlElement.textContent ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+          const card = htmlElement.closest?.(
+            ".jobs-search-results__list-item, li.scaffold-layout__list-item, li[data-occludable-job-id]",
+          );
+          const text = (card?.textContent ?? htmlElement.textContent ?? "")
+            .replace(/\s+/g, " ")
+            .trim()
+            .toLowerCase();
           return {
             href,
             alreadyApplied: text.includes("applied") || text.includes("see application"),

@@ -233,6 +233,44 @@ describe("PlaywrightLinkedInEasyApplyDriver", () => {
     await page.close();
   });
 
+  it("collects jobs from current LinkedIn search result cards", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <ul>
+        <li data-occludable-job-id="4443235445">
+          <a href="https://www.linkedin.com/jobs/view/4443235445/?trackingId=test">Software Engineer</a>
+        </li>
+        <li data-occludable-job-id="4444570774">Applied
+          <a href="https://www.linkedin.com/jobs/view/4444570774/">Software Specialist</a>
+        </li>
+      </ul>
+    `);
+
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page);
+
+    await expect(driver.collectVisibleJobs()).resolves.toEqual([
+      { url: "https://www.linkedin.com/jobs/view/4443235445", alreadyApplied: false },
+      { url: "https://www.linkedin.com/jobs/view/4444570774", alreadyApplied: true },
+    ]);
+
+    await page.close();
+  });
+
+  it("collects a job when LinkedIn exposes only its job link", async () => {
+    const page = await browser.newPage();
+    await page.setContent(
+      '<a href="https://www.linkedin.com/jobs/view/4443235445/?trackingId=test">Software Engineer</a>',
+    );
+
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page);
+
+    await expect(driver.collectVisibleJobs()).resolves.toEqual([
+      { url: "https://www.linkedin.com/jobs/view/4443235445", alreadyApplied: false },
+    ]);
+
+    await page.close();
+  });
+
   it("continues past the job search safety reminder modal instead of stopping on it", async () => {
     const page = await browser.newPage();
     await page.setContent(linkedInSafetyReminderModalHtml);
