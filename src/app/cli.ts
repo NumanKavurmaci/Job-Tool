@@ -3,7 +3,7 @@ import {
   DEFAULT_LINKEDIN_EASY_APPLY_URL,
   DEFAULT_RESUME_PATH,
   resolveLinkedInSingleJobUrl,
-  isLinkedInCollectionUrl,
+  isLinkedInBatchUrl,
 } from "./constants.js";
 import { isReactJobsListingUrl } from "../reactjobs/listing.js";
 import { isAshbyListingUrl } from "../ashby/listing.js";
@@ -383,7 +383,7 @@ function looksLikeImplicitLinkedInBatch(args: {
   return (
     args.dryRun ||
     args.hasCountFlag ||
-    isLinkedInCollectionUrl(args.positionalArgs[0] ?? DEFAULT_LINKEDIN_EASY_APPLY_URL) ||
+    isLinkedInBatchUrl(args.positionalArgs[0] ?? DEFAULT_LINKEDIN_EASY_APPLY_URL) ||
     args.originalCommand === "easy-apply-dry-run" ||
     args.originalCommand === "apply-dry-run"
   );
@@ -457,17 +457,17 @@ function parseExploreBatchCommand(args: {
 }
 
 function assertLinkedInCollectionMode(mode: LinkedInBatchMode, url: string) {
-  if (!isLinkedInCollectionUrl(url)) {
+  if (!isLinkedInBatchUrl(url)) {
     throw new Error(
-      `${mode} requires a LinkedIn collection URL or the default collection.`,
+      `${mode} requires a LinkedIn collection or search-results URL, or the default collection.`,
     );
   }
 }
 
 function assertSupportedApplyBatchUrl(url: string) {
-  if (!isLinkedInCollectionUrl(url) && !isReactJobsListingUrl(url) && !isAshbyListingUrl(url)) {
+  if (!isLinkedInBatchUrl(url) && !isReactJobsListingUrl(url) && !isAshbyListingUrl(url)) {
     throw new Error(
-      "apply-batch requires a supported collection URL (LinkedIn, ReactJobs, or Ashby).",
+      "apply-batch requires a supported listing URL (LinkedIn collection/search-results, ReactJobs, or Ashby).",
     );
   }
 }
@@ -483,7 +483,7 @@ function parseExplicitLinkedInSingleCommand(args: {
   if (!normalizedUrl) {
     throw new Error(`--url is required for ${args.mode}.`);
   }
-  if (isLinkedInCollectionUrl(normalizedUrl)) {
+  if (isLinkedInBatchUrl(normalizedUrl)) {
     throw new Error(
       `${args.mode} requires a single LinkedIn job URL, not a collection URL.`,
     );
@@ -506,7 +506,7 @@ function parseLinkedInFamilyCommand(args: {
     batchShape.count === 1 ? resolveLinkedInSingleJobUrl(batchShape.url) : batchShape.url;
 
   if (
-    isLinkedInCollectionUrl(normalizedUrl) ||
+    isLinkedInBatchUrl(normalizedUrl) ||
     isReactJobsListingUrl(normalizedUrl) ||
     isAshbyListingUrl(normalizedUrl) ||
     batchShape.count > 1

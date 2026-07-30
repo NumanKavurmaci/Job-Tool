@@ -11,9 +11,14 @@ describe("app constants", () => {
     const module = await import("../../src/app/constants.js");
 
     expect(
-      module.isLinkedInCollectionUrl("https://www.linkedin.com/jobs/collections/recommended"),
+      module.isLinkedInBatchUrl("https://www.linkedin.com/jobs/collections/recommended"),
     ).toBe(true);
-    expect(module.isLinkedInCollectionUrl("https://example.com/jobs/collections/recommended")).toBe(
+    expect(
+      module.isLinkedInBatchUrl(
+        "https://www.linkedin.com/jobs/search-results/?keywords=full-time%20Software%20Engineer%20or%20Software%20Specialist%2C%20remote&origin=PREFERENCES_LANDING&originToLandingJobPostings=4443235445%2C4444570774%2C4444155287&geoId=102105699",
+      ),
+    ).toBe(true);
+    expect(module.isLinkedInBatchUrl("https://example.com/jobs/collections/recommended")).toBe(
       false,
     );
     expect(

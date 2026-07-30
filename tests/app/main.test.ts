@@ -644,7 +644,7 @@ describe("phase 5 index flows", () => {
     });
     expect(() =>
       module.parseCliArgs(["easy-apply-batch", "https://www.linkedin.com/jobs/view/1"]),
-    ).toThrow("easy-apply-batch requires a LinkedIn collection URL");
+    ).toThrow("easy-apply-batch requires a LinkedIn collection or search-results URL");
     expect(() => module.parseCliArgs(["easy-apply", "--dry-run", "--count", "0"])).toThrow(
       "--count must be a positive integer.",
     );

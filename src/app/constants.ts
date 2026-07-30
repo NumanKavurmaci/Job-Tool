@@ -18,8 +18,16 @@ export const LINKEDIN_EVALUATION_SESSION_OPTIONS = {
   persistStorageState: true,
 } as const;
 
-export function isLinkedInCollectionUrl(url: string): boolean {
-  return /linkedin\.com\/jobs\/collections\//i.test(url);
+export function isLinkedInBatchUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const isLinkedInHost =
+      /linkedin\.com$/i.test(parsed.hostname) || /\.linkedin\.com$/i.test(parsed.hostname);
+
+    return isLinkedInHost && /^\/jobs\/(collections|search-results)(\/|$)/i.test(parsed.pathname);
+  } catch {
+    return false;
+  }
 }
 
 export function getLinkedInCurrentJobId(url: string): string | null {

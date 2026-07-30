@@ -270,16 +270,30 @@ describe("app cli", () => {
     });
   });
 
+  it("accepts LinkedIn search-results URLs for batch commands", () => {
+    const url =
+      "https://www.linkedin.com/jobs/search-results/?keywords=full-time%20Software%20Engineer%20or%20Software%20Specialist%2C%20remote&origin=PREFERENCES_LANDING&originToLandingJobPostings=4443235445%2C4444570774%2C4444155287&geoId=102105699";
+
+    expect(parseCliArgs(["easy-apply-batch", url])).toMatchObject({
+      mode: "easy-apply-batch",
+      url,
+    });
+  });
+
   it("rejects missing or invalid URLs for explicit apply commands", () => {
     expect(() => parseCliArgs(["external-apply"])).toThrow("--url is required for external-apply.");
     expect(() => parseCliArgs(["apply-batch", "https://www.linkedin.com/jobs/view/1"])).toThrow(
-      "apply-batch requires a supported collection URL (LinkedIn, ReactJobs, or Ashby).",
+      "apply-batch requires a supported listing URL (LinkedIn collection/search-results, ReactJobs, or Ashby).",
     );
     expect(() =>
       parseCliArgs(["easy-apply-batch", "https://www.linkedin.com/jobs/view/1"]),
-    ).toThrow("easy-apply-batch requires a LinkedIn collection URL or the default collection.");
+    ).toThrow(
+      "easy-apply-batch requires a LinkedIn collection or search-results URL, or the default collection.",
+    );
     expect(() =>
       parseCliArgs(["explore-batch", "https://www.linkedin.com/jobs/view/1"]),
-    ).toThrow("explore-batch requires a LinkedIn collection URL or the default collection.");
+    ).toThrow(
+      "explore-batch requires a LinkedIn collection or search-results URL, or the default collection.",
+    );
   });
 });
