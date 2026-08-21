@@ -1136,7 +1136,10 @@ describe("LinkedInAdapter", () => {
     expect(result.company).toBe("Wide and Wise");
     expect(result.companyLinkedinUrl).toBe("https://www.linkedin.com/company/wideandwise/life");
     expect(result.companyLogoUrl).toBe(linkedInAlreadyAppliedFixture.companyLogoUrl);
+    expect(result.alreadyApplied).toBe(true);
+    expect(result.applicationType).toBe("unknown");
     expect(result.location).toBe("TÃ¼rkiye");
+    expect(result.rawText).toContain("Application Status: already_applied");
     expect(result.rawText).toContain("Workplace Type: remote");
     expect(result.rawText).toContain("Company LinkedIn URL: https://www.linkedin.com/company/wideandwise/life");
   });

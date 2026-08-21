@@ -3,6 +3,7 @@ import { env } from "../config/env.js";
 import { capturePageArtifacts } from "../utils/artifacts.js";
 import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
+import { LINKEDIN_ALREADY_APPLIED_SELECTORS } from "../linkedin/easyApplyDom.js";
 import {
   assertSafeLinkedInNavigationUrl,
   safeLinkedInPageGoto,
@@ -604,6 +605,17 @@ async function detectLinkedInApplicationType(
   return "unknown";
 }
 
+async function detectLinkedInAlreadyApplied(page: Page): Promise<boolean> {
+  for (const selector of LINKEDIN_ALREADY_APPLIED_SELECTORS) {
+    const locator = page.locator(selector).first();
+    if ((await locator.count().catch(() => 0)) > 0) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 async function expandLinkedInAboutSection(page: Page): Promise<void> {
   const button = await firstVisibleLocator(page, LINKEDIN_ABOUT_EXPAND_BUTTON_SELECTORS);
   if (!button) {
@@ -1006,7 +1018,10 @@ export class LinkedInAdapter implements JobAdapter {
     ]));
     const descriptionText = aboutSections.descriptionText ?? aboutText;
 
-    const applicationType = await detectLinkedInApplicationType(page, pageBodyText);
+    const alreadyApplied = await detectLinkedInAlreadyApplied(page);
+    const applicationType = alreadyApplied
+      ? "unknown"
+      : await detectLinkedInApplicationType(page, pageBodyText);
 
     const focusedRawText = compactText(
       [
@@ -1017,6 +1032,7 @@ export class LinkedInAdapter implements JobAdapter {
         location ? `Location: ${location}` : null,
         workplaceType ? `Workplace Type: ${workplaceType}` : null,
         `Application Type: ${applicationType}`,
+        alreadyApplied ? "Application Status: already_applied" : null,
         badgeTexts.length > 0 ? `Badges:\n${badgeTexts.join("\n")}` : null,
         descriptionText ? `Description:\n${descriptionText}` : null,
         requirementsText ? `Requirements:\n${requirementsText}` : null,
@@ -1036,6 +1052,7 @@ export class LinkedInAdapter implements JobAdapter {
       location,
       platform: this.name,
       applicationType,
+      ...(alreadyApplied ? { alreadyApplied: true } : {}),
       rawWorkplaceType: workplaceType,
       rawApplicationType: applicationType,
       locationSource,

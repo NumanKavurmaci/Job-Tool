@@ -110,6 +110,8 @@ Legacy aliases such as `easy-apply`, `easy-apply-batch`, `easy-apply-dry-run`, `
 
 Kariyer.net extraction prefers the current page's data-test fields, then JSON-LD, metadata, and DOM fallbacks. External forms include Turkish field semantics, explicit `Evet/Hayır` radio selection, native multi-select support, and conservative KVKK/privacy handling. Optional consent and every SMS/marketing consent remain manual.
 
+LinkedIn's applied badge and Kariyer.net's application-status card are checked immediately after extraction. When either site reports an existing application, parsing, policy evaluation, and deterministic/AI scoring are skipped.
+
 ## 🛡️ Navigation Safety
 
 Production browser navigation is centralized and fail-closed:

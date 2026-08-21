@@ -6,7 +6,12 @@ import {
 import { LINKEDIN_BROWSER_SESSION_OPTIONS, PARSE_VERSION } from "../constants.js";
 import type { ScoringMode } from "../cli.js";
 import type { AppDeps } from "../deps.js";
-import { analyzeExtractedJob, resolveDecisionOutcome } from "../jobEvaluation.js";
+import {
+  ALREADY_APPLIED_SCORE_SKIP_REASON,
+  analyzeExtractedJob,
+  buildJobDiagnostics,
+  resolveDecisionOutcome,
+} from "../jobEvaluation.js";
 import { persistJobHistory, persistRunArtifact, persistSystemEvent } from "../observability.js";
 
 export async function runJobFlow(
@@ -30,7 +35,6 @@ export async function runJobFlow(
     deps,
   );
 
-  const profile = await deps.loadCandidateProfile();
   const extracted = await deps.withPage(
     url.includes("linkedin.com") ? LINKEDIN_BROWSER_SESSION_OPTIONS : {},
     async (page) => deps.extractJobText(page, url),
@@ -48,6 +52,46 @@ export async function runJobFlow(
     },
     "Job content extracted",
   );
+
+  if (extracted.alreadyApplied === true) {
+    const result = {
+      mode,
+      alreadyApplied: true,
+      scoreSkipped: true,
+      finalDecision: "SKIP" as const,
+      finalReasons: [ALREADY_APPLIED_SCORE_SKIP_REASON],
+      diagnostics: buildJobDiagnostics(extracted),
+    };
+
+    deps.logger.info(
+      { url, platform: extracted.platform },
+      "Skipping score evaluation for already-applied job",
+    );
+    await persistSystemEvent(
+      {
+        level: "INFO",
+        scope: "job.analysis",
+        message: "Skipped parsing and score evaluation for an already-applied job.",
+        runType: mode,
+        jobUrl: url,
+        details: result,
+      },
+      deps,
+    );
+    const reportPath = await persistRunArtifact({
+      category: "job-runs",
+      prefix: `${mode}-already-applied`,
+      payload: result,
+      deps,
+    });
+
+    return {
+      ...result,
+      reportPath,
+    };
+  }
+
+  const profile = await deps.loadCandidateProfile();
 
   const analysis = await analyzeExtractedJob({
     extracted,

@@ -26,6 +26,9 @@ type KariyerStructuredData = {
 const CLOSED_TEXT_PATTERN =
   /(?:bu ilan|ilan).*?(?:başvuruları|basvurulari).*?(?:artık|artik).*?(?:kabul etmiyor|sona erdi)|ilan (?:yayından|yayindan) kaldırıldı|başvuru süresi sona erdi|applications? (?:are )?closed|no longer accepting applications/i;
 
+const APPLIED_STATUS_PATTERN =
+  /başvur(?:un|unuz|u)?\s+(?:iletildi|alındı|gönderildi)|başvuru(?:nuz)?\s+(?:iletildi|alındı|gönderildi)/iu;
+
 export function isKariyerNetJobUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
@@ -42,6 +45,27 @@ function appendLine(lines: string[], label: string, value: string | null | undef
   if (value?.trim()) {
     lines.push(`${label}: ${value.trim()}`);
   }
+}
+
+async function hasSelector(page: Page, selector: string): Promise<boolean> {
+  return (await page.locator(selector).first().count().catch(() => 0)) > 0;
+}
+
+async function detectKariyerAlreadyApplied(page: Page): Promise<boolean> {
+  const statusLabel = await getTextBySelectors(page, ["[data-test='interaction-label']"]);
+  if (statusLabel && APPLIED_STATUS_PATTERN.test(statusLabel)) {
+    return true;
+  }
+
+  const hasStatusList = await hasSelector(page, "[data-test='application-status-list']");
+  if (!hasStatusList) {
+    return false;
+  }
+
+  return (
+    (await hasSelector(page, "[data-test='application-status-item']")) ||
+    (await hasSelector(page, "[data-test='cv-detail-link']"))
+  );
 }
 
 function normalizeWorkplaceType(
@@ -216,6 +240,7 @@ export class KariyerNetAdapter implements JobAdapter {
     const currentUrl = await getCurrentUrl(page);
     const structured = await getKariyerStructuredData(page);
     const bodyText = await extractBodyText(page);
+    const alreadyApplied = await detectKariyerAlreadyApplied(page);
     const meta = (selectors: string[]) => getAttributeBySelectors(page, selectors, "content");
 
     const title =
@@ -280,7 +305,7 @@ export class KariyerNetAdapter implements JobAdapter {
       ])) ?? structured?.benefitsText ?? null;
 
     const closed = structured?.expired === true || CLOSED_TEXT_PATTERN.test(bodyText);
-    const rawApplyUrl = closed
+    const rawApplyUrl = closed || alreadyApplied
       ? null
       : await getAttributeBySelectors(
           page,
@@ -293,10 +318,10 @@ export class KariyerNetAdapter implements JobAdapter {
           ],
           "href",
         );
-    const applyUrl = closed
+    const applyUrl = closed || alreadyApplied
       ? null
       : resolveHttpUrl(rawApplyUrl ?? structured?.applyUrl ?? currentUrl, currentUrl);
-    const applicationType = closed ? "unknown" : "external";
+    const applicationType = closed || alreadyApplied ? "unknown" : "external";
 
     const rawLines: string[] = [];
     appendLine(rawLines, "Title", title);
@@ -304,6 +329,9 @@ export class KariyerNetAdapter implements JobAdapter {
     appendLine(rawLines, "Location", location);
     appendLine(rawLines, "Workplace Type", workplaceLabel);
     rawLines.push(`Application Status: ${closed ? "closed" : "open"}`);
+    if (alreadyApplied) {
+      rawLines.push("Candidate Application Status: already_applied");
+    }
 
     return {
       rawText: [rawLines.join("\n"), descriptionText, requirementsText, benefitsText, bodyText]
@@ -320,6 +348,7 @@ export class KariyerNetAdapter implements JobAdapter {
       platform: this.name,
       applicationType,
       applicationStatus: closed ? "closed" : "open",
+      ...(alreadyApplied ? { alreadyApplied: true } : {}),
       rawWorkplaceType: normalizeWorkplaceType(workplaceLabel),
       rawApplicationType: applicationType,
       locationSource: location ? (structured?.location === location ? "structured-data" : "page") : null,

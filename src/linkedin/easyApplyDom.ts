@@ -1,6 +1,8 @@
 export const LINKEDIN_ALREADY_APPLIED_SELECTORS = [
   "#jobs-apply-see-application-link",
   ".jobs-s-apply__application-link",
+  "a[href*='/jobs-tracker'][href*='stage=applied']",
+  ".jobs-s-apply .artdeco-inline-feedback__message:has-text('Applied')",
   ".artdeco-inline-feedback__message:has-text('Applied')",
 ] as const;
 

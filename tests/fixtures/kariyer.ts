@@ -27,6 +27,28 @@ export const kariyerOpenFixture = {
   },
 } as const;
 
+export const kariyerAppliedFixture = {
+  url: "https://www.kariyer.net/is-ilani/acme-yazilim-backend-developer-4599999",
+  structuredData: {
+    ...kariyerOpenFixture.structuredData,
+    title: "Backend Developer",
+    applyUrl: "https://www.kariyer.net/is-ilani/acme-yazilim-backend-developer-4599999",
+  },
+  selectors: {
+    ...kariyerOpenFixture.selectors,
+    "[data-test='job-title']": { text: "Backend Developer" },
+    "[data-test='application-info-title']": { text: "Başvuru Bilgileri" },
+    "[data-test='application-status-list']": { text: "Başvurun İletildi\n13.08.2026" },
+    "[data-test='application-status-item']": { text: "Başvurun İletildi\n13.08.2026" },
+    "[data-test='interaction-label']": { text: "Başvurun İletildi" },
+    "[data-test='status-date']": { text: "13.08.2026" },
+    "[data-test='cv-detail-link']": { text: "CV detayını incele" },
+    body: {
+      text: "Backend Developer\nBaşvuru Bilgileri\nBaşvurun İletildi\n13.08.2026",
+    },
+  },
+} as const;
+
 export const kariyerClosedFixture = {
   url: "https://www.kariyer.net/is-ilani/acme-eski-yazilim-muhendisi-4474327",
   structuredData: {

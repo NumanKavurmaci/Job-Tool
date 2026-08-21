@@ -148,6 +148,7 @@ export interface EasyApplyJobEvaluation {
     location?: string | null;
     companyLinkedinUrl?: string | null;
     applicationType?: string | null;
+    alreadyApplied?: boolean;
     companyInfoRead?: boolean;
     metadataRead?: boolean;
   };

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { KariyerNetAdapter } from "../../src/adapters/KariyerNetAdapter.js";
-import { kariyerClosedFixture, kariyerOpenFixture } from "../fixtures/kariyer.js";
+import {
+  kariyerAppliedFixture,
+  kariyerClosedFixture,
+  kariyerOpenFixture,
+} from "../fixtures/kariyer.js";
 import { createMockPage } from "../utils/fakePage.js";
 
 describe("KariyerNetAdapter", () => {
@@ -55,6 +59,26 @@ describe("KariyerNetAdapter", () => {
       rawWorkplaceType: "hybrid",
     }));
     expect(result.rawText).toContain("Application Status: closed");
+  });
+
+  it("marks a delivered Kariyer application as already applied and disables handoff", async () => {
+    const page = createMockPage({
+      currentUrl: kariyerAppliedFixture.url,
+      selectors: { ...kariyerAppliedFixture.selectors },
+      evaluateResult: kariyerAppliedFixture.structuredData,
+    });
+
+    const result = await new KariyerNetAdapter().extract(page as never, kariyerAppliedFixture.url);
+
+    expect(result).toEqual(expect.objectContaining({
+      title: "Backend Developer",
+      platform: "kariyer",
+      applicationStatus: "open",
+      applicationType: "unknown",
+      alreadyApplied: true,
+      applyUrl: null,
+    }));
+    expect(result.rawText).toContain("Candidate Application Status: already_applied");
   });
 
   it("parses the current visible Kariyer description and location selectors without JSON-LD", async () => {

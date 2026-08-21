@@ -6,6 +6,9 @@ export type ScoringProfile = Awaited<ReturnType<AppDeps["loadCandidateProfile"]>
 export type ParsedJobResult = Awaited<ReturnType<AppDeps["parseJob"]>>;
 export type JobScoreResult = Awaited<ReturnType<AppDeps["scoreJobWithAi"]>>;
 
+export const ALREADY_APPLIED_SCORE_SKIP_REASON =
+  "Application site reports that this job was already applied; parsing and score evaluation were skipped.";
+
 export function buildJobDiagnostics(
   extracted: Awaited<ReturnType<AppDeps["extractJobText"]>>,
 ) {
@@ -15,6 +18,7 @@ export function buildJobDiagnostics(
     location: extracted.location ?? null,
     companyLinkedinUrl: extracted.companyLinkedinUrl ?? null,
     applicationType: extracted.applicationType ?? null,
+    alreadyApplied: extracted.alreadyApplied === true,
     rawWorkplaceType: extracted.rawWorkplaceType ?? null,
     rawApplicationType: extracted.rawApplicationType ?? extracted.applicationType ?? null,
     locationSource: extracted.locationSource ?? null,

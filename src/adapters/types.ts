@@ -10,6 +10,7 @@ export interface ExtractedJobContent {
   platform: string;
   applicationType: "easy_apply" | "external" | "unknown";
   applicationStatus?: "open" | "closed" | "unknown";
+  alreadyApplied?: boolean;
   rawWorkplaceType?: "remote" | "hybrid" | "onsite" | null;
   rawApplicationType?: "easy_apply" | "external" | "unknown" | null;
   locationSource?: string | null;

@@ -142,6 +142,55 @@ describe("app flow helpers", () => {
     expect(deps.extractJobText).not.toHaveBeenCalled();
   });
 
+  it("skips parser and score evaluation when extraction detects an existing application", async () => {
+    const deps = createDeps();
+    deps.extractJobText.mockResolvedValue({
+      rawText: "Application Status: already_applied",
+      title: "Backend Developer",
+      company: "Acme",
+      companyLogoUrl: null,
+      companyLinkedinUrl: null,
+      location: "Remote",
+      platform: "linkedin",
+      applicationType: "unknown",
+      alreadyApplied: true,
+      applyUrl: null,
+      currentUrl: "https://www.linkedin.com/jobs/view/123",
+      descriptionText: "Backend role",
+      requirementsText: null,
+      benefitsText: null,
+    });
+    const evaluate = createBatchJobEvaluator({
+      disableAiEvaluation: false,
+      scoreThreshold: 60,
+      scoringMode: "ai",
+      scoringProfile: {} as any,
+      evaluationPage: { fake: true } as any,
+      deps,
+    });
+
+    await expect(evaluate("https://www.linkedin.com/jobs/view/123")).resolves.toMatchObject({
+      shouldApply: false,
+      finalDecision: "SKIP",
+      score: 0,
+      alreadyApplied: true,
+      policyAllowed: true,
+      reason: expect.stringContaining("already applied"),
+    });
+    expect(deps.formatJobForLLM).not.toHaveBeenCalled();
+    expect(deps.parseJob).not.toHaveBeenCalled();
+    expect(deps.scoreJob).not.toHaveBeenCalled();
+    expect(deps.scoreJobWithAi).not.toHaveBeenCalled();
+    expect(deps.evaluatePolicy).not.toHaveBeenCalled();
+    expect(deps.logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: "https://www.linkedin.com/jobs/view/123",
+        platform: "linkedin",
+      }),
+      "Skipping score evaluation for already-applied job",
+    );
+  });
+
   it("still skips duplicate reviews when AI evaluation is disabled", async () => {
     const deps = createDeps();
     deps.prisma.jobReviewHistory.findFirst.mockResolvedValue({

@@ -18,7 +18,12 @@ import {
 } from "../utils/jobPersistence.js";
 import { LINKEDIN_EVALUATION_SESSION_OPTIONS, PARSE_VERSION } from "./constants.js";
 import type { AppDeps } from "./deps.js";
-import { analyzeExtractedJob, buildJobDiagnostics, resolveDecisionOutcome } from "./jobEvaluation.js";
+import {
+  ALREADY_APPLIED_SCORE_SKIP_REASON,
+  analyzeExtractedJob,
+  buildJobDiagnostics,
+  resolveDecisionOutcome,
+} from "./jobEvaluation.js";
 import { persistJobHistory, persistSystemEvent } from "./observability.js";
 import type { TimingRecorder } from "../utils/timing.js";
 
@@ -244,6 +249,37 @@ export function createBatchJobEvaluator(args: {
       },
       deps,
     );
+    if (extracted.alreadyApplied === true) {
+      deps.logger.info(
+        { url, platform: extracted.platform },
+        "Skipping score evaluation for already-applied job",
+      );
+      await persistSystemEvent(
+        {
+          level: "INFO",
+          scope: systemScope,
+          message: "Skipped parsing and score evaluation for an already-applied job.",
+          runType: reviewSource,
+          jobUrl: url,
+          details: {
+            alreadyApplied: true,
+            platform: extracted.platform,
+            diagnostics,
+          },
+        },
+        deps,
+      );
+
+      return {
+        shouldApply: false,
+        finalDecision: "SKIP" as const,
+        score: 0,
+        reason: ALREADY_APPLIED_SCORE_SKIP_REASON,
+        policyAllowed: true,
+        alreadyApplied: true,
+        diagnostics,
+      };
+    }
     const analysis = await time("job.analyze", () => analyzeExtractedJob({
       extracted,
       scoringProfile: args.scoringProfile,

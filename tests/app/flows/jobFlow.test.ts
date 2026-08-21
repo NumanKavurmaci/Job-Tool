@@ -166,6 +166,56 @@ describe("job flow", () => {
     );
   });
 
+  it("skips candidate loading, parsing and scoring for an already-applied Kariyer job", async () => {
+    const deps = createDeps();
+    const page = { fake: "page" };
+    deps.withPage.mockImplementation(async (_options: unknown, fn: (page: unknown) => Promise<unknown>) => fn(page));
+    deps.extractJobText.mockResolvedValue({
+      rawText: "Candidate Application Status: already_applied",
+      title: "Backend Developer",
+      company: "Acme",
+      companyLogoUrl: null,
+      companyLinkedinUrl: null,
+      location: "Ankara",
+      platform: "kariyer",
+      applicationType: "unknown",
+      applicationStatus: "open",
+      alreadyApplied: true,
+      applyUrl: null,
+      currentUrl: "https://www.kariyer.net/is-ilani/acme-backend-developer-4599999",
+      descriptionText: "Backend role",
+      requirementsText: null,
+      benefitsText: null,
+    });
+    deps.writeRunReport.mockResolvedValue("artifacts/job-runs/score-already-applied.json");
+
+    const result = await runJobFlow(
+      "score",
+      "https://www.kariyer.net/is-ilani/acme-backend-developer-4599999",
+      deps,
+    );
+
+    expect(result).toMatchObject({
+      mode: "score",
+      alreadyApplied: true,
+      scoreSkipped: true,
+      finalDecision: "SKIP",
+      reportPath: "artifacts/job-runs/score-already-applied.json",
+    });
+    expect(deps.loadCandidateProfile).not.toHaveBeenCalled();
+    expect(deps.formatJobForLLM).not.toHaveBeenCalled();
+    expect(deps.parseJob).not.toHaveBeenCalled();
+    expect(deps.scoreJob).not.toHaveBeenCalled();
+    expect(deps.scoreJobWithAi).not.toHaveBeenCalled();
+    expect(deps.evaluatePolicy).not.toHaveBeenCalled();
+    expect(deps.decideJob).not.toHaveBeenCalled();
+    expect(deps.prisma.jobPosting.upsert).not.toHaveBeenCalled();
+    expect(deps.logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ platform: "kariyer" }),
+      "Skipping score evaluation for already-applied job",
+    );
+  });
+
   it("does not force APPLY for Europe-centered jobs when the score decision skips", async () => {
     const deps = createDeps();
     const page = { fake: "page" };
