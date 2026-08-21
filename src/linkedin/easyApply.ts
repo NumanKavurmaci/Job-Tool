@@ -165,6 +165,11 @@ export interface EasyApplyCollectionJob {
   alreadyApplied: boolean;
 }
 
+export type EasyApplyJobApplicationState =
+  | "already_applied"
+  | "apply_available"
+  | "unknown";
+
 export interface EasyApplyBatchRunResult {
   status: "completed" | "partial" | "stopped_no_jobs";
   collectionUrl: string;
@@ -186,6 +191,7 @@ export interface EasyApplyDriver {
   getExternalApplyUrl?(): Promise<string | null>;
   getExternalApplyDetection?(): Promise<EasyApplyExternalDetection | null>;
   isAlreadyApplied?(): Promise<boolean>;
+  inspectJobApplicationState?(url: string): Promise<EasyApplyJobApplicationState>;
   openEasyApply(): Promise<void>;
   collectQuestions(): Promise<EasyApplyQuestionView[]>;
   collectVisibleJobs?(): Promise<EasyApplyCollectionJob[]>;
@@ -433,6 +439,35 @@ function buildAlreadyAppliedBatchResult(url: string): EasyApplyBatchJobResult {
   };
 }
 
+function buildUnknownApplicationStateBatchResult(url: string): EasyApplyBatchJobResult {
+  return {
+    url,
+    evaluation: {
+      shouldApply: false,
+      finalDecision: "SKIP",
+      score: 0,
+      reason:
+        "Could not safely confirm this LinkedIn job's application state, so it was skipped before parsing and scoring.",
+      policyAllowed: false,
+    },
+  };
+}
+
+async function inspectJobApplicationState(
+  driver: EasyApplyDriver,
+  url: string,
+): Promise<EasyApplyJobApplicationState | null> {
+  if (!driver.inspectJobApplicationState) {
+    return null;
+  }
+
+  try {
+    return await driver.inspectJobApplicationState(url);
+  } catch {
+    return "unknown";
+  }
+}
+
 function buildEvaluationFailureResult(url: string, error: unknown): EasyApplyBatchJobResult {
   const formatted = formatErrorForJobProcessing(error);
   return {
@@ -601,6 +636,16 @@ async function stopIfApplyUnavailable(
   driver: EasyApplyDriver,
   url: string,
 ): Promise<EasyApplyRunResult | null> {
+  if ((await driver.isAlreadyApplied?.()) === true) {
+    return {
+      status: "stopped_not_easy_apply",
+      steps: [],
+      stopReason: "This LinkedIn job has already been applied to.",
+      url,
+      alreadyApplied: true,
+    };
+  }
+
   if (await driver.isEasyApplyAvailable()) {
     return null;
   }
@@ -615,16 +660,6 @@ async function stopIfApplyUnavailable(
         (await driver.getExternalApplyUrl?.()) ?? undefined,
       ) ?? undefined)
     : undefined;
-
-  if ((await driver.isAlreadyApplied?.()) === true) {
-    return {
-      status: "stopped_not_easy_apply",
-      steps: [],
-      stopReason: "This LinkedIn job has already been applied to.",
-      url,
-      alreadyApplied: true,
-    };
-  }
 
   if (externalApplyAvailable) {
     return {
@@ -820,6 +855,25 @@ async function runEasyApplyInternal(
   const maxSteps = input.maxSteps ?? 10;
 
   await input.driver.ensureAuthenticated(input.url);
+  const applicationState = await inspectJobApplicationState(input.driver, input.url);
+  if (applicationState === "already_applied") {
+    return {
+      status: "stopped_not_easy_apply",
+      steps: [],
+      stopReason: "This LinkedIn job has already been applied to.",
+      url: input.url,
+      alreadyApplied: true,
+    };
+  }
+  if (applicationState === "unknown") {
+    return {
+      status: "stopped_not_easy_apply",
+      steps: [],
+      stopReason:
+        "Could not safely confirm the LinkedIn application state. No application flow was opened.",
+      url: input.url,
+    };
+  }
   await input.driver.open(input.url);
 
   const unavailableResult = await stopIfApplyUnavailable(
@@ -971,12 +1025,16 @@ export async function runEasyApplyBatchInternal(
     const visibleJobs = await collectVisibleBatchJobs(input.driver);
 
     for (const job of visibleJobs) {
-      const { url, alreadyApplied } = job;
+      const { url, alreadyApplied: cardAlreadyApplied } = job;
       if (seenUrls.has(url)) {
         continue;
       }
 
       seenUrls.add(url);
+      const preEvaluationState = cardAlreadyApplied
+        ? "already_applied"
+        : await inspectJobApplicationState(input.driver, url);
+      const alreadyApplied = preEvaluationState === "already_applied";
       await input.observeBatchEvent?.({
         type: "job_discovered",
         collectionUrl: input.url,
@@ -999,6 +1057,20 @@ export async function runEasyApplyBatchInternal(
         continue;
       }
 
+      if (preEvaluationState === "unknown") {
+        skippedCount += 1;
+        const unknownStateJob = buildUnknownApplicationStateBatchResult(url);
+        jobs.push(unknownStateJob);
+        await input.observeBatchEvent?.({
+          type: "job_evaluated",
+          collectionUrl: input.url,
+          jobUrl: url,
+          pageNumber: pagesVisited,
+          evaluation: unknownStateJob.evaluation,
+        });
+        continue;
+      }
+
       let evaluation: EasyApplyJobEvaluation;
       try {
         evaluation = await input.evaluateJob(url);
@@ -1014,6 +1086,15 @@ export async function runEasyApplyBatchInternal(
           evaluation: failedEvaluation.evaluation,
         });
         continue;
+      }
+
+      if (evaluation.shouldApply) {
+        const preApplyState = await inspectJobApplicationState(input.driver, url);
+        if (preApplyState === "already_applied") {
+          evaluation = buildAlreadyAppliedBatchResult(url).evaluation;
+        } else if (preApplyState === "unknown") {
+          evaluation = buildUnknownApplicationStateBatchResult(url).evaluation;
+        }
       }
       await input.observeBatchEvent?.({
         type: "job_evaluated",

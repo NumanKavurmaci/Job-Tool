@@ -233,6 +233,66 @@ describe("PlaywrightLinkedInEasyApplyDriver", () => {
     await page.close();
   });
 
+  it("waits for a hydrated applied badge in the matching search detail panel", async () => {
+    const page = await browser.newPage();
+    await page.route("https://www.linkedin.com/**", async (route) => {
+      await route.fulfill({
+        contentType: "text/html",
+        body: `
+          <main class="jobs-details"><div id="status"></div></main>
+          <script>
+            setTimeout(() => {
+              document.querySelector('#status').innerHTML = \`
+                <div class="jobs-s-apply">
+                  <span class="artdeco-inline-feedback__message">Applied 3 hours ago</span>
+                  <a id="jobs-apply-see-application-link" href="/jobs-tracker?stage=applied">
+                    See application
+                  </a>
+                </div>
+              \`;
+            }, 500);
+          </script>
+        `,
+      });
+    });
+    await page.goto("https://www.linkedin.com/jobs/search/?currentJobId=4453899034");
+
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page);
+
+    await expect(
+      driver.inspectJobApplicationState(
+        "https://www.linkedin.com/jobs/view/4453899034",
+      ),
+    ).resolves.toBe("already_applied");
+
+    await page.close();
+  });
+
+  it("confirms a stable Easy Apply surface as available", async () => {
+    const page = await browser.newPage();
+    await page.route("https://www.linkedin.com/**", async (route) => {
+      await route.fulfill({
+        contentType: "text/html",
+        body: `
+          <main class="jobs-details">
+            <button aria-label="Easy Apply to Backend Developer">Easy Apply</button>
+          </main>
+        `,
+      });
+    });
+    await page.goto("https://www.linkedin.com/jobs/search/?currentJobId=4453899034");
+
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page);
+
+    await expect(
+      driver.inspectJobApplicationState(
+        "https://www.linkedin.com/jobs/view/4453899034",
+      ),
+    ).resolves.toBe("apply_available");
+
+    await page.close();
+  });
+
   it("collects jobs from current LinkedIn search result cards", async () => {
     const page = await browser.newPage();
     await page.setContent(`

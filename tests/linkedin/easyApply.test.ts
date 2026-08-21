@@ -593,6 +593,31 @@ describe("runEasyApplyDryRun", () => {
     expect(result.alreadyApplied).toBe(true);
   });
 
+  it("uses the search-detail applied preflight before opening a single job", async () => {
+    const driver = {
+      open: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      inspectJobApplicationState: vi.fn().mockResolvedValue("already_applied"),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn(),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn(),
+      advance: vi.fn(),
+    };
+
+    const result = await runEasyApplyDryRun({
+      driver,
+      url: "https://www.linkedin.com/jobs/view/4453899034",
+      candidateProfile: profile,
+      resolveAnswer: vi.fn(),
+    });
+
+    expect(result.alreadyApplied).toBe(true);
+    expect(driver.open).not.toHaveBeenCalled();
+    expect(driver.openEasyApply).not.toHaveBeenCalled();
+  });
+
   it("stops on unknown primary actions", async () => {
     const driver = {
       open: vi.fn(),
@@ -1585,6 +1610,86 @@ describe("runEasyApplyBatchDryRun", () => {
     expect(result.jobs[0]?.evaluation.alreadyApplied).toBe(true);
     expect(evaluateJob).toHaveBeenCalledTimes(1);
     expect(evaluateJob).toHaveBeenCalledWith("https://www.linkedin.com/jobs/view/2");
+  });
+
+  it("checks the search detail panel before parsing or scoring a batch job", async () => {
+    const driver = {
+      open: vi.fn(),
+      openCollection: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      inspectJobApplicationState: vi.fn().mockResolvedValue("already_applied"),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn().mockResolvedValue([]),
+      collectVisibleJobs: vi.fn().mockResolvedValue([
+        { url: "https://www.linkedin.com/jobs/view/4453899034", alreadyApplied: false },
+      ]),
+      goToNextResultsPage: vi.fn().mockResolvedValue(false),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn().mockResolvedValue("submit"),
+      advance: vi.fn(),
+    };
+    const evaluateJob = vi.fn();
+
+    const result = await runEasyApplyBatchDryRun({
+      driver,
+      url: "https://www.linkedin.com/jobs/search/?currentJobId=4453899034",
+      targetCount: 1,
+      candidateProfile: profile,
+      evaluateJob,
+      resolveAnswer: vi.fn(),
+    });
+
+    expect(result.jobs[0]?.evaluation).toMatchObject({
+      finalDecision: "SKIP",
+      score: 0,
+      alreadyApplied: true,
+    });
+    expect(evaluateJob).not.toHaveBeenCalled();
+    expect(driver.openEasyApply).not.toHaveBeenCalled();
+  });
+
+  it("rechecks an approved job before opening the application flow", async () => {
+    const driver = {
+      open: vi.fn(),
+      openCollection: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      inspectJobApplicationState: vi
+        .fn()
+        .mockResolvedValueOnce("apply_available")
+        .mockResolvedValueOnce("already_applied"),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn().mockResolvedValue([]),
+      collectVisibleJobs: vi.fn().mockResolvedValue([
+        { url: "https://www.linkedin.com/jobs/view/4453899034", alreadyApplied: false },
+      ]),
+      goToNextResultsPage: vi.fn().mockResolvedValue(false),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn().mockResolvedValue("submit"),
+      advance: vi.fn(),
+    };
+    const evaluateJob = vi.fn().mockResolvedValue({
+      shouldApply: true,
+      finalDecision: "APPLY",
+      score: 80,
+      reason: "Strong fit.",
+      policyAllowed: true,
+    });
+
+    const result = await runEasyApplyBatchDryRun({
+      driver,
+      url: "https://www.linkedin.com/jobs/search/?currentJobId=4453899034",
+      targetCount: 1,
+      candidateProfile: profile,
+      evaluateJob,
+      resolveAnswer: vi.fn(),
+    });
+
+    expect(evaluateJob).toHaveBeenCalledTimes(1);
+    expect(result.jobs[0]?.evaluation.alreadyApplied).toBe(true);
+    expect(driver.open).not.toHaveBeenCalled();
+    expect(driver.openEasyApply).not.toHaveBeenCalled();
   });
 });
 

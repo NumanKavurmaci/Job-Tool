@@ -1,9 +1,13 @@
 import type { Locator, Page } from "@playwright/test";
 import { ensureLinkedInAuthenticated } from "../adapters/LinkedInAdapter.js";
-import { safeLinkedInPageGoto } from "../security/navigationSafety.js";
+import {
+  assertSafeLinkedInNavigationUrl,
+  safeLinkedInPageGoto,
+} from "../security/navigationSafety.js";
 import type {
   EasyApplyDriver,
   EasyApplyExternalDetection,
+  EasyApplyJobApplicationState,
   EasyApplyPrimaryAction,
   EasyApplyReviewDiagnostics,
   EasyApplyStepStateSnapshot,
@@ -289,6 +293,8 @@ async function annotateQuestions(page: Page): Promise<EasyApplyQuestionView[]> {
 }
 
 export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
+  private collectionUrl: string | null = null;
+
   constructor(private page: Page) {}
 
   // LinkedIn keeps changing the external-apply CTA markup. We first prefer the
@@ -486,6 +492,7 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
   }
 
   async openCollection(url: string): Promise<void> {
+    this.collectionUrl = url;
     await this.open(url);
     await this.page
       .locator(LINKEDIN_JOB_RESULT_SELECTOR)
@@ -531,6 +538,81 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
     const badge = this.page.locator(joinSelectors(LINKEDIN_ALREADY_APPLIED_SELECTORS)).first();
 
     return (await badge.count()) > 0;
+  }
+
+  async inspectJobApplicationState(url: string): Promise<EasyApplyJobApplicationState> {
+    let jobId: string;
+    try {
+      const parsedJobUrl = assertSafeLinkedInNavigationUrl(
+        url,
+        "LinkedIn application-state inspection URL",
+      );
+      const match = parsedJobUrl.pathname.match(/\/jobs\/view\/(\d+)/);
+      if (!match?.[1]) {
+        return "unknown";
+      }
+      jobId = match[1];
+    } catch {
+      return "unknown";
+    }
+
+    let inspectionUrl: URL;
+    try {
+      const currentUrl = assertSafeLinkedInNavigationUrl(
+        this.page.url(),
+        "LinkedIn application-state page URL",
+      );
+      const currentJobId = currentUrl.searchParams.get("currentJobId");
+      const isCollectionSurface = /^\/jobs\/(?:search|collections|search-results)(?:\/|$)/i.test(
+        currentUrl.pathname,
+      );
+      if (isCollectionSurface && currentJobId === jobId) {
+        inspectionUrl = currentUrl;
+      } else {
+        const baseUrl = this.collectionUrl
+          ? assertSafeLinkedInNavigationUrl(
+              this.collectionUrl,
+              "LinkedIn collection inspection URL",
+            )
+          : new URL("https://www.linkedin.com/jobs/search/");
+        if (!/^\/jobs\/(?:search|collections|search-results)(?:\/|$)/i.test(baseUrl.pathname)) {
+          baseUrl.pathname = "/jobs/search/";
+          baseUrl.search = "";
+        }
+        baseUrl.searchParams.set("currentJobId", jobId);
+        inspectionUrl = baseUrl;
+      }
+    } catch {
+      inspectionUrl = new URL("https://www.linkedin.com/jobs/search/");
+      inspectionUrl.searchParams.set("currentJobId", jobId);
+    }
+
+    if (this.page.url() !== inspectionUrl.toString()) {
+      await safeLinkedInPageGoto(this.page, inspectionUrl.toString(), {
+        waitUntil: "domcontentloaded",
+        timeout: 60_000,
+      });
+    }
+
+    let stableApplySurfaceChecks = 0;
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < 10_000) {
+      if (await this.isAlreadyApplied().catch(() => false)) {
+        return "already_applied";
+      }
+
+      const applyAvailable =
+        (await this.isEasyApplyAvailable().catch(() => false)) ||
+        (await this.isExternalApplyAvailable().catch(() => false));
+      stableApplySurfaceChecks = applyAvailable ? stableApplySurfaceChecks + 1 : 0;
+      if (stableApplySurfaceChecks >= 4) {
+        return "apply_available";
+      }
+
+      await this.page.waitForTimeout(250).catch(() => undefined);
+    }
+
+    return "unknown";
   }
 
   private async waitForEasyApplySurfaceToOpen(): Promise<void> {
