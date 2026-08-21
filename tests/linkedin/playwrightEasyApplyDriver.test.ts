@@ -143,6 +143,11 @@ describe("PlaywrightLinkedInEasyApplyDriver", () => {
       );
 
       expect(context.pages()).toHaveLength(3);
+      const processingPage = context.pages().find(
+        (page) => page !== collectionPage && page !== unrelatedPage,
+      );
+      expect(processingPage?.url()).toBe("about:blank");
+      await lease.driver.open("https://www.linkedin.com/jobs/view/4457000000");
       await expect(lease.driver.isEasyApplyAvailable()).resolves.toBe(true);
       await lease.dispose();
       expect(context.pages()).toEqual([collectionPage, unrelatedPage]);
@@ -750,6 +755,37 @@ describe("PlaywrightLinkedInEasyApplyDriver", () => {
     );
 
     await page.close();
+  });
+
+  it("reuses a matching job-detail surface without redundant navigation", async () => {
+    const context = await browser.newContext();
+    try {
+      let navigationCount = 0;
+      await context.route("https://www.linkedin.com/**", async (route) => {
+        navigationCount += 1;
+        await route.fulfill({
+          contentType: "text/html",
+          body: `
+            <main class="jobs-details">
+              <button aria-label="Easy Apply to Backend Developer">Easy Apply</button>
+            </main>
+          `,
+        });
+      });
+      const page = await context.newPage();
+      const jobUrl = "https://www.linkedin.com/jobs/view/4453899034/";
+      await page.goto(jobUrl);
+      const driver = new PlaywrightLinkedInEasyApplyDriver(page);
+
+      await expect(driver.inspectJobApplicationState(jobUrl)).resolves.toBe(
+        "apply_available",
+      );
+      await driver.open(jobUrl);
+
+      expect(navigationCount).toBe(1);
+    } finally {
+      await context.close();
+    }
   });
 
   it("captures the real HTTPS destination from an href-less external apply button", async () => {

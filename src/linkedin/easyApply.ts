@@ -748,10 +748,15 @@ function buildUnverifiedExternalApplyResult(args: {
 async function processExternalApprovedBatchJob(
   input: EasyApplyBatchRunInput,
   url: string,
+  prepareJobPage = false,
 ): Promise<EasyApplyRunResult> {
   const timeoutMs = readPositiveInteger(
-    input.externalApplyInspectionTimeoutMs,
-    DEFAULT_EXTERNAL_APPLY_INSPECTION_TIMEOUT_MS,
+    prepareJobPage
+      ? input.jobProcessingTimeoutMs
+      : input.externalApplyInspectionTimeoutMs,
+    prepareJobPage
+      ? DEFAULT_JOB_PROCESSING_TIMEOUT_MS
+      : DEFAULT_EXTERNAL_APPLY_INSPECTION_TIMEOUT_MS,
   );
   const abortController = new AbortController();
   const guardedDriver = createAbortGuardedDriver(
@@ -762,6 +767,9 @@ async function processExternalApprovedBatchJob(
   try {
     return await withTimeout(
       (async () => {
+        if (prepareJobPage) {
+          await guardedDriver.driver.ensureAuthenticated(url);
+        }
         const externalApplyAvailable =
           (await guardedDriver.driver.isExternalApplyAvailable?.()) === true;
         if (!externalApplyAvailable) {
@@ -834,9 +842,10 @@ async function processApprovedBatchJob(
   url: string,
   evaluation: EasyApplyJobEvaluation,
   submitMode: SubmitMode,
+  isolatedProcessingDriver = false,
 ): Promise<EasyApplyRunResult> {
   if (isExternalApplicationEvaluation(evaluation)) {
-    return processExternalApprovedBatchJob(input, url);
+    return processExternalApprovedBatchJob(input, url, isolatedProcessingDriver);
   }
 
   const timeoutMs = readPositiveInteger(
@@ -1553,6 +1562,7 @@ export async function runEasyApplyBatchInternal(
           url,
           evaluation,
           submitMode,
+          processingLease != null,
         );
         await disposeProcessingLease();
       } catch (error) {

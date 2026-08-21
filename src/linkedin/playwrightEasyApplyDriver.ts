@@ -634,7 +634,7 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
     return true;
   }
 
-  async createProcessingDriver(url: string): Promise<EasyApplyProcessingDriverLease> {
+  async createProcessingDriver(_url: string): Promise<EasyApplyProcessingDriverLease> {
     const attemptPage = await this.page.context().newPage();
     const attemptDriver = new PlaywrightLinkedInEasyApplyDriver(
       attemptPage,
@@ -649,16 +649,11 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
       disposed = true;
     };
 
-    try {
-      // The shared browser context carries the authenticated session, while the
-      // new page keeps application navigation and timeouts away from the page
-      // that owns collection pagination.
-      await attemptDriver.open(url);
-      return { driver: attemptDriver, dispose };
-    } catch (error) {
-      await dispose().catch(() => undefined);
-      throw error;
-    }
+    // The shared browser context carries the authenticated session, while the
+    // blank page keeps all application navigation and timeouts away from the
+    // page that owns collection pagination. The processing flow performs one
+    // authenticated navigation after its timeout boundary has been installed.
+    return { driver: attemptDriver, dispose };
   }
 
   async dispose(): Promise<void> {
@@ -666,10 +661,28 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
   }
 
   async open(url: string): Promise<void> {
-    await safeLinkedInPageGoto(this.page, url, {
-      waitUntil: "domcontentloaded",
-      timeout: 60_000,
-    });
+    let alreadyOnRequestedJob = false;
+    try {
+      const current = assertSafeLinkedInNavigationUrl(
+        this.page.url(),
+        "Current LinkedIn job page URL",
+      );
+      const target = assertSafeLinkedInNavigationUrl(url, "LinkedIn job page URL");
+      const currentJobId = current.pathname.match(/\/jobs\/view\/(\d+)/)?.[1];
+      const targetJobId = target.pathname.match(/\/jobs\/view\/(\d+)/)?.[1];
+      alreadyOnRequestedJob = Boolean(
+        currentJobId && targetJobId && currentJobId === targetJobId,
+      );
+    } catch {
+      alreadyOnRequestedJob = false;
+    }
+
+    if (!alreadyOnRequestedJob) {
+      await safeLinkedInPageGoto(this.page, url, {
+        waitUntil: "domcontentloaded",
+        timeout: 60_000,
+      });
+    }
     await this.waitForLinkedInJobSurface();
   }
 
@@ -838,7 +851,11 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
       const isCollectionSurface = /^\/jobs\/(?:search|collections|search-results)(?:\/|$)/i.test(
         currentUrl.pathname,
       );
-      if (isCollectionSurface && currentJobId === jobId) {
+      const currentDetailJobId = currentUrl.pathname.match(/\/jobs\/view\/(\d+)/)?.[1];
+      if (
+        (isCollectionSurface && currentJobId === jobId) ||
+        currentDetailJobId === jobId
+      ) {
         inspectionUrl = currentUrl;
       } else {
         const baseUrl = this.collectionUrl
