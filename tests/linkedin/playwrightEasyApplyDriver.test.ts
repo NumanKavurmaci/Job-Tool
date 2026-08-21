@@ -331,6 +331,38 @@ describe("PlaywrightLinkedInEasyApplyDriver", () => {
     await page.close();
   });
 
+  it("waits for LinkedIn search cards instead of treating the selected detail link as the whole batch", async () => {
+    const page = await browser.newPage();
+    await page.route("https://www.linkedin.com/**", async (route) => {
+      await route.fulfill({
+        contentType: "text/html",
+        body: `
+          <main>
+            <a href="/jobs/view/4453899034/">Selected job details</a>
+            <ul id="results"></ul>
+          </main>
+          <script>
+            setTimeout(() => {
+              document.querySelector('#results').innerHTML = [
+                '<li data-occludable-job-id="4453899034"><a href="/jobs/view/4453899034/">Backend Developer</a></li>',
+                '<li data-occludable-job-id="4408633820"><a href="/jobs/view/4408633820/">Software Engineer</a></li>',
+              ].join('');
+            }, 700);
+          </script>
+        `,
+      });
+    });
+    await page.goto("https://www.linkedin.com/jobs/search/?currentJobId=4453899034");
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page);
+
+    await expect(driver.collectVisibleJobs()).resolves.toEqual([
+      { url: "https://www.linkedin.com/jobs/view/4453899034", alreadyApplied: false },
+      { url: "https://www.linkedin.com/jobs/view/4408633820", alreadyApplied: false },
+    ]);
+
+    await page.close();
+  });
+
   it("scrolls a virtualized LinkedIn result list and accumulates replaced cards", async () => {
     const page = await browser.newPage();
     await page.setContent(`

@@ -31,6 +31,8 @@ const LINKEDIN_RESULTS_SCROLL_CONTAINER_SELECTOR = [
 const LINKEDIN_COLLECTION_SCAN_LIMIT = 24;
 const LINKEDIN_COLLECTION_STABLE_SCAN_LIMIT = 3;
 const LINKEDIN_COLLECTION_SCROLL_WAIT_MS = 350;
+const LINKEDIN_COLLECTION_HYDRATION_ATTEMPTS = 30;
+const LINKEDIN_COLLECTION_HYDRATION_WAIT_MS = 500;
 import { createEmptySiteFeedbackSnapshot, type SiteFeedbackSnapshot } from "../browser/siteFeedback.js";
 import {
   buildLinkedInJobSurfaceSelector,
@@ -750,6 +752,22 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
   async collectVisibleJobs() {
     const normalized = new Map<string, { url: string; alreadyApplied: boolean }>();
     let stableScans = 0;
+
+    if (/^https:\/\/(?:[a-z0-9-]+\.)?linkedin\.com\/jobs\/(?:search|collections)/i.test(this.page.url())) {
+      const renderedCards = this.page.locator(LINKEDIN_JOB_CARD_SELECTOR);
+      for (
+        let attempt = 0;
+        attempt < LINKEDIN_COLLECTION_HYDRATION_ATTEMPTS;
+        attempt += 1
+      ) {
+        if ((await renderedCards.count().catch(() => 0)) > 0) {
+          break;
+        }
+        if (attempt < LINKEDIN_COLLECTION_HYDRATION_ATTEMPTS - 1) {
+          await this.page.waitForTimeout(LINKEDIN_COLLECTION_HYDRATION_WAIT_MS);
+        }
+      }
+    }
 
     for (let scanIndex = 0; scanIndex < LINKEDIN_COLLECTION_SCAN_LIMIT; scanIndex += 1) {
       const sizeBeforeScan = normalized.size;
