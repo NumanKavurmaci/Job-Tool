@@ -2,6 +2,7 @@ export type SelectorValue = {
   count?: number;
   text?: string | null;
   attributes?: Record<string, string | null | undefined>;
+  visible?: boolean;
   throwsOnInnerText?: boolean;
   throwsOnGetAttribute?: boolean;
 };
@@ -33,6 +34,10 @@ class MockLocator {
     return this;
   }
 
+  nth(_index: number): MockLocator {
+    return this;
+  }
+
   async count(): Promise<number> {
     const value = this.getValue();
     return value?.count ?? (value ? 1 : 0);
@@ -54,6 +59,11 @@ class MockLocator {
     }
 
     return value?.attributes?.[name] ?? null;
+  }
+
+  async isVisible(): Promise<boolean> {
+    const value = this.getValue();
+    return Boolean(value) && value?.visible !== false;
   }
 
   async fill(value: string): Promise<void> {

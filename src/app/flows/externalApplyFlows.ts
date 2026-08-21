@@ -13,6 +13,8 @@ import {
 } from "../../external/discovery.js";
 import { fillExternalApplicationPage } from "../../external/fill.js";
 import type { CookiePromptAcceptance } from "../../browser/cookies.js";
+import type { Page } from "@playwright/test";
+import type { BrowserSessionOptions } from "../../browser/playwright.js";
 import { persistRunArtifact, persistSystemEvent } from "../observability.js";
 import type {
   ExternalApplicationPlannedAnswer,
@@ -24,6 +26,8 @@ type ExternalApplyRunType = "external-apply-dry-run" | "external-apply";
 
 interface ExternalApplyOriginContext {
   originalJobUrl?: string;
+  sessionOptions?: BrowserSessionOptions;
+  initialActionSelector?: string;
 }
 
 function truncate(value: string, max = 5000) {
@@ -436,8 +440,43 @@ async function runExternalApplyCore({
   const runType = getExternalApplyRunType(args);
   const candidateProfile = await loadMasterProfileForArgs(args, deps);
   try {
-    const result = await deps.withPage(async (page) => {
+    const runWithPage = async (page: Page) => {
       let discovery = await discoverExternalApplication(page, args.url);
+      if (
+        discovery.fields.length === 0 &&
+        discovery.precursorLinks.length === 0 &&
+        originContext?.initialActionSelector
+      ) {
+        const initialAction = page.locator(originContext.initialActionSelector).first();
+        if (
+          (await initialAction.count().catch(() => 0)) > 0 &&
+          (await initialAction.isVisible().catch(() => false))
+        ) {
+          await initialAction.click();
+          await page.waitForLoadState("domcontentloaded").catch(() => undefined);
+          await page.waitForTimeout(800);
+          discovery = await inspectExternalApplicationPage(page, args.url);
+
+          const visibleAuthField = page
+            .locator(
+              "input[type='password'], form[action*='login' i], form[action*='signin' i], [data-test*='login' i]",
+            )
+            .first();
+          if (
+            (await visibleAuthField.count().catch(() => 0)) > 0 &&
+            (await visibleAuthField.isVisible().catch(() => false))
+          ) {
+            discovery = {
+              ...discovery,
+              fields: [],
+              precursorLinks: [],
+              authWall: true,
+              authWallReason:
+                "The source job site requires an authenticated candidate session before the application form is available.",
+            };
+          }
+        }
+      }
       const cookiePromptAcceptances: CookiePromptAcceptance[] = [];
       appendCookiePromptAcceptances(cookiePromptAcceptances, discovery.cookiePromptAcceptances);
       const initialPageText = await extractExternalPageText(page);
@@ -671,7 +710,10 @@ async function runExternalApplyCore({
         rootCauseHints: failureMetadata.rootCauseHints,
         cookiePromptAcceptances,
       };
-    });
+    };
+    const result = originContext?.sessionOptions
+      ? await deps.withPage(originContext.sessionOptions, runWithPage)
+      : await deps.withPage(runWithPage);
 
     const reportPath = await persistRunArtifact({
       category: "external-apply-runs",

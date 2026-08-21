@@ -27,12 +27,24 @@ const CLOSED_TEXT_PATTERN =
   /(?:bu ilan|ilan).*?(?:başvuruları|basvurulari).*?(?:artık|artik).*?(?:kabul etmiyor|sona erdi)|ilan (?:yayından|yayindan) kaldırıldı|başvuru süresi sona erdi|applications? (?:are )?closed|no longer accepting applications/i;
 
 const APPLIED_STATUS_PATTERN =
-  /başvur(?:un|unuz|u)?\s+(?:iletildi|alındı|gönderildi)|başvuru(?:nuz)?\s+(?:iletildi|alındı|gönderildi)/iu;
+  /\b(?:(?:bu\s+)?ilana\s+basvurdunuz|basvuruldu|basvuru(?:n(?:uz)?)?\s+(?:(?:sirkete|firmaya|isverene)\s+)?(?:iletildi|alindi|gonderildi|tamamlandi|yapildi|goruntulendi|incelendi|inceleniyor|degerlendiriliyor|degerlendirmede|reddedildi|sonuclandi|isleme\s+alindi))\b/i;
+
+const APPLIED_STATUS_POLL_ATTEMPTS = 6;
+const APPLIED_STATUS_POLL_INTERVAL_MS = 400;
+const APPLIED_STATUS_TEXT_SELECTORS = [
+  "[data-test='application-status-list'] [data-test='interaction-label']",
+  "[data-test='application-status-item'] [data-test='interaction-label']",
+  "[data-test='interaction-label']",
+] as const;
 
 export function isKariyerNetJobUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
     return (
+      parsed.protocol === "https:" &&
+      !parsed.username &&
+      !parsed.password &&
+      (!parsed.port || parsed.port === "443") &&
       /^(?:www\.)?kariyer\.net$/i.test(parsed.hostname) &&
       /^\/is-ilani\/[a-z0-9çğıöşü-]+-\d+\/?$/i.test(parsed.pathname)
     );
@@ -47,25 +59,84 @@ function appendLine(lines: string[], label: string, value: string | null | undef
   }
 }
 
-async function hasSelector(page: Page, selector: string): Promise<boolean> {
-  return (await page.locator(selector).first().count().catch(() => 0)) > 0;
+function normalizeKariyerStatusText(value: string): string {
+  return value
+    .toLocaleLowerCase("tr-TR")
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .replace(/ı/g, "i")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-async function detectKariyerAlreadyApplied(page: Page): Promise<boolean> {
-  const statusLabel = await getTextBySelectors(page, ["[data-test='interaction-label']"]);
-  if (statusLabel && APPLIED_STATUS_PATTERN.test(statusLabel)) {
+function hasAppliedStatusText(value: string | null): boolean {
+  return value ? APPLIED_STATUS_PATTERN.test(normalizeKariyerStatusText(value)) : false;
+}
+
+async function getVisibleText(page: Page, selector: string): Promise<string | null> {
+  const candidates = page.locator(selector);
+  const count = await candidates.count().catch(() => 0);
+  const texts: string[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const candidate = candidates.nth(index);
+    if (!(await candidate.isVisible().catch(() => false))) {
+      continue;
+    }
+
+    const text = optionalText(await candidate.innerText().catch(() => null));
+    if (text) {
+      texts.push(text);
+    }
+  }
+
+  return texts.length > 0 ? texts.join("\n") : null;
+}
+
+async function hasVisibleSelector(page: Page, selector: string): Promise<boolean> {
+  const candidates = page.locator(selector);
+  const count = await candidates.count().catch(() => 0);
+  for (let index = 0; index < count; index += 1) {
+    if (await candidates.nth(index).isVisible().catch(() => false)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function readKariyerAlreadyApplied(page: Page): Promise<boolean> {
+  for (const selector of APPLIED_STATUS_TEXT_SELECTORS) {
+    if (hasAppliedStatusText(await getVisibleText(page, selector))) {
+      return true;
+    }
+  }
+
+  const statusListText = await getVisibleText(page, "[data-test='application-status-list']");
+  if (!statusListText) {
+    return false;
+  }
+  if (hasAppliedStatusText(statusListText)) {
     return true;
   }
 
-  const hasStatusList = await hasSelector(page, "[data-test='application-status-list']");
-  if (!hasStatusList) {
-    return false;
+  return (
+    (await hasVisibleSelector(page, "[data-test='application-status-item']")) &&
+    (await hasVisibleSelector(page, "[data-test='cv-detail-link']"))
+  );
+}
+
+async function detectKariyerAlreadyApplied(page: Page): Promise<boolean> {
+  for (let attempt = 0; attempt < APPLIED_STATUS_POLL_ATTEMPTS; attempt += 1) {
+    if (await readKariyerAlreadyApplied(page)) {
+      return true;
+    }
+
+    if (attempt < APPLIED_STATUS_POLL_ATTEMPTS - 1) {
+      await page.waitForTimeout(APPLIED_STATUS_POLL_INTERVAL_MS);
+    }
   }
 
-  return (
-    (await hasSelector(page, "[data-test='application-status-item']")) ||
-    (await hasSelector(page, "[data-test='cv-detail-link']"))
-  );
+  return false;
 }
 
 function normalizeWorkplaceType(

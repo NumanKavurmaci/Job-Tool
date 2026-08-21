@@ -1614,7 +1614,7 @@ describe("phase 5 index flows", () => {
     );
   });
 
-  it("skips AI evaluation entirely when disabled for batch runs", async () => {
+  it("checks applied state but skips parsing and scoring when AI evaluation is disabled", async () => {
     const { module, mocks, deps } = await loadIndexModule();
     mocks.loadCandidateMasterProfileMock.mockResolvedValue({
       fullName: "Jane Doe",
@@ -1648,6 +1648,16 @@ describe("phase 5 index flows", () => {
       },
     });
     mocks.createEasyApplyDriverMock.mockReturnValue({ driver: true });
+    mocks.extractJobTextMock.mockResolvedValue({
+      title: "Backend Engineer",
+      company: "Acme",
+      companyLogoUrl: null,
+      companyLinkedinUrl: null,
+      location: "Remote",
+      platform: "linkedin",
+      applicationType: "easy_apply",
+      alreadyApplied: false,
+    });
     mockWithPageSuccess(mocks.withPageMock);
     mocks.runEasyApplyBatchDryRunMock.mockResolvedValue({
       status: "completed",
@@ -1678,7 +1688,9 @@ describe("phase 5 index flows", () => {
         policyAllowed: true,
       }),
     );
-    expect(mocks.extractJobTextMock).not.toHaveBeenCalled();
+    expect(mocks.extractJobTextMock).toHaveBeenCalledOnce();
+    expect(mocks.parseJobMock).not.toHaveBeenCalled();
+    expect(mocks.scoreJobMock).not.toHaveBeenCalled();
   });
 
   it("wraps build-profile snapshot failures with a database phase error", async () => {

@@ -3,7 +3,7 @@ import {
   persistJobAnalysisRecord,
   persistJobRecommendationRecord,
 } from "../../utils/jobPersistence.js";
-import { LINKEDIN_BROWSER_SESSION_OPTIONS, PARSE_VERSION } from "../constants.js";
+import { PARSE_VERSION, resolveJobBrowserSessionOptions } from "../constants.js";
 import type { ScoringMode } from "../cli.js";
 import type { AppDeps } from "../deps.js";
 import {
@@ -36,7 +36,7 @@ export async function runJobFlow(
   );
 
   const extracted = await deps.withPage(
-    url.includes("linkedin.com") ? LINKEDIN_BROWSER_SESSION_OPTIONS : {},
+    resolveJobBrowserSessionOptions(url),
     async (page) => deps.extractJobText(page, url),
   );
 

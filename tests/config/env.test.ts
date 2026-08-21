@@ -30,6 +30,8 @@ describe("env config", () => {
       LINKEDIN_PASSWORD: "secret",
       LINKEDIN_SESSION_STATE_PATH: ".auth/linkedin-session.json",
       LINKEDIN_BROWSER_PROFILE_PATH: ".auth/linkedin-profile",
+      KARIYER_SESSION_STATE_PATH: ".auth/kariyer-session.json",
+      KARIYER_BROWSER_PROFILE_PATH: ".auth/kariyer-profile",
     });
   });
 
@@ -57,6 +59,8 @@ describe("env config", () => {
       LINKEDIN_PASSWORD: undefined,
       LINKEDIN_SESSION_STATE_PATH: ".auth/linkedin-session.json",
       LINKEDIN_BROWSER_PROFILE_PATH: ".auth/linkedin-profile",
+      KARIYER_SESSION_STATE_PATH: ".auth/kariyer-session.json",
+      KARIYER_BROWSER_PROFILE_PATH: ".auth/kariyer-profile",
     });
   });
 
@@ -84,6 +88,8 @@ describe("env config", () => {
       LINKEDIN_PASSWORD: undefined,
       LINKEDIN_SESSION_STATE_PATH: ".auth/linkedin-session.json",
       LINKEDIN_BROWSER_PROFILE_PATH: ".auth/linkedin-profile",
+      KARIYER_SESSION_STATE_PATH: ".auth/kariyer-session.json",
+      KARIYER_BROWSER_PROFILE_PATH: ".auth/kariyer-profile",
     });
   });
 
@@ -177,5 +183,21 @@ describe("env config", () => {
     await expect(import("../../src/config/env.js")).rejects.toThrow(
       "LINKEDIN_MANUAL_AUTH_WINDOW_MS must be a positive integer",
     );
+  });
+
+  it("accepts custom Kariyer session paths", async () => {
+    process.env.LLM_PROVIDER = "local";
+    process.env.DATABASE_URL = "file:./dev.db";
+    process.env.LOCAL_LLM_BASE_URL = "http://127.0.0.1:1234/v1";
+    process.env.LOCAL_LLM_MODEL = "openai/gpt-oss-20b";
+    process.env.KARIYER_SESSION_STATE_PATH = "./tmp/kariyer-state.json";
+    process.env.KARIYER_BROWSER_PROFILE_PATH = "./tmp/kariyer-profile";
+
+    const module = await import("../../src/config/env.js");
+
+    expect(module.createEnv()).toEqual(expect.objectContaining({
+      KARIYER_SESSION_STATE_PATH: "./tmp/kariyer-state.json",
+      KARIYER_BROWSER_PROFILE_PATH: "./tmp/kariyer-profile",
+    }));
   });
 });

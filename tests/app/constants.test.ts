@@ -67,6 +67,8 @@ describe("app constants", () => {
       env: {
         LINKEDIN_BROWSER_PROFILE_PATH: "./.linkedin-profile",
         LINKEDIN_SESSION_STATE_PATH: "./.linkedin-session.json",
+        KARIYER_BROWSER_PROFILE_PATH: "./.kariyer-profile",
+        KARIYER_SESSION_STATE_PATH: "./.kariyer-session.json",
       },
     }));
 
@@ -78,6 +80,36 @@ describe("app constants", () => {
       storageStatePath: "./.linkedin-session.json",
       persistStorageState: true,
     });
+    expect(module.KARIYER_BROWSER_SESSION_OPTIONS).toEqual({
+      persistentProfilePath: "./.kariyer-profile",
+      storageStatePath: "./.kariyer-session.json",
+      persistStorageState: true,
+    });
+    expect(
+      module.resolveJobBrowserSessionOptions(
+        "https://www.kariyer.net/is-ilani/acme-backend-developer-4599999",
+      ),
+    ).toEqual(module.KARIYER_BROWSER_SESSION_OPTIONS);
+    expect(
+      module.resolveJobEvaluationSessionOptions(
+        "https://www.kariyer.net/is-ilani/acme-backend-developer-4599999",
+      ),
+    ).toEqual(module.KARIYER_BROWSER_SESSION_OPTIONS);
+    expect(
+      module.resolveJobEvaluationSessionOptions(
+        "https://www.linkedin.com/jobs/view/4453899034",
+      ),
+    ).toEqual(module.LINKEDIN_EVALUATION_SESSION_OPTIONS);
+    expect(
+      module.resolveJobBrowserSessionOptions(
+        "https://kariyer.net.evil.example/is-ilani/acme-backend-developer-4599999",
+      ),
+    ).toEqual({});
+    expect(
+      module.resolveJobBrowserSessionOptions(
+        "https://www.kariyer.net/is-ilanlari",
+      ),
+    ).toEqual({});
   });
 
   it("falls back to a root-level resume file or undefined when no user directory match exists", async () => {
@@ -93,6 +125,8 @@ describe("app constants", () => {
       env: {
         LINKEDIN_BROWSER_PROFILE_PATH: "./.linkedin-profile",
         LINKEDIN_SESSION_STATE_PATH: "./.linkedin-session.json",
+        KARIYER_BROWSER_PROFILE_PATH: "./.kariyer-profile",
+        KARIYER_SESSION_STATE_PATH: "./.kariyer-session.json",
       },
     }));
 
@@ -108,6 +142,8 @@ describe("app constants", () => {
       env: {
         LINKEDIN_BROWSER_PROFILE_PATH: "./.linkedin-profile",
         LINKEDIN_SESSION_STATE_PATH: "./.linkedin-session.json",
+        KARIYER_BROWSER_PROFILE_PATH: "./.kariyer-profile",
+        KARIYER_SESSION_STATE_PATH: "./.kariyer-session.json",
       },
     }));
 

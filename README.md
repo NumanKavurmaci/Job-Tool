@@ -59,6 +59,8 @@ LOCAL_LLM_MODEL=openai/gpt-oss-20b
 DATABASE_URL="file:./dev.db"
 LINKEDIN_SESSION_STATE_PATH=.auth/linkedin-session.json
 LINKEDIN_BROWSER_PROFILE_PATH=.auth/linkedin-profile
+KARIYER_SESSION_STATE_PATH=.auth/kariyer-session.json
+KARIYER_BROWSER_PROFILE_PATH=.auth/kariyer-profile
 ```
 
 OpenAI-compatible local providers such as LM Studio work through `LOCAL_LLM_BASE_URL`. The dashboard checks this same configuration when it reports local readiness.

@@ -186,6 +186,45 @@ describe("app cli", () => {
     });
   });
 
+  it("parses Kariyer.net listing pages as apply batches", () => {
+    const url =
+      "https://www.kariyer.net/is-ilanlari/yazilim+gelistirme+uzmani?pst=3193&pkw=yaz%C4%B1l%C4%B1m%20geli%C5%9Ftirme%20uzman%C4%B1";
+
+    expect(
+      parseCliArgs([
+        "apply-batch",
+        url,
+        "--count",
+        "4",
+        "--dry-run",
+      ]),
+    ).toEqual({
+      mode: "apply-batch",
+      url,
+      resumePath: expect.any(String),
+      count: 4,
+      disableAiEvaluation: false,
+      scoreThreshold: 40,
+      scoringMode: "local",
+      dryRun: true,
+    });
+  });
+
+  it("treats implicit Kariyer.net apply dry runs as apply batches", () => {
+    const url = "https://www.kariyer.net/is-ilanlari/yazilim+uzmani?cp=2";
+
+    expect(parseCliArgs(["apply-dry-run", url])).toEqual({
+      mode: "apply-batch",
+      url,
+      resumePath: expect.any(String),
+      count: 1,
+      disableAiEvaluation: false,
+      scoreThreshold: 40,
+      scoringMode: "local",
+      dryRun: true,
+    });
+  });
+
   it("treats apply dry runs for Ashby listing pages as apply batches", () => {
     expect(
       parseCliArgs([
@@ -314,7 +353,7 @@ describe("app cli", () => {
   it("rejects missing or invalid URLs for explicit apply commands", () => {
     expect(() => parseCliArgs(["external-apply"])).toThrow("--url is required for external-apply.");
     expect(() => parseCliArgs(["apply-batch", "https://www.linkedin.com/jobs/view/1"])).toThrow(
-      "apply-batch requires a supported listing URL (LinkedIn collection/search-results, ReactJobs, or Ashby).",
+      "apply-batch requires a supported listing URL (LinkedIn collection/search-results, ReactJobs, Ashby, or Kariyer.net).",
     );
     expect(() =>
       parseCliArgs(["easy-apply-batch", "https://www.linkedin.com/jobs/view/1"]),
@@ -381,7 +420,22 @@ describe("app cli", () => {
         "./cv.pdf",
       ]),
     ).toThrow(
-      "apply-batch requires a supported listing URL (LinkedIn collection/search-results, ReactJobs, or Ashby).",
+      "apply-batch requires a supported listing URL (LinkedIn collection/search-results, ReactJobs, Ashby, or Kariyer.net).",
+    );
+  });
+
+  it("does not accept a Kariyer.net listing path embedded in an attacker host", () => {
+    expect(() =>
+      parseCliArgs([
+        "apply-batch",
+        "https://kariyer.net.evil.test/is-ilanlari/yazilim+uzmani",
+        "--count",
+        "2",
+        "--resume",
+        "./cv.pdf",
+      ]),
+    ).toThrow(
+      "apply-batch requires a supported listing URL (LinkedIn collection/search-results, ReactJobs, Ashby, or Kariyer.net).",
     );
   });
 });

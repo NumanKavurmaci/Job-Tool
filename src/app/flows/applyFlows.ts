@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
 import type { CliArgs } from "../cli.js";
 import type { AppDeps } from "../deps.js";
+import { isKariyerNetJobUrl } from "../../adapters/KariyerNetAdapter.js";
 import { persistJobHistory, persistRunArtifact } from "../observability.js";
 import { getLatestJobReviewsByUrl } from "../../utils/jobHistory.js";
 import {
@@ -8,6 +9,8 @@ import {
   isReactJobsListingUrl,
 } from "../../reactjobs/listing.js";
 import { isAshbyListingUrl } from "../../ashby/listing.js";
+import { isKariyerListingUrl } from "../../kariyer/listing.js";
+import { KARIYER_BROWSER_SESSION_OPTIONS } from "../constants.js";
 import {
   runExternalApplyDryRunFlow,
   runExternalApplyFlow,
@@ -69,9 +72,21 @@ async function runExternalApplyFromSource(
   const result = args.dryRun
     ? await runExternalApplyDryRunFlow(externalArgs, deps, {
         originalJobUrl: args.url,
+        ...(isKariyerNetJobUrl(args.url)
+          ? {
+              sessionOptions: KARIYER_BROWSER_SESSION_OPTIONS,
+              initialActionSelector: "button[data-test='apply-button']",
+            }
+          : {}),
       })
     : await runExternalApplyFlow(externalArgs, deps, {
         originalJobUrl: args.url,
+        ...(isKariyerNetJobUrl(args.url)
+          ? {
+              sessionOptions: KARIYER_BROWSER_SESSION_OPTIONS,
+              initialActionSelector: "button[data-test='apply-button']",
+            }
+          : {}),
       });
 
   return {
@@ -79,6 +94,128 @@ async function runExternalApplyFromSource(
     mode: "apply" as const,
     sourceJobUrl: args.url,
   };
+}
+
+async function runKariyerApplyBatchFlow(
+  args: ApplyBatchArgs,
+  deps: AppDeps,
+) {
+  const scoringProfile = await deps.loadCandidateProfile();
+  const listingBatch = await deps.withPage(
+    KARIYER_BROWSER_SESSION_OPTIONS,
+    (page) => deps.extractKariyerListingsBatch(page, args.url, args.count),
+  );
+  const listings = listingBatch.listings.slice(0, args.count);
+  const preloadedReviews = await getLatestJobReviewsByUrl({
+    prisma: deps.prisma,
+    jobUrls: listings.map((listing) => listing.url),
+    logger: deps.logger,
+  });
+  const evaluateJob = deps.createBatchJobEvaluator({
+    disableAiEvaluation: args.disableAiEvaluation,
+    scoreThreshold: args.scoreThreshold,
+    scoringMode: args.scoringMode,
+    source: "apply-batch",
+    systemScope: "kariyer.batch",
+    recommendationPolicy: "apply-only",
+    scoringProfile,
+    preloadedReviews,
+    deps,
+  });
+
+  const jobs = [];
+  for (const listing of listings) {
+    try {
+      const evaluation = await evaluateJob(listing.url);
+      if (!evaluation.shouldApply) {
+        jobs.push({ ...listing, status: "skipped" as const, evaluation });
+        continue;
+      }
+
+      const externalArgs = {
+        mode: "external-apply" as const,
+        url: listing.url,
+        resumePath: args.resumePath,
+        dryRun: Boolean(args.dryRun),
+      };
+      const originContext = {
+        originalJobUrl: listing.url,
+        sessionOptions: KARIYER_BROWSER_SESSION_OPTIONS,
+        initialActionSelector: "button[data-test='apply-button']",
+      };
+      const application = args.dryRun
+        ? await runExternalApplyDryRunFlow(externalArgs, deps, originContext)
+        : await runExternalApplyFlow(externalArgs, deps, originContext);
+      await persistJobHistory(
+        {
+          jobUrl: listing.url,
+          source: "apply-batch",
+          status: mapExternalApplicationToHistoryStatus({
+            dryRun: Boolean(args.dryRun),
+            finalStage: application.finalStage,
+          }),
+          score: evaluation.score,
+          threshold: args.scoreThreshold,
+          decision: evaluation.finalDecision,
+          policyAllowed: evaluation.policyAllowed,
+          reasons: [application.stopReason],
+          summary: application.stopReason,
+          details: {
+            shouldApply: evaluation.shouldApply,
+            finalDecision: evaluation.finalDecision,
+            applyUrl: listing.url,
+            externalFinalStage: application.finalStage,
+          },
+        },
+        deps,
+      );
+
+      jobs.push({
+        ...listing,
+        status: "processed" as const,
+        evaluation,
+        applyUrl: listing.url,
+        application,
+      });
+    } catch (error) {
+      jobs.push({
+        ...listing,
+        status: "failed" as const,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  const attemptedCount = jobs.filter((job) => job.status === "processed").length;
+  const skippedCount = jobs.filter((job) => job.status === "skipped").length;
+  const failedCount = jobs.filter((job) => job.status === "failed").length;
+  const result = {
+    mode: "apply-batch" as const,
+    dryRun: Boolean(args.dryRun),
+    applyBatch: {
+      status: failedCount > 0 ? ("partial" as const) : ("completed" as const),
+      collectionUrl: args.url,
+      requestedCount: args.count,
+      evaluatedCount: jobs.length,
+      attemptedCount,
+      skippedCount,
+      failedCount,
+      pagesVisited: listingBatch.pagesVisited,
+      stopReason:
+        jobs.length === 0
+          ? "No Kariyer.net listings were discovered."
+          : `Processed ${attemptedCount} Kariyer.net application(s), skipped ${skippedCount}, and failed ${failedCount}.`,
+      jobs,
+    },
+  };
+  const reportPath = await persistRunArtifact({
+    category: "batch-runs",
+    prefix: args.dryRun ? "apply-batch-dry-run" : "apply-batch",
+    payload: result,
+    deps,
+  });
+
+  return { ...result, reportPath };
 }
 
 async function runReactJobsApplyBatchFlow(
@@ -343,6 +480,9 @@ export async function runApplyDryRunFlow(
     if (isAshbyListingUrl(args.url)) {
       return runAshbyApplyBatchFlow(args, deps);
     }
+    if (isKariyerListingUrl(args.url)) {
+      return runKariyerApplyBatchFlow(args, deps);
+    }
     return runLinkedInApplyDryRunFlow(args, deps);
   }
 
@@ -363,6 +503,9 @@ export async function runApplyBatchFlow(args: ApplyBatchArgs, deps: AppDeps) {
   }
   if (isAshbyListingUrl(args.url)) {
     return runAshbyApplyBatchFlow(args, deps);
+  }
+  if (isKariyerListingUrl(args.url)) {
+    return runKariyerApplyBatchFlow(args, deps);
   }
   return runLinkedInApplyBatchFlow(args, deps);
 }

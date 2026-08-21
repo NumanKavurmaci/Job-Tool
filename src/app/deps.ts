@@ -31,6 +31,10 @@ import {
   extractAshbyListings,
   extractAshbyListingsBatch,
 } from "../ashby/listing.js";
+import {
+  extractKariyerListings,
+  extractKariyerListingsBatch,
+} from "../kariyer/listing.js";
 import { createBatchJobEvaluator } from "./flowHelpers.js";
 
 export const appDeps = {
@@ -43,6 +47,8 @@ export const appDeps = {
   extractReactJobsListingsBatch,
   extractAshbyListings,
   extractAshbyListingsBatch,
+  extractKariyerListings,
+  extractKariyerListingsBatch,
   createBatchJobEvaluator,
   formatJobForLLM,
   parseJob,

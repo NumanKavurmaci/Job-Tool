@@ -1,5 +1,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
+import { isKariyerNetJobUrl } from "../adapters/KariyerNetAdapter.js";
+import type { BrowserSessionOptions } from "../browser/playwright.js";
 import { env } from "../config/env.js";
 import { assertSafeLinkedInNavigationUrl } from "../security/navigationSafety.js";
 
@@ -18,6 +20,45 @@ export const LINKEDIN_EVALUATION_SESSION_OPTIONS = {
   storageStatePath: env.LINKEDIN_SESSION_STATE_PATH,
   persistStorageState: true,
 } as const;
+
+export const KARIYER_BROWSER_SESSION_OPTIONS = {
+  persistentProfilePath: env.KARIYER_BROWSER_PROFILE_PATH,
+  storageStatePath: env.KARIYER_SESSION_STATE_PATH,
+  persistStorageState: true,
+} as const;
+
+function isLinkedInNavigationUrl(url: string): boolean {
+  try {
+    assertSafeLinkedInNavigationUrl(url, "LinkedIn job URL");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function resolveJobBrowserSessionOptions(url: string): BrowserSessionOptions {
+  if (isLinkedInNavigationUrl(url)) {
+    return LINKEDIN_BROWSER_SESSION_OPTIONS;
+  }
+
+  if (isKariyerNetJobUrl(url)) {
+    return KARIYER_BROWSER_SESSION_OPTIONS;
+  }
+
+  return {};
+}
+
+export function resolveJobEvaluationSessionOptions(url: string): BrowserSessionOptions {
+  if (isLinkedInNavigationUrl(url)) {
+    return LINKEDIN_EVALUATION_SESSION_OPTIONS;
+  }
+
+  if (isKariyerNetJobUrl(url)) {
+    return KARIYER_BROWSER_SESSION_OPTIONS;
+  }
+
+  return {};
+}
 
 export function isLinkedInBatchUrl(url: string): boolean {
   try {

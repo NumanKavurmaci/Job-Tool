@@ -14,6 +14,9 @@ describe("KariyerNetAdapter", () => {
     expect(adapter.canHandle("https://kariyer.net/is-ilani/urun-yoneticisi-12345/?ref=home")).toBe(true);
     expect(adapter.canHandle("https://kurumsal.kariyer.net/is-ilani/urun-yoneticisi-12345")).toBe(false);
     expect(adapter.canHandle("https://kariyer.net.evil.example/is-ilani/urun-yoneticisi-12345")).toBe(false);
+    expect(adapter.canHandle("http://www.kariyer.net/is-ilani/urun-yoneticisi-12345")).toBe(false);
+    expect(adapter.canHandle("https://user:secret@www.kariyer.net/is-ilani/urun-yoneticisi-12345")).toBe(false);
+    expect(adapter.canHandle("https://www.kariyer.net:444/is-ilani/urun-yoneticisi-12345")).toBe(false);
     expect(adapter.canHandle("https://www.kariyer.net/is-ilanlari")).toBe(false);
   });
 
@@ -79,6 +82,93 @@ describe("KariyerNetAdapter", () => {
       applyUrl: null,
     }));
     expect(result.rawText).toContain("Candidate Application Status: already_applied");
+  });
+
+  it("waits for a personalized applied status that hydrates after the public job shell", async () => {
+    const waits: number[] = [];
+    const page = createMockPage({
+      currentUrl: kariyerAppliedFixture.url,
+      selectors: { ...kariyerOpenFixture.selectors },
+      evaluateResult: kariyerAppliedFixture.structuredData,
+      onWaitForTimeout(timeoutMs, context) {
+        waits.push(timeoutMs);
+        if (timeoutMs < 1_000) {
+          context.setState({
+            selectors: {
+              ...kariyerOpenFixture.selectors,
+              "[data-test='application-status-list']": {
+                text: "Bu ilana başvurdunuz\n13.08.2026",
+              },
+              "[data-test='application-status-item']": {
+                text: "Bu ilana başvurdunuz\n13.08.2026",
+              },
+              "[data-test='interaction-label']": { text: "Bu ilana başvurdunuz" },
+            },
+          });
+        }
+      },
+    });
+
+    const result = await new KariyerNetAdapter().extract(page as never, kariyerAppliedFixture.url);
+
+    expect(waits).toContain(400);
+    expect(result).toMatchObject({
+      alreadyApplied: true,
+      applicationType: "unknown",
+      applyUrl: null,
+    });
+  });
+
+  it("accepts a visible status history with a CV detail link as strong applied evidence", async () => {
+    const page = createMockPage({
+      currentUrl: kariyerAppliedFixture.url,
+      selectors: {
+        ...kariyerOpenFixture.selectors,
+        "[data-test='application-status-list']": { text: "Başvuru Bilgileri\n13.08.2026" },
+        "[data-test='application-status-item']": { text: "13.08.2026" },
+        "[data-test='cv-detail-link']": { text: "CV detayını incele" },
+      },
+      evaluateResult: kariyerAppliedFixture.structuredData,
+    });
+
+    const result = await new KariyerNetAdapter().extract(page as never, kariyerAppliedFixture.url);
+
+    expect(result.alreadyApplied).toBe(true);
+    expect(result.applyUrl).toBeNull();
+  });
+
+  it("ignores hidden applied templates and stops polling after a bounded number of attempts", async () => {
+    const waits: number[] = [];
+    const page = createMockPage({
+      currentUrl: kariyerOpenFixture.url,
+      selectors: {
+        ...kariyerOpenFixture.selectors,
+        "[data-test='application-status-list']": {
+          text: "Başvurunuz gönderildi",
+          visible: false,
+        },
+        "[data-test='application-status-item']": {
+          text: "Başvurunuz gönderildi",
+          visible: false,
+        },
+        "[data-test='interaction-label']": {
+          text: "Başvurunuz gönderildi",
+          visible: false,
+        },
+        "[data-test='cv-detail-link']": { text: "CV detayını incele", visible: false },
+      },
+      evaluateResult: kariyerOpenFixture.structuredData,
+      onWaitForTimeout(timeoutMs) {
+        waits.push(timeoutMs);
+      },
+    });
+
+    const result = await new KariyerNetAdapter().extract(page as never, kariyerOpenFixture.url);
+
+    expect(waits.filter((timeoutMs) => timeoutMs === 400)).toHaveLength(5);
+    expect(result.alreadyApplied).toBeUndefined();
+    expect(result.applicationType).toBe("external");
+    expect(result.applyUrl).toBe(kariyerOpenFixture.url);
   });
 
   it("parses the current visible Kariyer description and location selectors without JSON-LD", async () => {

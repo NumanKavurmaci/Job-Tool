@@ -7,6 +7,7 @@ import {
 } from "./constants.js";
 import { isReactJobsListingUrl } from "../reactjobs/listing.js";
 import { isAshbyListingUrl } from "../ashby/listing.js";
+import { isKariyerListingUrl } from "../kariyer/listing.js";
 import {
   assertSafeLinkedInNavigationUrl,
   assertSafeNavigationUrl,
@@ -408,7 +409,8 @@ function looksLikeImplicitApplyBatch(args: {
   return (
     looksLikeImplicitLinkedInBatch(args) ||
     isReactJobsListingUrl(args.positionalArgs[0] ?? "") ||
-    isAshbyListingUrl(args.positionalArgs[0] ?? "")
+    isAshbyListingUrl(args.positionalArgs[0] ?? "") ||
+    isKariyerListingUrl(args.positionalArgs[0] ?? "")
   );
 }
 
@@ -476,9 +478,14 @@ function assertLinkedInCollectionMode(mode: LinkedInBatchMode, url: string) {
 
 function assertSupportedApplyBatchUrl(url: string) {
   assertSafeNavigationUrl(url, { context: "Apply batch URL" });
-  if (!isLinkedInBatchUrl(url) && !isReactJobsListingUrl(url) && !isAshbyListingUrl(url)) {
+  if (
+    !isLinkedInBatchUrl(url) &&
+    !isReactJobsListingUrl(url) &&
+    !isAshbyListingUrl(url) &&
+    !isKariyerListingUrl(url)
+  ) {
     throw new Error(
-      "apply-batch requires a supported listing URL (LinkedIn collection/search-results, ReactJobs, or Ashby).",
+      "apply-batch requires a supported listing URL (LinkedIn collection/search-results, ReactJobs, Ashby, or Kariyer.net).",
     );
   }
 }
@@ -522,6 +529,7 @@ function parseLinkedInFamilyCommand(args: {
     isLinkedInBatchUrl(normalizedUrl) ||
     isReactJobsListingUrl(normalizedUrl) ||
     isAshbyListingUrl(normalizedUrl) ||
+    isKariyerListingUrl(normalizedUrl) ||
     batchShape.count > 1
   ) {
     if (args.family === "easy-apply") {

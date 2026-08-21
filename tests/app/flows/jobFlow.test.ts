@@ -202,6 +202,14 @@ describe("job flow", () => {
       finalDecision: "SKIP",
       reportPath: "artifacts/job-runs/score-already-applied.json",
     });
+    expect(deps.withPage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        persistentProfilePath: expect.any(String),
+        storageStatePath: expect.any(String),
+        persistStorageState: true,
+      }),
+      expect.any(Function),
+    );
     expect(deps.loadCandidateProfile).not.toHaveBeenCalled();
     expect(deps.formatJobForLLM).not.toHaveBeenCalled();
     expect(deps.parseJob).not.toHaveBeenCalled();

@@ -22,6 +22,15 @@ const LINKEDIN_JOB_CARD_SELECTOR = [
   "li[data-occludable-job-id]",
 ].join(", ");
 const LINKEDIN_JOB_RESULT_SELECTOR = `${LINKEDIN_JOB_CARD_SELECTOR}, a[href*='/jobs/view/']`;
+const LINKEDIN_RESULTS_SCROLL_CONTAINER_SELECTOR = [
+  ".jobs-search-results-list",
+  ".jobs-search-results-list__list",
+  ".scaffold-layout__list",
+  ".scaffold-layout__list-container",
+].join(", ");
+const LINKEDIN_COLLECTION_SCAN_LIMIT = 24;
+const LINKEDIN_COLLECTION_STABLE_SCAN_LIMIT = 3;
+const LINKEDIN_COLLECTION_SCROLL_WAIT_MS = 350;
 import { createEmptySiteFeedbackSnapshot, type SiteFeedbackSnapshot } from "../browser/siteFeedback.js";
 import {
   buildLinkedInJobSurfaceSelector,
@@ -739,53 +748,133 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
   }
 
   async collectVisibleJobs() {
-    const cards = await this.page.locator(LINKEDIN_JOB_RESULT_SELECTOR)
-      .evaluateAll((elements) =>
-        elements.map((element) => {
-          const htmlElement = element as any;
-          const anchor =
-            htmlElement.matches?.("a[href*='/jobs/view/']")
-              ? htmlElement
-              : htmlElement.querySelector(
-                  "a[href*='/jobs/view/'], .job-card-container__link, .job-card-list__title",
-                );
-          const href = anchor?.getAttribute("href") ?? "";
-          const card = htmlElement.closest?.(
-            ".jobs-search-results__list-item, li.scaffold-layout__list-item, li[data-occludable-job-id]",
-          );
-          const text = (card?.textContent ?? htmlElement.textContent ?? "")
-            .replace(/\s+/g, " ")
-            .trim()
-            .toLowerCase();
-          return {
-            href,
-            alreadyApplied: text.includes("applied") || text.includes("see application"),
-          };
-        }),
-      );
-
     const normalized = new Map<string, { url: string; alreadyApplied: boolean }>();
-    for (const card of cards) {
-      if (!card.href || !card.href.includes("/jobs/view/")) {
-        continue;
-      }
+    let stableScans = 0;
 
-      try {
-        const url = new URL(card.href, this.page.url());
-        const match = url.pathname.match(/\/jobs\/view\/(\d+)/);
-        if (!match) {
+    for (let scanIndex = 0; scanIndex < LINKEDIN_COLLECTION_SCAN_LIMIT; scanIndex += 1) {
+      const sizeBeforeScan = normalized.size;
+      const cards = await this.page.locator(LINKEDIN_JOB_RESULT_SELECTOR)
+        .evaluateAll((elements) =>
+          elements.map((element) => {
+            const htmlElement = element as any;
+            const anchor =
+              htmlElement.matches?.("a[href*='/jobs/view/']")
+                ? htmlElement
+                : htmlElement.querySelector(
+                    "a[href*='/jobs/view/'], .job-card-container__link, .job-card-list__title",
+                  );
+            const href = anchor?.getAttribute("href") ?? "";
+            const card = htmlElement.closest(
+              ".jobs-search-results__list-item, li.scaffold-layout__list-item, li[data-occludable-job-id]",
+            ) ?? htmlElement;
+            const statusText = [
+              ...Array.from(
+                card.querySelectorAll(
+                  "[class*='job-state'], [class*='footer'], [data-test*='application'], [aria-label], [title]",
+                ),
+              ).flatMap((node: any) => [
+                node.textContent ?? "",
+                node.getAttribute("aria-label") ?? "",
+                node.getAttribute("title") ?? "",
+              ]),
+              ...Array.from(card.childNodes)
+                .filter((node: any) => node.nodeType === 3)
+                .map((node: any) => node.textContent ?? ""),
+            ]
+              .join(" ")
+              .replace(/\s+/g, " ")
+              .trim()
+              .toLocaleLowerCase("tr");
+            return {
+              href,
+              alreadyApplied:
+                /\bapplied\b|\bsee application\b|\bapplication submitted\b|başvuruldu|başvuru(?:nuz|n)?\s+(?:iletildi|alındı|gönderildi)/iu.test(
+                  statusText,
+                ),
+            };
+          }),
+        );
+
+      for (const card of cards) {
+        if (!card.href || !card.href.includes("/jobs/view/")) {
           continue;
         }
 
-        const normalizedUrl = `${url.origin}/jobs/view/${match[1]}`;
-        const existing = normalized.get(normalizedUrl);
-        normalized.set(normalizedUrl, {
-          url: normalizedUrl,
-          alreadyApplied: existing?.alreadyApplied === true || card.alreadyApplied,
-        });
-      } catch {
-        continue;
+        try {
+          const url = new URL(card.href, this.page.url());
+          const match = url.pathname.match(/\/jobs\/view\/(\d+)/);
+          if (!match) {
+            continue;
+          }
+
+          const normalizedUrl = `${url.origin}/jobs/view/${match[1]}`;
+          const existing = normalized.get(normalizedUrl);
+          normalized.set(normalizedUrl, {
+            url: normalizedUrl,
+            alreadyApplied: existing?.alreadyApplied === true || card.alreadyApplied,
+          });
+        } catch {
+          continue;
+        }
       }
+
+      stableScans = normalized.size === sizeBeforeScan ? stableScans + 1 : 0;
+      const scrollResult = await this.page.evaluate(
+        ({ cardSelector, containerSelector }) => {
+          const browserGlobal = globalThis as any;
+          const documentRef = browserGlobal.document;
+          const windowRef = browserGlobal.window;
+          const firstCard = documentRef.querySelector(cardSelector);
+          const explicitContainers = Array.from(
+            documentRef.querySelectorAll(containerSelector),
+          ) as any[];
+          const ancestorContainers: any[] = [];
+          let ancestor = firstCard?.parentElement ?? null;
+          while (ancestor && ancestor !== documentRef.body) {
+            const style = windowRef.getComputedStyle(ancestor);
+            if (
+              ancestor.scrollHeight > ancestor.clientHeight + 1 &&
+              /auto|scroll|overlay/i.test(style.overflowY)
+            ) {
+              ancestorContainers.push(ancestor);
+            }
+            ancestor = ancestor.parentElement;
+          }
+
+          const container = [...ancestorContainers, ...explicitContainers].find(
+            (candidate) => candidate.scrollHeight > candidate.clientHeight + 1,
+          );
+          if (!container) {
+            return { advanced: false, atEnd: true };
+          }
+
+          const maximumScrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+          const previousScrollTop = container.scrollTop;
+          const nextScrollTop = Math.min(
+            maximumScrollTop,
+            previousScrollTop + Math.max(320, Math.floor(container.clientHeight * 0.8)),
+          );
+          container.scrollTop = nextScrollTop;
+          container.dispatchEvent(new Event("scroll", { bubbles: true }));
+          return {
+            advanced: nextScrollTop > previousScrollTop + 1,
+            atEnd: nextScrollTop >= maximumScrollTop - 1,
+          };
+        },
+        {
+          cardSelector: LINKEDIN_JOB_CARD_SELECTOR,
+          containerSelector: LINKEDIN_RESULTS_SCROLL_CONTAINER_SELECTOR,
+        },
+      ).catch(() => ({ advanced: false, atEnd: true }));
+
+      if (!scrollResult.advanced && (scrollResult.atEnd || stableScans > 0)) {
+        break;
+      }
+      if (scrollResult.atEnd && stableScans >= LINKEDIN_COLLECTION_STABLE_SCAN_LIMIT) {
+        break;
+      }
+
+      await this.page.waitForTimeout(LINKEDIN_COLLECTION_SCROLL_WAIT_MS);
     }
 
     return Array.from(normalized.values());

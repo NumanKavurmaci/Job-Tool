@@ -331,6 +331,48 @@ describe("PlaywrightLinkedInEasyApplyDriver", () => {
     await page.close();
   });
 
+  it("scrolls a virtualized LinkedIn result list and accumulates replaced cards", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <div class="jobs-search-results-list" style="height: 120px; overflow-y: auto">
+        <ul id="results" style="margin: 0; padding: 0">
+          <li data-occludable-job-id="4443235445" style="height: 120px">
+            <a href="https://www.linkedin.com/jobs/view/4443235445/?trackingId=first">Software Engineer</a>
+          </li>
+          <li data-occludable-job-id="4444570774" style="height: 120px">
+            Applied <a href="https://www.linkedin.com/jobs/view/4444570774/">Software Specialist</a>
+          </li>
+        </ul>
+      </div>
+      <script>
+        document.querySelector('.jobs-search-results-list').addEventListener('scroll', () => {
+          const results = document.querySelector('#results');
+          if (results.dataset.replaced) return;
+          results.dataset.replaced = 'true';
+          results.innerHTML = [
+            '<li data-occludable-job-id="4449010001" style="height: 120px">',
+            '<a href="https://www.linkedin.com/jobs/view/4449010001/">Platform Engineer</a>',
+            '</li>',
+            '<li data-occludable-job-id="4449010002" style="height: 120px">',
+            '<a href="https://www.linkedin.com/jobs/view/4449010002/">Applied Scientist</a>',
+            '</li>',
+          ].join('');
+        });
+      </script>
+    `);
+
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page);
+
+    await expect(driver.collectVisibleJobs()).resolves.toEqual([
+      { url: "https://www.linkedin.com/jobs/view/4443235445", alreadyApplied: false },
+      { url: "https://www.linkedin.com/jobs/view/4444570774", alreadyApplied: true },
+      { url: "https://www.linkedin.com/jobs/view/4449010001", alreadyApplied: false },
+      { url: "https://www.linkedin.com/jobs/view/4449010002", alreadyApplied: false },
+    ]);
+
+    await page.close();
+  });
+
   it("continues past the job search safety reminder modal instead of stopping on it", async () => {
     const page = await browser.newPage();
     await page.setContent(linkedInSafetyReminderModalHtml);

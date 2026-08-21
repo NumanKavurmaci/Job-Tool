@@ -24,9 +24,10 @@ const applyUrl =
 
 function createDeps(): AppDeps {
   return {
-    withPage: vi.fn(async (callback: (page: unknown) => Promise<unknown>) =>
-      callback({}),
-    ),
+    withPage: vi.fn(async (
+      optionsOrCallback: object | ((page: unknown) => Promise<unknown>),
+      maybeCallback?: (page: unknown) => Promise<unknown>,
+    ) => (maybeCallback ?? optionsOrCallback as (page: unknown) => Promise<unknown>)({})),
     extractJobText: vi.fn(async () => ({ applyUrl })),
     extractReactJobsListings: vi.fn(async () => [
       {
@@ -72,6 +73,22 @@ function createDeps(): AppDeps {
           employmentType: "Full time",
           workplaceType: "Remote",
           department: "Engineering",
+        },
+      ],
+      pagesVisited: 1,
+    })),
+    extractKariyerListings: vi.fn(async () => []),
+    extractKariyerListingsBatch: vi.fn(async () => ({
+      listings: [
+        {
+          jobId: "4536815",
+          url: "https://www.kariyer.net/is-ilani/arox-bilisim-sistemleri-a-s-yazilim-gelistirme-uzmani-c-c-4536815",
+          title: "Yazılım Geliştirme Uzmanı (C/C++)",
+          company: "Arox Bilişim Sistemleri A.Ş.",
+          location: "İstanbul(Asya) (Ataşehir)",
+          workplaceType: "İş Yerinde",
+          badges: ["Tam Zamanlı"],
+          posted: "Bugün",
         },
       ],
       pagesVisited: 1,
@@ -202,6 +219,48 @@ describe("apply flows", () => {
     expect(result.applyBatch.stopReason).toBe(
       "Processed 1 Ashby application(s), skipped 0, and failed 0.",
     );
+  });
+
+  it("expands Kariyer.net listings with the Kariyer session and dry-runs each approved job", async () => {
+    const deps = createDeps();
+    const listingUrl =
+      "https://www.kariyer.net/is-ilanlari/yazilim+gelistirme+uzmani?pst=3193&pkw=yaz%C4%B1l%C4%B1m%20geli%C5%9Ftirme%20uzman%C4%B1";
+    const jobUrl =
+      "https://www.kariyer.net/is-ilani/arox-bilisim-sistemleri-a-s-yazilim-gelistirme-uzmani-c-c-4536815";
+
+    const result = await runApplyDryRunFlow(
+      {
+        mode: "apply-batch",
+        url: listingUrl,
+        resumePath: "./user/resume.pdf",
+        count: 1,
+        disableAiEvaluation: false,
+        scoreThreshold: 40,
+        scoringMode: "local",
+        dryRun: true,
+      },
+      deps,
+    );
+
+    expect(deps.extractKariyerListingsBatch).toHaveBeenCalledWith({}, listingUrl, 1);
+    expect(deps.createBatchJobEvaluator).toHaveBeenCalledWith(
+      expect.objectContaining({ systemScope: "kariyer.batch" }),
+    );
+    expect(externalMocks.dryRun).toHaveBeenCalledWith(
+      expect.objectContaining({ url: jobUrl, dryRun: true }),
+      deps,
+      expect.objectContaining({
+        originalJobUrl: jobUrl,
+        sessionOptions: expect.objectContaining({ persistStorageState: true }),
+      }),
+    );
+    expect(result.applyBatch).toMatchObject({
+      collectionUrl: listingUrl,
+      evaluatedCount: 1,
+      attemptedCount: 1,
+      failedCount: 0,
+      pagesVisited: 1,
+    });
   });
 
   it("paginates ReactJobs result pages until enough listings are collected", async () => {

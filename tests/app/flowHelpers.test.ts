@@ -117,8 +117,17 @@ describe("app flow helpers", () => {
     });
   });
 
-  it("returns an immediate APPLY evaluation when AI evaluation is disabled", async () => {
+  it("extracts applied-state evidence but skips parsing and scoring when AI evaluation is disabled", async () => {
     const deps = createDeps();
+    deps.extractJobText.mockResolvedValue({
+      title: null,
+      company: null,
+      companyLogoUrl: null,
+      companyLinkedinUrl: null,
+      location: null,
+      applicationType: "external",
+      alreadyApplied: false,
+    });
     const evaluate = createBatchJobEvaluator({
       disableAiEvaluation: true,
       scoreThreshold: 60,
@@ -135,11 +144,56 @@ describe("app flow helpers", () => {
       reason: "AI evaluation disabled for this batch run.",
       policyAllowed: true,
       diagnostics: {
+        title: null,
+        company: null,
+        location: null,
+        companyLinkedinUrl: null,
+        applicationType: "external",
+        alreadyApplied: false,
+        rawWorkplaceType: null,
+        rawApplicationType: "external",
+        locationSource: null,
         metadataRead: false,
         companyInfoRead: false,
       },
     });
-    expect(deps.extractJobText).not.toHaveBeenCalled();
+    expect(deps.extractJobText).toHaveBeenCalledOnce();
+    expect(deps.parseJob).not.toHaveBeenCalled();
+    expect(deps.scoreJob).not.toHaveBeenCalled();
+  });
+
+  it("skips an already-applied job even when AI evaluation is disabled", async () => {
+    const deps = createDeps();
+    deps.extractJobText.mockResolvedValue({
+      title: "Backend Developer",
+      company: "Acme",
+      companyLogoUrl: null,
+      companyLinkedinUrl: null,
+      location: "Remote",
+      platform: "kariyer",
+      applicationType: "unknown",
+      alreadyApplied: true,
+    });
+    const evaluate = createBatchJobEvaluator({
+      disableAiEvaluation: true,
+      scoreThreshold: 60,
+      scoringMode: "local",
+      scoringProfile: {} as any,
+      evaluationPage: { fake: true } as any,
+      deps,
+    });
+
+    await expect(
+      evaluate("https://www.kariyer.net/is-ilani/acme-backend-developer-4599999"),
+    ).resolves.toMatchObject({
+      shouldApply: false,
+      finalDecision: "SKIP",
+      score: 0,
+      alreadyApplied: true,
+    });
+    expect(deps.parseJob).not.toHaveBeenCalled();
+    expect(deps.scoreJob).not.toHaveBeenCalled();
+    expect(deps.scoreJobWithAi).not.toHaveBeenCalled();
   });
 
   it("skips parser and score evaluation when extraction detects an existing application", async () => {

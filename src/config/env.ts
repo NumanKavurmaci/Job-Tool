@@ -58,6 +58,10 @@ export function createEnv() {
     optional("LINKEDIN_SESSION_STATE_PATH") ?? ".auth/linkedin-session.json";
   const LINKEDIN_BROWSER_PROFILE_PATH =
     optional("LINKEDIN_BROWSER_PROFILE_PATH") ?? ".auth/linkedin-profile";
+  const KARIYER_SESSION_STATE_PATH =
+    optional("KARIYER_SESSION_STATE_PATH") ?? ".auth/kariyer-session.json";
+  const KARIYER_BROWSER_PROFILE_PATH =
+    optional("KARIYER_BROWSER_PROFILE_PATH") ?? ".auth/kariyer-profile";
   const hasLocalConfiguration = Boolean(LOCAL_LLM_BASE_URL && LOCAL_LLM_MODEL);
   const LLM_PROVIDER = (configuredProvider ??
     (hasLocalConfiguration ? "local" : "openai")) as LlmProviderName;
@@ -95,10 +99,12 @@ export function createEnv() {
     LOCAL_LLM_TIMEOUT_MS,
     LINKEDIN_MANUAL_AUTH_WINDOW_MS,
     DATABASE_URL,
-      LINKEDIN_USERNAME,
-      LINKEDIN_PASSWORD,
-      LINKEDIN_SESSION_STATE_PATH,
-      LINKEDIN_BROWSER_PROFILE_PATH,
+    LINKEDIN_USERNAME,
+    LINKEDIN_PASSWORD,
+    LINKEDIN_SESSION_STATE_PATH,
+    LINKEDIN_BROWSER_PROFILE_PATH,
+    KARIYER_SESSION_STATE_PATH,
+    KARIYER_BROWSER_PROFILE_PATH,
   };
 }
 

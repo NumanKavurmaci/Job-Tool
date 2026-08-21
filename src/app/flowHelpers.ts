@@ -16,7 +16,7 @@ import {
   persistJobRecommendationRecord,
   refreshJobPostingMetadata,
 } from "../utils/jobPersistence.js";
-import { LINKEDIN_EVALUATION_SESSION_OPTIONS, PARSE_VERSION } from "./constants.js";
+import { PARSE_VERSION, resolveJobEvaluationSessionOptions } from "./constants.js";
 import type { AppDeps } from "./deps.js";
 import {
   ALREADY_APPLIED_SCORE_SKIP_REASON,
@@ -220,20 +220,6 @@ export function createBatchJobEvaluator(args: {
       }
     }
 
-    if (args.disableAiEvaluation) {
-      return {
-        shouldApply: true,
-        finalDecision: "APPLY" as const,
-        score: 0,
-        reason: "AI evaluation disabled for this batch run.",
-        policyAllowed: true,
-        diagnostics: {
-          metadataRead: false,
-          companyInfoRead: false,
-        },
-      };
-    }
-
     const extracted = await time("job.extractText", () =>
       deps.extractJobText(evaluationPage, url),
     );
@@ -277,6 +263,16 @@ export function createBatchJobEvaluator(args: {
         reason: ALREADY_APPLIED_SCORE_SKIP_REASON,
         policyAllowed: true,
         alreadyApplied: true,
+        diagnostics,
+      };
+    }
+    if (args.disableAiEvaluation) {
+      return {
+        shouldApply: true,
+        finalDecision: "APPLY" as const,
+        score: 0,
+        reason: "AI evaluation disabled for this batch run.",
+        policyAllowed: true,
         diagnostics,
       };
     }
@@ -418,7 +414,7 @@ export function createBatchJobEvaluator(args: {
 
   return async (url: string) =>
     deps.withPage(
-      LINKEDIN_EVALUATION_SESSION_OPTIONS,
+      resolveJobEvaluationSessionOptions(url),
       async (evaluationPage) => evaluateOnPage(evaluationPage, url),
     );
 }
