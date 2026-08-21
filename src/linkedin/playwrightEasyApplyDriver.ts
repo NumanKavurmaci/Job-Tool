@@ -6,6 +6,7 @@ import {
 } from "../security/navigationSafety.js";
 import type {
   EasyApplyDriver,
+  EasyApplyProcessingDriverLease,
   EasyApplyExternalDetection,
   EasyApplyJobApplicationState,
   EasyApplyProcessingTimeoutResetInput,
@@ -633,6 +634,37 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
     return true;
   }
 
+  async createProcessingDriver(url: string): Promise<EasyApplyProcessingDriverLease> {
+    const attemptPage = await this.page.context().newPage();
+    const attemptDriver = new PlaywrightLinkedInEasyApplyDriver(
+      attemptPage,
+      this.options,
+    );
+    let disposed = false;
+    const dispose = async (): Promise<void> => {
+      if (disposed) {
+        return;
+      }
+      await attemptDriver.dispose();
+      disposed = true;
+    };
+
+    try {
+      // The shared browser context carries the authenticated session, while the
+      // new page keeps application navigation and timeouts away from the page
+      // that owns collection pagination.
+      await attemptDriver.open(url);
+      return { driver: attemptDriver, dispose };
+    } catch (error) {
+      await dispose().catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async dispose(): Promise<void> {
+    await this.closeOwnedPages(this.page.context());
+  }
+
   async open(url: string): Promise<void> {
     await safeLinkedInPageGoto(this.page, url, {
       waitUntil: "domcontentloaded",
@@ -735,6 +767,16 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
     return (await this.resolveExternalApplyTrigger()) !== null;
   }
 
+  private readCapturedExternalApplyUrl(previousUrl: string): string | null {
+    if (this.page.isClosed() || this.isBlankPage(this.page)) {
+      return null;
+    }
+    const currentUrl = this.page.url().trim();
+    return currentUrl && currentUrl !== previousUrl
+      ? currentUrl
+      : null;
+  }
+
   async getExternalApplyUrl(): Promise<string | null> {
     const resolved = await this.resolveExternalApplyTrigger();
     if (!resolved) {
@@ -747,8 +789,17 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
       return href;
     }
 
-    const ariaLabel = await locator.getAttribute("aria-label").catch(() => null);
-    return ariaLabel ? `linkedin-external:${ariaLabel}` : null;
+    const previousUrl = this.page.url();
+    await this.clickFollowingNewPage(locator);
+    let capturedUrl = this.readCapturedExternalApplyUrl(previousUrl);
+    if (capturedUrl) {
+      return capturedUrl;
+    }
+
+    if (await this.continuePastSafetyReminder()) {
+      capturedUrl = this.readCapturedExternalApplyUrl(previousUrl);
+    }
+    return capturedUrl;
   }
 
   async getExternalApplyDetection(): Promise<EasyApplyExternalDetection | null> {

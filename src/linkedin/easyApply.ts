@@ -183,10 +183,16 @@ export interface EasyApplyBatchRunResult {
   stopReason: string;
 }
 
+export interface EasyApplyProcessingDriverLease {
+  driver: EasyApplyDriver;
+  dispose(): Promise<void>;
+}
+
 export interface EasyApplyDriver {
   open(url: string): Promise<void>;
   openCollection(url: string): Promise<void>;
   ensureAuthenticated(url: string): Promise<void>;
+  createProcessingDriver?(url: string): Promise<EasyApplyProcessingDriverLease>;
   resetAfterProcessingTimeout?(
     input?: EasyApplyProcessingTimeoutResetInput,
   ): Promise<void>;
@@ -897,6 +903,35 @@ async function restoreCollectionContextAfterApprovedJob(
   );
 }
 
+async function recoverCollectionAfterIsolatedJobFailure(
+  input: EasyApplyBatchRunInput,
+  failedJobUrl: string,
+): Promise<NonNullable<EasyApplyRunResult["recovery"]>> {
+  try {
+    await runBoundedCollectionContextOperation(
+      input,
+      failedJobUrl,
+      "recovery",
+      (driver) => driver.openCollection(buildCollectionJobUrl(input.url, failedJobUrl)),
+    );
+    return {
+      attempted: true,
+      succeeded: true,
+      message:
+        `Recovered batch context after isolated processing failed on ${failedJobUrl}. ` +
+        "The collection page remained separate from the failed application attempt.",
+    };
+  } catch (recoveryError) {
+    return {
+      attempted: true,
+      succeeded: false,
+      message:
+        `Failed to recover the collection after isolated processing failed on ${failedJobUrl}: ` +
+        getErrorMessage(recoveryError),
+    };
+  }
+}
+
 async function recoverBatchAfterJobFailure(
   input: EasyApplyBatchRunInput,
   failedJobUrl: string,
@@ -1489,6 +1524,15 @@ export async function runEasyApplyBatchInternal(
       const entry: EasyApplyBatchJobResult = { url, evaluation };
       jobs.push(entry);
       let recoveredAfterProcessingFailure = false;
+      let processingLease: EasyApplyProcessingDriverLease | null = null;
+      let processingLeaseDisposed = false;
+      const disposeProcessingLease = async (): Promise<void> => {
+        if (!processingLease || processingLeaseDisposed) {
+          return;
+        }
+        await processingLease.dispose();
+        processingLeaseDisposed = true;
+      };
 
       try {
         await input.observeBatchEvent?.({
@@ -1499,13 +1543,20 @@ export async function runEasyApplyBatchInternal(
           attemptIndex: attemptedCount + 1,
           evaluation,
         });
+        processingLease =
+          (await input.driver.createProcessingDriver?.(url)) ?? null;
+        const processingInput = processingLease
+          ? { ...input, driver: processingLease.driver }
+          : input;
         entry.result = await processApprovedBatchJob(
-          input,
+          processingInput,
           url,
           evaluation,
           submitMode,
         );
+        await disposeProcessingLease();
       } catch (error) {
+        await disposeProcessingLease().catch(() => undefined);
         const serializedError = serializeError(error);
         await input.observeBatchEvent?.({
           type: "job_processing_failed",
@@ -1520,6 +1571,7 @@ export async function runEasyApplyBatchInternal(
         if (
           (error instanceof ApprovedJobProcessingTimeoutError ||
             error instanceof ExternalApplyInspectionTimeoutError) &&
+          !processingLease &&
           input.driver.resetAfterProcessingTimeout
         ) {
           try {
@@ -1543,7 +1595,9 @@ export async function runEasyApplyBatchInternal(
             };
           }
         }
-        recovery ??= await recoverBatchAfterJobFailure(input, url);
+        recovery ??= processingLease
+          ? await recoverCollectionAfterIsolatedJobFailure(input, url)
+          : await recoverBatchAfterJobFailure(input, url);
         await input.observeBatchEvent?.({
           type: "job_processing_recovered",
           collectionUrl: input.url,
@@ -1571,6 +1625,8 @@ export async function runEasyApplyBatchInternal(
           boundedStopReason =
             `${recovery.message} Stopped the LinkedIn batch because the driver context could not be safely reused.`;
         }
+      } finally {
+        await disposeProcessingLease().catch(() => undefined);
       }
       await input.observeBatchEvent?.({
         type: "job_processing_finished",

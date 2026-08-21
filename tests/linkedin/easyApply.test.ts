@@ -2105,6 +2105,102 @@ describe("runEasyApplyBatchInternal", () => {
     expect(driver.open).toHaveBeenCalledWith("https://www.linkedin.com/jobs/view/2");
   });
 
+  it("keeps the collection usable when an isolated processing page times out", async () => {
+    const firstJobUrl = "https://www.linkedin.com/jobs/view/1";
+    const secondJobUrl = "https://www.linkedin.com/jobs/view/2";
+    const neverAuthenticates = new Promise<void>(() => undefined);
+    const firstAttemptDispose = vi.fn().mockResolvedValue(undefined);
+    const secondAttemptDispose = vi.fn().mockResolvedValue(undefined);
+    const firstAttemptDriver = {
+      open: vi.fn(),
+      openCollection: vi.fn(),
+      ensureAuthenticated: vi.fn().mockReturnValue(neverAuthenticates),
+      isEasyApplyAvailable: vi.fn(),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn(),
+      goToNextResultsPage: vi.fn(),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn(),
+      advance: vi.fn(),
+    };
+    const secondAttemptDriver = {
+      open: vi.fn().mockResolvedValue(undefined),
+      openCollection: vi.fn(),
+      ensureAuthenticated: vi.fn().mockResolvedValue(undefined),
+      inspectJobApplicationState: vi.fn().mockResolvedValue("apply_available"),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn().mockResolvedValue(undefined),
+      collectQuestions: vi.fn().mockResolvedValue([]),
+      goToNextResultsPage: vi.fn(),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn().mockResolvedValue("submit"),
+      advance: vi.fn(),
+    };
+    const collectionDriver = {
+      open: vi.fn(),
+      openCollection: vi.fn().mockResolvedValue(undefined),
+      ensureAuthenticated: vi.fn().mockResolvedValue(undefined),
+      createProcessingDriver: vi
+        .fn()
+        .mockResolvedValueOnce({
+          driver: firstAttemptDriver,
+          dispose: firstAttemptDispose,
+        })
+        .mockResolvedValueOnce({
+          driver: secondAttemptDriver,
+          dispose: secondAttemptDispose,
+        }),
+      resetAfterProcessingTimeout: vi.fn(),
+      inspectJobApplicationState: vi.fn().mockResolvedValue("apply_available"),
+      isEasyApplyAvailable: vi.fn(),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn(),
+      collectVisibleJobs: vi.fn().mockResolvedValue([
+        { url: firstJobUrl, alreadyApplied: false },
+        { url: secondJobUrl, alreadyApplied: false },
+      ]),
+      goToNextResultsPage: vi.fn().mockResolvedValue(false),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn(),
+      advance: vi.fn(),
+    };
+
+    const result = await runEasyApplyBatchInternal(
+      {
+        driver: collectionDriver,
+        url: "https://www.linkedin.com/jobs/collections/easy-apply",
+        targetCount: 2,
+        jobProcessingTimeoutMs: 25,
+        collectionContextTimeoutMs: 50,
+        candidateProfile: profile,
+        evaluateJob: async () => ({
+          shouldApply: true,
+          finalDecision: "APPLY",
+          score: 90,
+          reason: "Strong fit.",
+          policyAllowed: true,
+        }),
+        resolveAnswer: vi.fn(),
+      },
+      "dry-run",
+    );
+
+    expect(result.status).toBe("partial");
+    expect(result.attemptedCount).toBe(2);
+    expect(result.jobs[0]?.result).toMatchObject({
+      failureReasonCode: "linkedin.approved_job_processing_timeout",
+      recovery: { attempted: true, succeeded: true },
+    });
+    expect(result.jobs[1]?.result?.status).toBe("ready_to_submit");
+    expect(collectionDriver.resetAfterProcessingTimeout).not.toHaveBeenCalled();
+    expect(firstAttemptDispose).toHaveBeenCalledTimes(1);
+    expect(secondAttemptDispose).toHaveBeenCalledTimes(1);
+    expect(collectionDriver.openCollection).toHaveBeenCalledWith(
+      expect.stringContaining("currentJobId=1"),
+    );
+    expect(secondAttemptDriver.open).toHaveBeenCalledWith(secondJobUrl);
+  });
+
   it("returns a bounded partial result when the timed-out page cannot be reset", async () => {
     const neverResolves = new Promise<void>(() => undefined);
     const driver = {

@@ -125,6 +125,34 @@ describe("PlaywrightLinkedInEasyApplyDriver", () => {
     }
   });
 
+  it("creates a disposable processing page without taking ownership of the collection page", async () => {
+    const context = await browser.newContext();
+    try {
+      await context.route("https://www.linkedin.com/**", async (route) => {
+        await route.fulfill({
+          contentType: "text/html",
+          body: "<main class='jobs-details'><button aria-label='Easy Apply to Backend Developer'>Easy Apply</button></main>",
+        });
+      });
+      const collectionPage = await context.newPage();
+      const unrelatedPage = await context.newPage();
+      const collectionDriver = new PlaywrightLinkedInEasyApplyDriver(collectionPage);
+
+      const lease = await collectionDriver.createProcessingDriver(
+        "https://www.linkedin.com/jobs/view/4457000000",
+      );
+
+      expect(context.pages()).toHaveLength(3);
+      await expect(lease.driver.isEasyApplyAvailable()).resolves.toBe(true);
+      await lease.dispose();
+      expect(context.pages()).toEqual([collectionPage, unrelatedPage]);
+      expect(collectionPage.isClosed()).toBe(false);
+      expect(unrelatedPage.isClosed()).toBe(false);
+    } finally {
+      await context.close();
+    }
+  });
+
   it("detects the pre-review modal state from real LinkedIn-like HTML", async () => {
     const page = await browser.newPage();
     await page.setContent(linkedInPreReviewModalHtml);
@@ -722,6 +750,40 @@ describe("PlaywrightLinkedInEasyApplyDriver", () => {
     );
 
     await page.close();
+  });
+
+  it("captures the real HTTPS destination from an href-less external apply button", async () => {
+    const context = await browser.newContext();
+    try {
+      await context.route("https://jobs.example.com/**", async (route) => {
+        await route.fulfill({
+          contentType: "text/html",
+          body: "<main><h1>External application</h1></main>",
+        });
+      });
+      const page = await context.newPage();
+      await page.setContent(`
+        <main>
+          <button
+            id="jobs-apply-button-id"
+            role="link"
+            aria-label="Apply to Example on company website"
+            onclick="window.open('https://jobs.example.com/apply/4456490821', '_blank')"
+          >
+            Apply
+          </button>
+        </main>
+      `);
+
+      const driver = new PlaywrightLinkedInEasyApplyDriver(page);
+
+      await expect(driver.getExternalApplyUrl()).resolves.toBe(
+        "https://jobs.example.com/apply/4456490821",
+      );
+      await driver.dispose();
+    } finally {
+      await context.close();
+    }
   });
 
   it("marks linkedin numeric text inputs as decimal fields and captures inline validation text", async () => {
