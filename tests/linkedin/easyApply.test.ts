@@ -639,6 +639,9 @@ describe("runEasyApplyDryRun", () => {
       ensureAuthenticated: vi.fn(),
       inspectJobApplicationState: vi.fn().mockResolvedValue("already_applied"),
       isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      isExternalApplyAvailable: vi.fn(),
+      getExternalApplyDetection: vi.fn(),
+      getExternalApplyUrl: vi.fn(),
       openEasyApply: vi.fn(),
       collectQuestions: vi.fn(),
       fillAnswer: vi.fn(),
@@ -655,6 +658,9 @@ describe("runEasyApplyDryRun", () => {
 
     expect(result.alreadyApplied).toBe(true);
     expect(driver.open).not.toHaveBeenCalled();
+    expect(driver.isExternalApplyAvailable).not.toHaveBeenCalled();
+    expect(driver.getExternalApplyDetection).not.toHaveBeenCalled();
+    expect(driver.getExternalApplyUrl).not.toHaveBeenCalled();
     expect(driver.openEasyApply).not.toHaveBeenCalled();
   });
 
@@ -1662,6 +1668,9 @@ describe("runEasyApplyBatchDryRun", () => {
       ensureAuthenticated: vi.fn(),
       inspectJobApplicationState: vi.fn().mockResolvedValue("already_applied"),
       isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      isExternalApplyAvailable: vi.fn(),
+      getExternalApplyDetection: vi.fn(),
+      getExternalApplyUrl: vi.fn(),
       openEasyApply: vi.fn(),
       collectQuestions: vi.fn().mockResolvedValue([]),
       collectVisibleJobs: vi.fn().mockResolvedValue([
@@ -1689,6 +1698,9 @@ describe("runEasyApplyBatchDryRun", () => {
       alreadyApplied: true,
     });
     expect(evaluateJob).not.toHaveBeenCalled();
+    expect(driver.isExternalApplyAvailable).not.toHaveBeenCalled();
+    expect(driver.getExternalApplyDetection).not.toHaveBeenCalled();
+    expect(driver.getExternalApplyUrl).not.toHaveBeenCalled();
     expect(driver.openEasyApply).not.toHaveBeenCalled();
   });
 
@@ -1787,6 +1799,226 @@ describe("runEasyApplyBatch", () => {
 });
 
 describe("runEasyApplyBatchInternal", () => {
+  it("uses the bounded external fast path and continues with the next approved job", async () => {
+    const collectionUrl = "https://www.linkedin.com/jobs/collections/easy-apply";
+    const externalJobUrl = "https://www.linkedin.com/jobs/view/4456490821";
+    const easyApplyJobUrl = "https://www.linkedin.com/jobs/view/4457000000";
+    const externalDetection = {
+      source: "explicit_company_website_cta" as const,
+      signals: ["selector:explicit_company_website_cta"],
+    };
+    const driver = {
+      open: vi.fn(),
+      openCollection: vi.fn().mockResolvedValue(undefined),
+      ensureAuthenticated: vi.fn().mockResolvedValue(undefined),
+      resetAfterProcessingTimeout: vi.fn(),
+      inspectJobApplicationState: vi.fn().mockResolvedValue("apply_available"),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      isExternalApplyAvailable: vi.fn().mockResolvedValue(true),
+      getExternalApplyDetection: vi.fn().mockResolvedValue(externalDetection),
+      getExternalApplyUrl: vi
+        .fn()
+        .mockResolvedValue(
+          "https://www.linkedin.com/safety/go/?url=https%3A%2F%2Fjobs.obilet.com%2Fapply%2F4456490821",
+        ),
+      openEasyApply: vi.fn().mockResolvedValue(undefined),
+      collectQuestions: vi.fn().mockResolvedValue([]),
+      collectVisibleJobs: vi.fn().mockResolvedValue([
+        { url: externalJobUrl, alreadyApplied: false },
+        { url: easyApplyJobUrl, alreadyApplied: false },
+      ]),
+      goToNextResultsPage: vi.fn().mockResolvedValue(false),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn().mockResolvedValue("submit"),
+      advance: vi.fn(),
+      dismissCompletionModal: vi.fn(),
+    };
+    const evaluateJob = vi
+      .fn()
+      .mockResolvedValueOnce({
+        shouldApply: true,
+        finalDecision: "APPLY",
+        score: 91,
+        reason: "Strong external fit.",
+        policyAllowed: true,
+        diagnostics: { applicationType: "external" },
+      })
+      .mockResolvedValueOnce({
+        shouldApply: true,
+        finalDecision: "APPLY",
+        score: 88,
+        reason: "Strong Easy Apply fit.",
+        policyAllowed: true,
+        diagnostics: { applicationType: "easy_apply" },
+      });
+
+    const result = await runEasyApplyBatchInternal(
+      {
+        driver,
+        url: collectionUrl,
+        targetCount: 2,
+        externalApplyInspectionTimeoutMs: 50,
+        candidateProfile: profile,
+        evaluateJob,
+        resolveAnswer: vi.fn(),
+      },
+      "dry-run",
+    );
+
+    expect(result.status).toBe("partial");
+    expect(result.attemptedCount).toBe(2);
+    expect(result.jobs[0]?.result).toMatchObject({
+      status: "stopped_external_apply",
+      externalApplyUrl: "https://jobs.obilet.com/apply/4456490821",
+      externalDetection,
+    });
+    expect(result.jobs[1]?.result?.status).toBe("ready_to_submit");
+    expect(driver.ensureAuthenticated).not.toHaveBeenCalledWith(externalJobUrl);
+    expect(driver.open).not.toHaveBeenCalledWith(externalJobUrl);
+    expect(driver.open).toHaveBeenCalledWith(easyApplyJobUrl);
+    expect(driver.openEasyApply).toHaveBeenCalledTimes(1);
+    expect(driver.isExternalApplyAvailable).toHaveBeenCalledTimes(1);
+    expect(driver.isExternalApplyAvailable.mock.invocationCallOrder[0]).toBeGreaterThan(
+      driver.inspectJobApplicationState.mock.invocationCallOrder[1] ?? 0,
+    );
+    expect(driver.getExternalApplyDetection).toHaveBeenCalledTimes(1);
+    expect(driver.getExternalApplyUrl).toHaveBeenCalledTimes(1);
+    expect(driver.resetAfterProcessingTimeout).not.toHaveBeenCalled();
+    expect(driver.openCollection).toHaveBeenCalledWith(
+      `${collectionUrl}?currentJobId=4456490821`,
+    );
+  });
+
+  it("returns an explicit unknown result when an external target URL is unsafe", async () => {
+    const externalJobUrl = "https://www.linkedin.com/jobs/view/4456490821";
+    const driver = {
+      open: vi.fn(),
+      openCollection: vi.fn().mockResolvedValue(undefined),
+      ensureAuthenticated: vi.fn().mockResolvedValue(undefined),
+      resetAfterProcessingTimeout: vi.fn(),
+      inspectJobApplicationState: vi.fn().mockResolvedValue("apply_available"),
+      isEasyApplyAvailable: vi.fn(),
+      isExternalApplyAvailable: vi.fn().mockResolvedValue(true),
+      getExternalApplyDetection: vi.fn().mockResolvedValue({
+        source: "explicit_company_website_cta",
+        signals: ["selector:explicit_company_website_cta"],
+      }),
+      getExternalApplyUrl: vi.fn().mockResolvedValue("javascript:alert(1)"),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn(),
+      collectVisibleJobs: vi.fn().mockResolvedValue([
+        { url: externalJobUrl, alreadyApplied: false },
+      ]),
+      goToNextResultsPage: vi.fn().mockResolvedValue(false),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn(),
+      advance: vi.fn(),
+    };
+
+    const result = await runEasyApplyBatchInternal(
+      {
+        driver,
+        url: "https://www.linkedin.com/jobs/collections/easy-apply",
+        targetCount: 1,
+        externalApplyInspectionTimeoutMs: 50,
+        candidateProfile: profile,
+        evaluateJob: async () => ({
+          shouldApply: true,
+          finalDecision: "APPLY",
+          score: 91,
+          reason: "Strong external fit.",
+          policyAllowed: true,
+          diagnostics: { applicationType: "external" },
+        }),
+        resolveAnswer: vi.fn(),
+      },
+      "dry-run",
+    );
+
+    expect(result.status).toBe("partial");
+    expect(result.jobs[0]?.result).toMatchObject({
+      status: "stopped_unknown_action",
+      failureReasonCode: "linkedin.external_apply_target_unverified",
+      retryable: true,
+    });
+    expect(driver.ensureAuthenticated).not.toHaveBeenCalledWith(externalJobUrl);
+    expect(driver.open).not.toHaveBeenCalled();
+    expect(driver.isEasyApplyAvailable).not.toHaveBeenCalled();
+    expect(driver.openEasyApply).not.toHaveBeenCalled();
+    expect(driver.resetAfterProcessingTimeout).not.toHaveBeenCalled();
+  });
+
+  it("bounds external inspection, resets the page, and avoids the Easy Apply modal path", async () => {
+    const externalJobUrl = "https://www.linkedin.com/jobs/view/4456490821";
+    let releaseExternalInspection!: () => void;
+    const externalInspection = new Promise<boolean>((resolve) => {
+      releaseExternalInspection = () => resolve(true);
+    });
+    let externalInspectionDrained = false;
+    const driver = {
+      open: vi.fn(),
+      openCollection: vi.fn().mockResolvedValue(undefined),
+      ensureAuthenticated: vi.fn().mockResolvedValue(undefined),
+      resetAfterProcessingTimeout: vi.fn(
+        async (input?: EasyApplyProcessingTimeoutResetInput) => {
+          releaseExternalInspection();
+          await input?.waitForTimedOutOperations();
+          externalInspectionDrained = true;
+        },
+      ),
+      inspectJobApplicationState: vi.fn().mockResolvedValue("apply_available"),
+      isEasyApplyAvailable: vi.fn(),
+      isExternalApplyAvailable: vi.fn().mockReturnValue(externalInspection),
+      getExternalApplyDetection: vi.fn(),
+      getExternalApplyUrl: vi.fn(),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn(),
+      collectVisibleJobs: vi.fn().mockResolvedValue([
+        { url: externalJobUrl, alreadyApplied: false },
+      ]),
+      goToNextResultsPage: vi.fn().mockResolvedValue(false),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn(),
+      advance: vi.fn(),
+    };
+
+    const result = await runEasyApplyBatchInternal(
+      {
+        driver,
+        url: "https://www.linkedin.com/jobs/collections/easy-apply",
+        targetCount: 1,
+        externalApplyInspectionTimeoutMs: 25,
+        collectionContextTimeoutMs: 50,
+        candidateProfile: profile,
+        evaluateJob: async () => ({
+          shouldApply: true,
+          finalDecision: "APPLY",
+          score: 91,
+          reason: "Strong external fit.",
+          policyAllowed: true,
+          diagnostics: { applicationType: "external" },
+        }),
+        resolveAnswer: vi.fn(),
+      },
+      "dry-run",
+    );
+
+    expect(result.jobs[0]?.result).toMatchObject({
+      status: "stopped_unknown_action",
+      failureReasonCode: "linkedin.external_apply_inspection_timeout",
+      retryable: true,
+      recovery: {
+        attempted: true,
+        succeeded: true,
+      },
+    });
+    expect(driver.open).not.toHaveBeenCalled();
+    expect(driver.openEasyApply).not.toHaveBeenCalled();
+    expect(driver.resetAfterProcessingTimeout).toHaveBeenCalledTimes(1);
+    expect(externalInspectionDrained).toBe(true);
+    expect(driver.openCollection).toHaveBeenCalledTimes(2);
+  });
+
   it("times out a stuck approved job and continues with the next job", async () => {
     let releaseTimedOutDriverCall!: () => void;
     const timedOutDriverCall = new Promise<void>((resolve) => {

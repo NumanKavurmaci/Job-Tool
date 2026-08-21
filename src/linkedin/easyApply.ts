@@ -238,6 +238,7 @@ export interface EasyApplyBatchRunInput {
   }) => Promise<ResolvedAnswer>;
   maxSteps?: number;
   jobProcessingTimeoutMs?: number;
+  externalApplyInspectionTimeoutMs?: number;
   collectionContextTimeoutMs?: number;
   maxPages?: number;
   maxConsecutiveNoProgressPages?: number;
@@ -325,6 +326,7 @@ interface StepExecutionResult {
 type SubmitMode = "dry-run" | "submit";
 
 const DEFAULT_JOB_PROCESSING_TIMEOUT_MS = 120_000;
+const DEFAULT_EXTERNAL_APPLY_INSPECTION_TIMEOUT_MS = 5_000;
 const DEFAULT_PROCESSING_TIMEOUT_RESET_MS = 15_000;
 const DEFAULT_COLLECTION_RESTORE_TIMEOUT_MS = 75_000;
 const DEFAULT_COLLECTION_RECOVERY_TIMEOUT_MS = 195_000;
@@ -344,6 +346,23 @@ class ApprovedJobProcessingTimeoutError extends AppError {
       details: { jobUrl, timeoutMs },
     });
     this.name = "ApprovedJobProcessingTimeoutError";
+  }
+}
+
+class ExternalApplyInspectionTimeoutError extends AppError {
+  constructor(
+    readonly jobUrl: string,
+    readonly timeoutMs: number,
+    readonly waitForTimedOutOperations: () => Promise<void>,
+  ) {
+    super({
+      message:
+        `LinkedIn external application inspection timed out after ${timeoutMs}ms for ${jobUrl}.`,
+      phase: "linkedin_easy_apply",
+      code: "LINKEDIN_EXTERNAL_APPLY_INSPECTION_TIMEOUT",
+      details: { jobUrl, timeoutMs },
+    });
+    this.name = "ExternalApplyInspectionTimeoutError";
   }
 }
 
@@ -690,11 +709,130 @@ async function collectVisibleBatchJobs(
   }));
 }
 
+function isExternalApplicationEvaluation(
+  evaluation: EasyApplyJobEvaluation,
+): boolean {
+  return evaluation.diagnostics?.applicationType?.trim().toLowerCase() === "external";
+}
+
+function buildUnverifiedExternalApplyResult(args: {
+  url: string;
+  stopReason: string;
+  failureReasonCode: string;
+  error?: unknown;
+  recovery?: EasyApplyRunResult["recovery"];
+}): EasyApplyRunResult {
+  const formattedError = args.error === undefined
+    ? null
+    : formatErrorForJobProcessing(args.error);
+  return {
+    status: "stopped_unknown_action",
+    steps: [],
+    stopReason: formattedError
+      ? `${args.stopReason} ${formattedError.summary}`
+      : args.stopReason,
+    url: args.url,
+    failureReasonCode: args.failureReasonCode,
+    retryable: true,
+    ...(formattedError ? { error: formattedError.serialized } : {}),
+    ...(args.recovery ? { recovery: args.recovery } : {}),
+  };
+}
+
+async function processExternalApprovedBatchJob(
+  input: EasyApplyBatchRunInput,
+  url: string,
+): Promise<EasyApplyRunResult> {
+  const timeoutMs = readPositiveInteger(
+    input.externalApplyInspectionTimeoutMs,
+    DEFAULT_EXTERNAL_APPLY_INSPECTION_TIMEOUT_MS,
+  );
+  const abortController = new AbortController();
+  const guardedDriver = createAbortGuardedDriver(
+    input.driver,
+    abortController.signal,
+  );
+
+  try {
+    return await withTimeout(
+      (async () => {
+        const externalApplyAvailable =
+          (await guardedDriver.driver.isExternalApplyAvailable?.()) === true;
+        if (!externalApplyAvailable) {
+          return buildUnverifiedExternalApplyResult({
+            url,
+            stopReason:
+              "The evaluation classified this job as external, but no external application control could be verified on the inspected LinkedIn job page.",
+            failureReasonCode: "linkedin.external_apply_control_unverified",
+          });
+        }
+
+        const externalDetection =
+          (await guardedDriver.driver.getExternalApplyDetection?.()) ?? null;
+        const rawExternalApplyUrl =
+          (await guardedDriver.driver.getExternalApplyUrl?.()) ?? null;
+        const externalApplyUrl = resolveLinkedInExternalApplyUrl(rawExternalApplyUrl);
+        if (!externalDetection || externalDetection.signals.length === 0) {
+          return buildUnverifiedExternalApplyResult({
+            url,
+            stopReason:
+              "The external application control was visible, but its detection evidence could not be verified safely.",
+            failureReasonCode: "linkedin.external_apply_signal_unverified",
+          });
+        }
+        if (!externalApplyUrl) {
+          return buildUnverifiedExternalApplyResult({
+            url,
+            stopReason:
+              "The external application control was verified, but its destination URL was missing or unsafe.",
+            failureReasonCode: "linkedin.external_apply_target_unverified",
+          });
+        }
+
+        return {
+          status: "stopped_external_apply" as const,
+          steps: [],
+          stopReason: "This LinkedIn job redirects to an external application page.",
+          url,
+          externalApplyUrl,
+          externalDetection,
+        };
+      })(),
+      timeoutMs,
+      () => {
+        const timeoutError = new ExternalApplyInspectionTimeoutError(
+          url,
+          timeoutMs,
+          guardedDriver.waitForInFlightCalls,
+        );
+        abortController.abort(timeoutError);
+        return timeoutError;
+      },
+    );
+  } catch (error) {
+    if (error instanceof ExternalApplyInspectionTimeoutError) {
+      throw error;
+    }
+    return buildUnverifiedExternalApplyResult({
+      url,
+      stopReason:
+        "Could not safely finish external application inspection on the current LinkedIn job page.",
+      failureReasonCode: "linkedin.external_apply_inspection_failed",
+      error,
+    });
+  }
+}
+
 async function processApprovedBatchJob(
   input: EasyApplyBatchRunInput,
   url: string,
+  evaluation: EasyApplyJobEvaluation,
   submitMode: SubmitMode,
 ): Promise<EasyApplyRunResult> {
+  if (isExternalApplicationEvaluation(evaluation)) {
+    return processExternalApprovedBatchJob(input, url);
+  }
+
   const timeoutMs = readPositiveInteger(
     input.jobProcessingTimeoutMs,
     DEFAULT_JOB_PROCESSING_TIMEOUT_MS,
@@ -1361,7 +1499,12 @@ export async function runEasyApplyBatchInternal(
           attemptIndex: attemptedCount + 1,
           evaluation,
         });
-        entry.result = await processApprovedBatchJob(input, url, submitMode);
+        entry.result = await processApprovedBatchJob(
+          input,
+          url,
+          evaluation,
+          submitMode,
+        );
       } catch (error) {
         const serializedError = serializeError(error);
         await input.observeBatchEvent?.({
@@ -1375,7 +1518,8 @@ export async function runEasyApplyBatchInternal(
         });
         let recovery: NonNullable<EasyApplyRunResult["recovery"]> | null = null;
         if (
-          error instanceof ApprovedJobProcessingTimeoutError &&
+          (error instanceof ApprovedJobProcessingTimeoutError ||
+            error instanceof ExternalApplyInspectionTimeoutError) &&
           input.driver.resetAfterProcessingTimeout
         ) {
           try {
@@ -1409,7 +1553,16 @@ export async function runEasyApplyBatchInternal(
           recovered: recovery.succeeded,
           message: recovery.message,
         });
-        entry.result = buildJobProcessingFailure(url, error, recovery);
+        entry.result = error instanceof ExternalApplyInspectionTimeoutError
+          ? buildUnverifiedExternalApplyResult({
+              url,
+              stopReason:
+                "External application inspection timed out before the current LinkedIn job page could be verified safely.",
+              failureReasonCode: "linkedin.external_apply_inspection_timeout",
+              error,
+              recovery,
+            })
+          : buildJobProcessingFailure(url, error, recovery);
         recoveredAfterProcessingFailure = recovery.succeeded;
         if (!recovery.succeeded) {
           if (recovery.attempted) {
