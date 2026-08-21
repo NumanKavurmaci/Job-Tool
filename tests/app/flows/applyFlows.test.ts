@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppDeps } from "../../../src/app/deps.js";
+import { KariyerPageStateError } from "../../../src/kariyer/pageState.js";
 
 const externalMocks = vi.hoisted(() => ({
   dryRun: vi.fn(),
@@ -23,6 +24,13 @@ const applyUrl =
   "https://apply.workable.com/robusta/j/6AA24D2C5C/apply/?ref=reactjobs.io";
 
 function createDeps(): AppDeps {
+  const navigationContext = {
+    minIntervalMs: 0,
+    maxRetryAfterMs: 10_000,
+    now: vi.fn(() => 0),
+    beforeNavigation: vi.fn(async () => undefined),
+    waitForRateLimit: vi.fn(async () => undefined),
+  };
   return {
     withPage: vi.fn(async (
       optionsOrCallback: object | ((page: unknown) => Promise<unknown>),
@@ -93,6 +101,7 @@ function createDeps(): AppDeps {
       ],
       pagesVisited: 1,
     })),
+    createKariyerNavigationContext: vi.fn(() => navigationContext),
     createBatchJobEvaluator: vi.fn(() => async () => ({
       shouldApply: true,
       finalDecision: "APPLY",
@@ -242,9 +251,20 @@ describe("apply flows", () => {
       deps,
     );
 
-    expect(deps.extractKariyerListingsBatch).toHaveBeenCalledWith({}, listingUrl, 1);
+    expect(deps.extractKariyerListingsBatch).toHaveBeenCalledWith(
+      {},
+      listingUrl,
+      1,
+      expect.objectContaining({ minIntervalMs: 0 }),
+    );
     expect(deps.createBatchJobEvaluator).toHaveBeenCalledWith(
-      expect.objectContaining({ systemScope: "kariyer.batch" }),
+      expect.objectContaining({
+        systemScope: "kariyer.batch",
+        evaluationPage: {},
+        jobExtractionOptions: {
+          kariyerNavigationContext: expect.objectContaining({ minIntervalMs: 0 }),
+        },
+      }),
     );
     expect(externalMocks.dryRun).toHaveBeenCalledWith(
       expect.objectContaining({ url: jobUrl, dryRun: true }),
@@ -252,6 +272,8 @@ describe("apply flows", () => {
       expect.objectContaining({
         originalJobUrl: jobUrl,
         sessionOptions: expect.objectContaining({ persistStorageState: true }),
+        existingPage: {},
+        kariyerNavigationContext: expect.objectContaining({ minIntervalMs: 0 }),
       }),
     );
     expect(result.applyBatch).toMatchObject({
@@ -261,6 +283,153 @@ describe("apply flows", () => {
       failedCount: 0,
       pagesVisited: 1,
     });
+    expect(deps.withPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("reuses one Kariyer page while evaluating multiple listings", async () => {
+    const deps = createDeps();
+    const listingUrl = "https://www.kariyer.net/is-ilanlari/yazilim";
+    (deps.extractKariyerListingsBatch as any).mockResolvedValue({
+      listings: [
+        {
+          jobId: "4536815",
+          url: "https://www.kariyer.net/is-ilani/acme-backend-developer-4536815",
+          title: "Backend Developer",
+          company: "Acme",
+          location: "İstanbul",
+          workplaceType: "Hibrit",
+          badges: [],
+          posted: "Bugün",
+        },
+        {
+          jobId: "4536816",
+          url: "https://www.kariyer.net/is-ilani/acme-frontend-developer-4536816",
+          title: "Frontend Developer",
+          company: "Acme",
+          location: "İstanbul",
+          workplaceType: "Hibrit",
+          badges: [],
+          posted: "Bugün",
+        },
+      ],
+      pagesVisited: 1,
+    });
+    const evaluateJob = vi.fn(async () => ({
+      shouldApply: false,
+      finalDecision: "SKIP" as const,
+      score: 10,
+      reason: "Below threshold.",
+      policyAllowed: true,
+    }));
+    (deps.createBatchJobEvaluator as any).mockReturnValue(evaluateJob);
+
+    const result = await runApplyBatchFlow(
+      {
+        mode: "apply-batch",
+        url: listingUrl,
+        resumePath: "./user/resume.pdf",
+        count: 2,
+        disableAiEvaluation: false,
+        scoreThreshold: 40,
+        scoringMode: "local",
+        dryRun: true,
+      },
+      deps,
+    );
+
+    expect(deps.withPage).toHaveBeenCalledTimes(1);
+    expect(evaluateJob).toHaveBeenCalledTimes(2);
+    expect(externalMocks.dryRun).not.toHaveBeenCalled();
+    expect(result.applyBatch).toMatchObject({
+      evaluatedCount: 2,
+      skippedCount: 2,
+      failedCount: 0,
+    });
+  });
+
+  it("stops the Kariyer batch immediately on a typed security challenge", async () => {
+    const deps = createDeps();
+    let sessionCleanedUp = false;
+    (deps.withPage as any).mockImplementation(async (
+      _options: object,
+      callback: (page: unknown) => Promise<unknown>,
+    ) => {
+      try {
+        return await callback({});
+      } finally {
+        sessionCleanedUp = true;
+      }
+    });
+    const listingUrl = "https://www.kariyer.net/is-ilanlari/yazilim";
+    const listings = [
+      {
+        jobId: "4536815",
+        url: "https://www.kariyer.net/is-ilani/acme-backend-developer-4536815",
+        title: "Backend Developer",
+        company: "Acme",
+        location: "İstanbul",
+        workplaceType: "Hibrit",
+        badges: [],
+        posted: "Bugün",
+      },
+      {
+        jobId: "4536816",
+        url: "https://www.kariyer.net/is-ilani/acme-frontend-developer-4536816",
+        title: "Frontend Developer",
+        company: "Acme",
+        location: "İstanbul",
+        workplaceType: "Hibrit",
+        badges: [],
+        posted: "Bugün",
+      },
+    ];
+    (deps.extractKariyerListingsBatch as any).mockResolvedValue({
+      listings,
+      pagesVisited: 1,
+    });
+    const evaluateJob = vi.fn(async () => {
+      throw new KariyerPageStateError(
+        {
+          state: "manual_verification",
+          url: listings[0]!.url,
+          marker: "http_403",
+          statusCode: 403,
+          retryAfterMs: null,
+        },
+        "Kariyer.net job detail",
+      );
+    });
+    (deps.createBatchJobEvaluator as any).mockReturnValue(evaluateJob);
+
+    const result = await runApplyBatchFlow(
+      {
+        mode: "apply-batch",
+        url: listingUrl,
+        resumePath: "./user/resume.pdf",
+        count: 2,
+        disableAiEvaluation: false,
+        scoreThreshold: 40,
+        scoringMode: "local",
+        dryRun: true,
+      },
+      deps,
+    );
+
+    expect(evaluateJob).toHaveBeenCalledTimes(1);
+    expect(externalMocks.dryRun).not.toHaveBeenCalled();
+    expect(sessionCleanedUp).toBe(true);
+    expect(result.applyBatch).toMatchObject({
+      evaluatedCount: 1,
+      failedCount: 1,
+      stoppedEarly: true,
+      terminalPageState: {
+        code: "KARIYER_MANUAL_VERIFICATION_REQUIRED",
+        pageState: "manual_verification",
+      },
+    });
+    expect(result.applyBatch.stopReason).toContain(
+      "No remaining Kariyer.net listings were processed.",
+    );
   });
 
   it("paginates ReactJobs result pages until enough listings are collected", async () => {

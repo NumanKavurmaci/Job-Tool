@@ -35,6 +35,7 @@ import {
   extractKariyerListings,
   extractKariyerListingsBatch,
 } from "../kariyer/listing.js";
+import { createKariyerNavigationContext } from "../kariyer/pageState.js";
 import { createBatchJobEvaluator } from "./flowHelpers.js";
 
 export const appDeps = {
@@ -49,6 +50,7 @@ export const appDeps = {
   extractAshbyListingsBatch,
   extractKariyerListings,
   extractKariyerListingsBatch,
+  createKariyerNavigationContext,
   createBatchJobEvaluator,
   formatJobForLLM,
   parseJob,

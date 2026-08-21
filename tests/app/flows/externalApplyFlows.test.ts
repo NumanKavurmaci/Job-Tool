@@ -107,6 +107,61 @@ function createFlowPage(args: {
 }
 
 describe("external apply flows", () => {
+  it("reuses the supplied Kariyer page and fails closed on an application challenge", async () => {
+    const jobUrl = "https://www.kariyer.net/is-ilani/acme-backend-developer-4536815";
+    const page = {
+      url: vi.fn(() => jobUrl),
+      title: vi.fn(async () => "Access to this page has been denied"),
+      locator: vi.fn((selector: string) =>
+        selector === "body"
+          ? {
+              innerText: vi.fn(async () =>
+                "Lütfen butona basılı tutarak güvenlik doğrulamasını tamamlayın."),
+            }
+          : {
+              first: () => ({
+                count: vi.fn(async () => 0),
+                isVisible: vi.fn(async () => false),
+              }),
+            }),
+    };
+    const navigationContext = {
+      minIntervalMs: 0,
+      maxRetryAfterMs: 10_000,
+      now: vi.fn(() => 0),
+      beforeNavigation: vi.fn(async () => undefined),
+      waitForRateLimit: vi.fn(async () => undefined),
+    };
+    const deps = {
+      loadCandidateMasterProfile: vi.fn().mockResolvedValue(buildCandidateProfile()),
+      withPage: vi.fn(),
+      logger: {
+        info: vi.fn(),
+        error: vi.fn(),
+      },
+    } as any;
+
+    await expect(
+      runExternalApplyDryRunFlow(
+        {
+          mode: "external-apply",
+          url: jobUrl,
+          resumePath: resumeFixturePath,
+          dryRun: true,
+        },
+        deps,
+        {
+          originalJobUrl: jobUrl,
+          existingPage: page as never,
+          kariyerNavigationContext: navigationContext,
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: "KARIYER_MANUAL_VERIFICATION_REQUIRED",
+    });
+    expect(deps.withPage).not.toHaveBeenCalled();
+  });
+
   it("follows an AI-recommended precursor link and returns a dry-run answer plan", async () => {
     const goto = vi.fn();
     const evaluate = vi

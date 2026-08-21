@@ -1,5 +1,6 @@
 import type { Page } from "@playwright/test";
 import { createHash } from "node:crypto";
+import type { JobExtractionOptions } from "../adapters/types.js";
 import type { CandidateProfile } from "../candidate/types.js";
 import type { InputQuestion } from "../questions/types.js";
 import type { ScoringMode } from "./cli.js";
@@ -72,6 +73,7 @@ export function createBatchJobEvaluator(args: {
   timings?: TimingRecorder;
   scoringProfile: Awaited<ReturnType<AppDeps["loadCandidateProfile"]>>;
   evaluationPage?: Page;
+  jobExtractionOptions?: JobExtractionOptions;
   deps: AppDeps;
 }) {
   const deps = args.deps;
@@ -81,6 +83,10 @@ export function createBatchJobEvaluator(args: {
   const scoringProfileFingerprint = createScoringProfileFingerprint(args.scoringProfile);
   const time = <T>(name: string, fn: () => Promise<T>) =>
     args.timings ? args.timings.time(name, fn) : fn();
+  const extractJobTextForEvaluation = (page: Page, url: string) =>
+    args.jobExtractionOptions
+      ? deps.extractJobText(page, url, args.jobExtractionOptions)
+      : deps.extractJobText(page, url);
   const isLinkedInJobUrl = (url: string) => /linkedin\.com\/jobs\/view\//i.test(url);
   const shouldPersistRecommendation = (finalDecision: "APPLY" | "SKIP" | "MAYBE") => {
     switch (recommendationPolicy) {
@@ -138,7 +144,7 @@ export function createBatchJobEvaluator(args: {
         : null;
 
       if (existingJobPosting && jobPostingNeedsMetadataRefresh(existingJobPosting)) {
-        const extracted = await deps.extractJobText(evaluationPage, url);
+        const extracted = await extractJobTextForEvaluation(evaluationPage, url);
         await refreshJobPostingMetadata({
           prisma: deps.prisma,
           logger: deps.logger,
@@ -221,7 +227,7 @@ export function createBatchJobEvaluator(args: {
     }
 
     const extracted = await time("job.extractText", () =>
-      deps.extractJobText(evaluationPage, url),
+      extractJobTextForEvaluation(evaluationPage, url),
     );
     const diagnostics = buildJobDiagnostics(extracted);
     await persistSystemEvent(

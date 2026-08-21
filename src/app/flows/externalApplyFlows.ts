@@ -15,6 +15,12 @@ import { fillExternalApplicationPage } from "../../external/fill.js";
 import type { CookiePromptAcceptance } from "../../browser/cookies.js";
 import type { Page } from "@playwright/test";
 import type { BrowserSessionOptions } from "../../browser/playwright.js";
+import {
+  findKariyerPageStateError,
+  inspectKariyerPageOrThrow,
+  navigateKariyerPage,
+  type KariyerNavigationContext,
+} from "../../kariyer/pageState.js";
 import { persistRunArtifact, persistSystemEvent } from "../observability.js";
 import type {
   ExternalApplicationPlannedAnswer,
@@ -28,6 +34,26 @@ interface ExternalApplyOriginContext {
   originalJobUrl?: string;
   sessionOptions?: BrowserSessionOptions;
   initialActionSelector?: string;
+  existingPage?: Page;
+  kariyerNavigationContext?: KariyerNavigationContext;
+}
+
+function isKariyerHostname(hostname: string): boolean {
+  return /^(?:www\.)?kariyer\.net$/i.test(hostname.replace(/\.$/, ""));
+}
+
+function isCurrentPage(page: Page, url: string): boolean {
+  try {
+    const current = new URL(page.url());
+    const expected = new URL(url);
+    return (
+      current.protocol === expected.protocol &&
+      current.hostname === expected.hostname &&
+      current.pathname.replace(/\/+$/, "") === expected.pathname.replace(/\/+$/, "")
+    );
+  } catch {
+    return false;
+  }
 }
 
 function truncate(value: string, max = 5000) {
@@ -441,7 +467,30 @@ async function runExternalApplyCore({
   const candidateProfile = await loadMasterProfileForArgs(args, deps);
   try {
     const runWithPage = async (page: Page) => {
-      let discovery = await discoverExternalApplication(page, args.url);
+      let discovery: Awaited<ReturnType<typeof discoverExternalApplication>>;
+      if (originContext?.kariyerNavigationContext) {
+        if (isCurrentPage(page, args.url)) {
+          await inspectKariyerPageOrThrow(
+            page,
+            "Kariyer.net application entry",
+            undefined,
+            originContext.kariyerNavigationContext.now(),
+          );
+        } else {
+          await navigateKariyerPage(page, args.url, {
+            navigationContext: originContext.kariyerNavigationContext,
+            safetyOptions: {
+              requireHttps: true,
+              allowedHostname: isKariyerHostname,
+              context: "Kariyer.net application entry",
+            },
+            context: "Kariyer.net application entry",
+          });
+        }
+        discovery = await inspectExternalApplicationPage(page, args.url);
+      } else {
+        discovery = await discoverExternalApplication(page, args.url);
+      }
       if (
         discovery.fields.length === 0 &&
         discovery.precursorLinks.length === 0 &&
@@ -452,9 +501,18 @@ async function runExternalApplyCore({
           (await initialAction.count().catch(() => 0)) > 0 &&
           (await initialAction.isVisible().catch(() => false))
         ) {
+          await originContext.kariyerNavigationContext?.beforeNavigation();
           await initialAction.click();
           await page.waitForLoadState("domcontentloaded").catch(() => undefined);
           await page.waitForTimeout(800);
+          if (originContext.kariyerNavigationContext) {
+            await inspectKariyerPageOrThrow(
+              page,
+              "Kariyer.net application handoff",
+              undefined,
+              originContext.kariyerNavigationContext.now(),
+            );
+          }
           discovery = await inspectExternalApplicationPage(page, args.url);
 
           const visibleAuthField = page
@@ -516,11 +574,20 @@ async function runExternalApplyCore({
 
         if (recommendedLink) {
           recommendedAction = "follow";
+          await originContext?.kariyerNavigationContext?.beforeNavigation();
           discovery = await followExternalApplicationLink(
             page,
             args.url,
             recommendedLink.href,
           );
+          if (originContext?.kariyerNavigationContext) {
+            await inspectKariyerPageOrThrow(
+              page,
+              "Kariyer.net application precursor handoff",
+              undefined,
+              originContext.kariyerNavigationContext.now(),
+            );
+          }
           appendCookiePromptAcceptances(cookiePromptAcceptances, discovery.cookiePromptAcceptances);
         }
       }
@@ -567,6 +634,7 @@ async function runExternalApplyCore({
         });
         allAnswerPlans.push(...answerPlan);
 
+        await originContext?.kariyerNavigationContext?.beforeNavigation();
         const fillResult = await fillExternalApplicationPage({
           page,
           discovery,
@@ -577,6 +645,14 @@ async function runExternalApplyCore({
         latestFillResult = fillResult;
         appendCookiePromptAcceptances(cookiePromptAcceptances, fillResult.cookiePromptAcceptances);
 
+        if (fillResult.advanced && originContext?.kariyerNavigationContext) {
+          await inspectKariyerPageOrThrow(
+            page,
+            "Kariyer.net application step",
+            undefined,
+            originContext.kariyerNavigationContext.now(),
+          );
+        }
         const postFillDiscovery = fillResult.advanced
           ? await inspectExternalApplicationPage(page, args.url)
           : null;
@@ -711,9 +787,11 @@ async function runExternalApplyCore({
         cookiePromptAcceptances,
       };
     };
-    const result = originContext?.sessionOptions
-      ? await deps.withPage(originContext.sessionOptions, runWithPage)
-      : await deps.withPage(runWithPage);
+    const result = originContext?.existingPage
+      ? await runWithPage(originContext.existingPage)
+      : originContext?.sessionOptions
+        ? await deps.withPage(originContext.sessionOptions, runWithPage)
+        : await deps.withPage(runWithPage);
 
     const reportPath = await persistRunArtifact({
       category: "external-apply-runs",
@@ -830,6 +908,10 @@ async function runExternalApplyCore({
       },
       "External apply flow failed",
     );
+    const kariyerPageStateError = findKariyerPageStateError(error);
+    if (kariyerPageStateError) {
+      throw kariyerPageStateError;
+    }
     throw new AppError({
       message: "External apply flow failed.",
       phase: "external_apply",

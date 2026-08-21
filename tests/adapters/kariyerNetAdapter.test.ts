@@ -205,4 +205,24 @@ describe("KariyerNetAdapter", () => {
       new KariyerNetAdapter().extract(page as never, "https://kariyer.net.evil.example/is-ilani/rol-123"),
     ).rejects.toThrow(/canonical kariyer\.net/i);
   });
+
+  it("fails closed before parsing a challenged Kariyer detail page", async () => {
+    const page = createMockPage({
+      currentUrl: kariyerOpenFixture.url,
+      title: "Access to this page has been denied",
+      selectors: {
+        body: {
+          text: "Lütfen butona basılı tutarak güvenlik doğrulamasını tamamlayın.",
+        },
+      },
+      evaluateResult: kariyerOpenFixture.structuredData,
+    });
+
+    await expect(
+      new KariyerNetAdapter().extract(page as never, kariyerOpenFixture.url),
+    ).rejects.toMatchObject({
+      code: "KARIYER_MANUAL_VERIFICATION_REQUIRED",
+      phase: "kariyer",
+    });
+  });
 });

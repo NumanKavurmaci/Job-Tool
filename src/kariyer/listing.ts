@@ -1,8 +1,12 @@
 import type { Page } from "@playwright/test";
 import {
   assertSafeNavigationUrl,
-  safePageGoto,
 } from "../security/navigationSafety.js";
+import {
+  inspectKariyerPageOrThrow,
+  navigateKariyerPage,
+  type KariyerNavigationContext,
+} from "./pageState.js";
 
 export type KariyerListing = {
   jobId: string;
@@ -177,22 +181,26 @@ function mergeListing(
   };
 }
 
-async function navigateToKariyerListing(page: Page, url: string): Promise<string> {
+async function navigateToKariyerListing(
+  page: Page,
+  url: string,
+  navigationContext?: KariyerNavigationContext,
+): Promise<string> {
   const parsed = parseKariyerListingUrl(url);
   if (!parsed) {
     throw new Error("Expected a canonical HTTPS Kariyer.net listing URL.");
   }
 
-  await safePageGoto(
-    page,
-    parsed.toString(),
-    { waitUntil: "domcontentloaded", timeout: 60_000 },
-    {
+  await navigateKariyerPage(page, parsed.toString(), {
+    ...(navigationContext ? { navigationContext } : {}),
+    gotoOptions: { waitUntil: "domcontentloaded", timeout: 60_000 },
+    safetyOptions: {
       requireHttps: true,
       allowedHostname: isKariyerHostname,
       context: "Kariyer.net listing navigation",
     },
-  );
+    context: "Kariyer.net listing navigation",
+  });
   const cardLocator = typeof (page as Page & { locator?: unknown }).locator === "function"
     ? page.locator(KARIYER_CARD_SELECTOR)
     : null;
@@ -210,19 +218,12 @@ async function navigateToKariyerListing(page: Page, url: string): Promise<string
       }
     }
 
-    if ((await cardLocator.count().catch(() => 0)) === 0) {
-      const title = await page.title().catch(() => "");
-      const bodyText = await page.locator("body").innerText().catch(() => "");
-      if (
-        /access to this page has been denied|güvenlik doğrulaması|guvenlik dogrulamasi|butona basılı tut|butona basili tut/iu.test(
-          `${title}\n${bodyText}`,
-        )
-      ) {
-        throw new Error(
-          "Kariyer.net requires manual security verification in the configured persistent browser profile before listings can be read.",
-        );
-      }
-    }
+    await inspectKariyerPageOrThrow(
+      page,
+      "Kariyer.net listing hydration",
+      undefined,
+      navigationContext?.now(),
+    );
   } else {
     await page.waitForTimeout(1_000);
   }
@@ -328,8 +329,9 @@ async function resolveNextKariyerListingUrl(
 export async function extractKariyerListings(
   page: Page,
   url: string,
+  navigationContext?: KariyerNavigationContext,
 ): Promise<KariyerListing[]> {
-  const currentUrl = await navigateToKariyerListing(page, url);
+  const currentUrl = await navigateToKariyerListing(page, url, navigationContext);
   return readCurrentListings(page, currentUrl);
 }
 
@@ -337,13 +339,14 @@ export async function extractKariyerListingsBatch(
   page: Page,
   url: string,
   targetCount: number,
+  navigationContext?: KariyerNavigationContext,
 ): Promise<KariyerListingBatch> {
   const requestedCount = Number.isFinite(targetCount)
     ? Math.max(1, Math.floor(targetCount))
     : 1;
   const listings = new Map<string, KariyerListing>();
   const visitedPages = new Set<string>();
-  let currentUrl = await navigateToKariyerListing(page, url);
+  let currentUrl = await navigateToKariyerListing(page, url, navigationContext);
   let pagesVisited = 0;
 
   while (!visitedPages.has(currentUrl) && listings.size < requestedCount) {
@@ -369,7 +372,7 @@ export async function extractKariyerListingsBatch(
     if (!nextUrl || visitedPages.has(nextUrl)) {
       break;
     }
-    currentUrl = await navigateToKariyerListing(page, nextUrl);
+    currentUrl = await navigateToKariyerListing(page, nextUrl, navigationContext);
   }
 
   return {

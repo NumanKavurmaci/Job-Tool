@@ -97,7 +97,7 @@ describe("Kariyer.net listing extraction", () => {
     };
 
     await expect(extractKariyerListings(page as never, listingUrl)).resolves.toHaveLength(1);
-    expect(count).toHaveBeenCalledTimes(4);
+    expect(count).toHaveBeenCalledTimes(3);
     expect(page.waitForTimeout).toHaveBeenCalledTimes(2);
   });
 
