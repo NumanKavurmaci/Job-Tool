@@ -327,4 +327,61 @@ describe("app cli", () => {
       "explore-batch requires a LinkedIn collection or search-results URL, or the default collection.",
     );
   });
+
+  it("rejects unsafe single URLs before any browser flow can start", () => {
+    expect(() => parseCliArgs(["score", "file:///etc/passwd"])).toThrow(
+      "unsupported_protocol",
+    );
+    expect(() => parseCliArgs(["http://127.0.0.1:3000/admin"])).toThrow("private_host");
+    expect(() =>
+      parseCliArgs([
+        "external-apply",
+        "https://user:secret@apply.example.com/form",
+        "--resume",
+        "./cv.pdf",
+      ]),
+    ).toThrow("embedded_credentials");
+    expect(() =>
+      parseCliArgs([
+        "external-apply",
+        "http://apply.example.com/form",
+        "--resume",
+        "./cv.pdf",
+      ]),
+    ).toThrow("unsupported_protocol");
+  });
+
+  it("requires genuine HTTPS LinkedIn hosts for LinkedIn commands", () => {
+    expect(() =>
+      parseCliArgs([
+        "apply",
+        "https://linkedin.com.evil.test/jobs/view/1",
+        "--resume",
+        "./cv.pdf",
+      ]),
+    ).toThrow("disallowed_host");
+    expect(() =>
+      parseCliArgs([
+        "easy-apply",
+        "http://www.linkedin.com/jobs/view/1",
+        "--resume",
+        "./cv.pdf",
+      ]),
+    ).toThrow("unsupported_protocol");
+  });
+
+  it("does not accept a ReactJobs path embedded in an attacker host", () => {
+    expect(() =>
+      parseCliArgs([
+        "apply-batch",
+        "https://evil.test/reactjobs.io/jobs/nextjs/remote",
+        "--count",
+        "2",
+        "--resume",
+        "./cv.pdf",
+      ]),
+    ).toThrow(
+      "apply-batch requires a supported listing URL (LinkedIn collection/search-results, ReactJobs, or Ashby).",
+    );
+  });
 });

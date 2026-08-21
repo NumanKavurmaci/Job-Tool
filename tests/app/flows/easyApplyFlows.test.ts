@@ -747,6 +747,43 @@ describe("easy apply flows", () => {
     expect(deps.prisma.systemLog.create).not.toHaveBeenCalled();
   });
 
+  it("does not hand an unsafe LinkedIn external target to the external apply flow", async () => {
+    const deps = createDeps();
+    mockWithPage(deps);
+    (deps.loadCandidateMasterProfile as any).mockResolvedValue({
+      fullName: "Jane",
+      sourceMetadata: { resumePath: "./resume.pdf" },
+    });
+    (deps.resolveAnswer as any).mockResolvedValue({ answer: "ok" });
+    (deps.createEasyApplyDriver as any).mockResolvedValue({ driver: true });
+    (deps.runEasyApply as any).mockResolvedValue({
+      status: "stopped_external_apply",
+      steps: [{ action: "external" }],
+      stopReason: "Use company website.",
+      url: "https://www.linkedin.com/jobs/view/1",
+      externalApplyUrl: "http://169.254.169.254/latest/meta-data/",
+    });
+    (deps.writeRunReport as any).mockResolvedValue("artifacts/easy-apply-runs/unsafe.json");
+
+    const { runApplyFlow } = await import("../../../src/app/flows/applyFlows.js");
+    const result = await runApplyFlow(
+      {
+        mode: "apply",
+        url: "https://www.linkedin.com/jobs/view/1",
+        resumePath: "./resume.pdf",
+        dryRun: false,
+      },
+      deps,
+    );
+
+    expect(result.easyApply.externalApplication).toMatchObject({
+      status: "failed",
+      stopReason: "Resolved external application URL was unsafe or invalid.",
+    });
+    expect(runExternalApplyFlowMock).not.toHaveBeenCalled();
+    expect(runExternalApplyDryRunFlowMock).not.toHaveBeenCalled();
+  });
+
   it("persists survey answers for the live easy-apply flow when questions were answered", async () => {
     const deps = createDeps();
     mockWithPage(deps);

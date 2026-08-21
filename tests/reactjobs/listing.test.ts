@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   extractReactJobsListingsBatch,
   extractReactJobsListings,
+  isReactJobsDetailUrl,
   isReactJobsListingUrl,
 } from "../../src/reactjobs/listing.js";
 
@@ -9,6 +10,17 @@ describe("ReactJobs listing extraction", () => {
   it("recognizes listing urls", () => {
     expect(isReactJobsListingUrl("https://reactjobs.io/jobs/nextjs/remote?isRemote=true")).toBe(true);
     expect(isReactJobsListingUrl("https://reactjobs.io/react-jobs/robusta/8446-role")).toBe(false);
+    expect(isReactJobsListingUrl("https://evil.test/reactjobs.io/jobs/nextjs/remote")).toBe(false);
+    expect(isReactJobsListingUrl("https://reactjobs.io.evil.test/jobs/nextjs/remote")).toBe(false);
+    expect(isReactJobsListingUrl("https://user:secret@reactjobs.io/jobs/nextjs/remote")).toBe(false);
+  });
+
+  it("recognizes only strict ReactJobs detail hosts and paths", () => {
+    expect(isReactJobsDetailUrl("https://reactjobs.io/react-jobs/robusta/8446-role")).toBe(true);
+    expect(isReactJobsDetailUrl("https://www.reactjobs.io/react-jobs/robusta/8446-role")).toBe(true);
+    expect(isReactJobsDetailUrl("https://evil.test/reactjobs.io/react-jobs/robusta/8446-role")).toBe(false);
+    expect(isReactJobsDetailUrl("https://reactjobs.io.evil.test/react-jobs/robusta/8446-role")).toBe(false);
+    expect(isReactJobsDetailUrl("https://reactjobs.io/jobs/react-jobs/robusta/8446-role")).toBe(false);
   });
 
   it("navigates to the listing and returns the normalized browser extraction", async () => {

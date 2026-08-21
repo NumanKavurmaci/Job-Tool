@@ -9,6 +9,11 @@ import {
   gotoJobPage,
   optionalText,
 } from "./helpers.js";
+import {
+  extractJobPostingStructuredData,
+  normalizeStructuredWorkplaceType,
+  resolveHttpUrl,
+} from "./structuredData.js";
 
 export class GenericAdapter implements JobAdapter {
   name = "generic";
@@ -19,28 +24,37 @@ export class GenericAdapter implements JobAdapter {
 
   async extract(page: Page, url: string): Promise<ExtractedJobContent> {
     await gotoJobPage(page, url);
+    const currentUrl = await getCurrentUrl(page);
+    const structured = await extractJobPostingStructuredData(page);
 
     const title =
+      structured?.title ??
       (await getTextBySelectors(page, [
         "h1",
         "[data-testid='job-title']",
         "[class*='job-title']",
-        "meta[property='og:title']",
-      ])) ?? optionalText(await page.title());
+      ])) ??
+      (await getAttributeBySelectors(page, ["meta[property='og:title']", "meta[name='twitter:title']"], "content")) ??
+      optionalText(await page.title());
 
-    const company = await getTextBySelectors(page, [
-      "[data-testid='company-name']",
-      "[class*='company']",
-      "header [class*='company']",
-    ]);
+    const company =
+      structured?.company ??
+      (await getTextBySelectors(page, [
+        "[data-testid='company-name']",
+        "[class*='company']",
+        "header [class*='company']",
+      ])) ??
+      (await getAttributeBySelectors(page, ["meta[property='og:site_name']"], "content"));
 
-    const location = await getTextBySelectors(page, [
-      "[data-testid='job-location']",
-      "[class*='location']",
-      "[class*='job-location']",
-    ]);
+    const location =
+      structured?.location ??
+      (await getTextBySelectors(page, [
+        "[data-testid='job-location']",
+        "[class*='job-location']",
+        "[class*='location']",
+      ]));
 
-    const applyUrl =
+    const rawApplyUrl =
       (await getAttributeBySelectors(
         page,
         [
@@ -50,38 +64,43 @@ export class GenericAdapter implements JobAdapter {
           "a[data-testid='apply-button']",
         ],
         "href",
-      )) ?? (await getCurrentUrl(page));
+      )) ?? structured?.canonicalUrl ?? currentUrl;
+    const applyUrl = resolveHttpUrl(rawApplyUrl, currentUrl) ?? currentUrl;
 
-    const descriptionText = await extractSectionText(page, [
-      "main",
-      "article",
-      "[role='main']",
-      "body",
-    ]);
+    const descriptionText =
+      structured?.descriptionText ??
+      (await extractSectionText(page, ["main", "article", "[role='main']", "body"]));
 
-    const requirementsText = await extractSectionText(page, [
-      "[data-testid='requirements']",
-      "[class*='requirement']",
-      "[class*='qualification']",
-    ]);
+    const requirementsText =
+      structured?.requirementsText ??
+      (await extractSectionText(page, [
+        "[data-testid='requirements']",
+        "[class*='requirement']",
+        "[class*='qualification']",
+      ]));
 
-    const benefitsText = await extractSectionText(page, [
-      "[data-testid='benefits']",
-      "[class*='benefit']",
-      "[class*='perk']",
-    ]);
+    const benefitsText =
+      structured?.benefitsText ??
+      (await extractSectionText(page, [
+        "[data-testid='benefits']",
+        "[class*='benefit']",
+        "[class*='perk']",
+      ]));
 
     return {
       rawText: await extractBodyText(page),
       title,
       company,
-      companyLogoUrl: null,
+      companyLogoUrl:
+        structured?.companyLogoUrl ??
+        (await getAttributeBySelectors(page, ["meta[property='og:image']"], "content")),
       companyLinkedinUrl: null,
       location,
       platform: this.name,
       applicationType: "unknown",
+      rawWorkplaceType: normalizeStructuredWorkplaceType(structured?.workplaceType),
       applyUrl,
-      currentUrl: await getCurrentUrl(page),
+      currentUrl,
       descriptionText,
       requirementsText,
       benefitsText,

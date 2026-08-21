@@ -3,6 +3,7 @@ import { GenericAdapter } from "./GenericAdapter.js";
 import { GreenhouseAdapter } from "./GreenhouseAdapter.js";
 import { LeverAdapter } from "./LeverAdapter.js";
 import { LinkedInAdapter } from "./LinkedInAdapter.js";
+import { KariyerNetAdapter } from "./KariyerNetAdapter.js";
 import { ReactJobsAdapter } from "./ReactJobsAdapter.js";
 import type { JobAdapter } from "./types.js";
 
@@ -11,6 +12,7 @@ const adapters: JobAdapter[] = [
   new LeverAdapter(),
   new AshbyAdapter(),
   new LinkedInAdapter(),
+  new KariyerNetAdapter(),
   new ReactJobsAdapter(),
   new GenericAdapter(),
 ];

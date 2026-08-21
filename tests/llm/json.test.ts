@@ -17,4 +17,23 @@ describe("llm json helpers", () => {
       answer: false,
     });
   });
+
+  it("does not let braces inside strings terminate the object", () => {
+    expect(
+      extractJsonText('prefix {"message":"use } and { literally","ok":true} suffix'),
+    ).toBe('{"message":"use } and { literally","ok":true}');
+  });
+
+  it("extracts only the first balanced value from multiple objects", () => {
+    expect(extractJsonText('before {"first":1} between {"second":2} after')).toBe(
+      '{"first":1}',
+    );
+  });
+
+  it("supports nested arrays and escaped quotes", () => {
+    expect(parseJsonResponse('noise [{"value":"\\\"quoted\\\""},[1,2]] tail')).toEqual([
+      { value: '"quoted"' },
+      [1, 2],
+    ]);
+  });
 });

@@ -48,4 +48,31 @@ describe("OpenAIProvider", () => {
       model: "gpt-4.1-mini",
     });
   });
+
+  it("passes system instructions and strict JSON schema to Responses", async () => {
+    const responsesCreate = vi.fn().mockResolvedValue({ output_text: '{"ok":true}' });
+    createMock.mockReturnValue({ responses: { create: responsesCreate } });
+
+    const { OpenAIProvider } = await import("../../src/llm/providers/openaiProvider.js");
+    const provider = new OpenAIProvider();
+    const responseFormat = {
+      type: "json_schema" as const,
+      name: "job_posting",
+      schema: { type: "object", additionalProperties: false },
+      strict: true as const,
+    };
+
+    await provider.parseJob({
+      prompt: "Untrusted input",
+      instructions: "Trusted instructions",
+      responseFormat,
+    });
+
+    expect(responsesCreate).toHaveBeenCalledWith({
+      model: "gpt-4.1-mini",
+      input: "Untrusted input",
+      instructions: "Trusted instructions",
+      text: { format: responseFormat },
+    });
+  });
 });

@@ -3,6 +3,12 @@ import type { InputQuestion } from "../questions/types.js";
 import type { CandidateProfile } from "../candidate/types.js";
 import { resolveAnswer } from "../answers/resolveAnswer.js";
 import { acceptAllCookiePrompts } from "../browser/cookies.js";
+import {
+  assertSafeNavigationUrl,
+  safePageGoto,
+  UnsafeNavigationUrlError,
+  type NavigationHostnameResolver,
+} from "../security/navigationSafety.js";
 import type {
   ExternalApplicationDiscovery,
   ExternalApplicationField,
@@ -17,6 +23,10 @@ import {
 export type ExternalDiscoveryRetryPolicy = {
   delayedEmbedRetryDelaysMs: number[];
   signalTimeoutMs: number;
+  /** Test-only escape hatch for deliberately local browser fixtures. */
+  allowPrivateHosts?: boolean;
+  /** Resolver injection for deterministic browser tests; production uses Node DNS. */
+  hostnameResolver?: NavigationHostnameResolver;
 };
 
 export const DEFAULT_EXTERNAL_DISCOVERY_RETRY_POLICY: ExternalDiscoveryRetryPolicy = {
@@ -24,9 +34,71 @@ export const DEFAULT_EXTERNAL_DISCOVERY_RETRY_POLICY: ExternalDiscoveryRetryPoli
   signalTimeoutMs: 5_000,
 };
 
+function externalNavigationOptions(
+  retryPolicy: ExternalDiscoveryRetryPolicy,
+  context: string,
+) {
+  return {
+    allowPrivateHosts: retryPolicy.allowPrivateHosts === true,
+    requireHttps: retryPolicy.allowPrivateHosts !== true,
+    ...(retryPolicy.hostnameResolver
+      ? { hostnameResolver: retryPolicy.hostnameResolver }
+      : {}),
+    context,
+  };
+}
+
+function resolveExternalNavigationCandidate(
+  value: string,
+  baseUrl: string,
+  retryPolicy: ExternalDiscoveryRetryPolicy,
+): string {
+  let resolved: string;
+  try {
+    resolved = new URL(value, baseUrl).toString();
+  } catch {
+    resolved = value;
+  }
+
+  assertSafeNavigationUrl(
+    resolved,
+    externalNavigationOptions(retryPolicy, "External application candidate"),
+  );
+  return resolved;
+}
+
+function getExternalPageUrl(page: Page, fallbackUrl: string): string {
+  const pageWithOptionalUrl = page as Page & { url?: Page["url"] };
+  return typeof pageWithOptionalUrl.url === "function" ? pageWithOptionalUrl.url() : fallbackUrl;
+}
+
+async function tryNavigateToExternalCandidate(
+  page: Page,
+  value: string,
+  baseUrl: string,
+  retryPolicy: ExternalDiscoveryRetryPolicy,
+  context: string,
+): Promise<string | null> {
+  try {
+    const candidateUrl = resolveExternalNavigationCandidate(value, baseUrl, retryPolicy);
+    await safePageGoto(
+      page,
+      candidateUrl,
+      undefined,
+      externalNavigationOptions(retryPolicy, context),
+    );
+    return candidateUrl;
+  } catch (error) {
+    if (error instanceof UnsafeNavigationUrlError) {
+      return null;
+    }
+    throw error;
+  }
+}
+
 const EXTERNAL_DISCOVERY_EVALUATE_SCRIPT = `(() => {
   const doc = globalThis.document;
-  const applyTextPattern = /\\b(apply|continue|start|next|begin)\\b/i;
+  const applyTextPattern = /\\b(apply|continue|start|next|begin)\\b|başvur|basvur|devam|ileri|sonraki|başla|basla/i;
   const cleanText = (value) => (value ?? "").replace(/\\s+/g, " ").trim();
   const normalizeToken = (value) => cleanText(value).toLowerCase();
   const removeNestedInputs = (element) => {
@@ -741,7 +813,12 @@ export async function discoverExternalApplication(
   sourceUrl: string,
   retryPolicy: ExternalDiscoveryRetryPolicy = DEFAULT_EXTERNAL_DISCOVERY_RETRY_POLICY,
 ): Promise<ExternalApplicationDiscovery> {
-  await page.goto(sourceUrl);
+  await safePageGoto(
+    page,
+    sourceUrl,
+    undefined,
+    externalNavigationOptions(retryPolicy, "External application source"),
+  );
   await waitForExternalDiscoverySignals(page, retryPolicy);
   return inspectExternalApplicationPageWithRetry(page, sourceUrl, retryPolicy);
 }
@@ -789,8 +866,8 @@ async function waitForExternalDiscoverySignals(
 
           return (
             dataUi === "apply-button" ||
-            /\\b(apply|continue|start|next|begin)\\b/.test(text) ||
-            /\\b(apply|continue|start|next|begin)\\b/.test(ariaLabel)
+            /\\b(apply|continue|start|next|begin)\\b|başvur|basvur|devam|ileri|sonraki|başla|basla/.test(text) ||
+            /\\b(apply|continue|start|next|begin)\\b|başvur|basvur|devam|ileri|sonraki|başla|basla/.test(ariaLabel)
           );
         });
       }`,
@@ -988,13 +1065,22 @@ async function inspectExternalApplicationPageWithRetry(
   let embeddedApplicationCandidates = await inspectEmbeddedApplicationCandidates(page);
 
   for (const candidate of embeddedApplicationCandidates) {
-    await page.goto(candidate.href);
+    const candidateUrl = await tryNavigateToExternalCandidate(
+      page,
+      candidate.href,
+      getExternalPageUrl(page, sourceUrl),
+      retryPolicy,
+      "Embedded application URL",
+    );
+    if (!candidateUrl) {
+      continue;
+    }
     await waitForExternalDiscoverySignals(page, retryPolicy);
     inspection = await inspectExternalApplicationPage(page, sourceUrl);
     if (inspection.fields.length > 0 || inspection.precursorLinks.length > 0) {
       return {
         ...inspection,
-        followedPrecursorLink: candidate.href,
+        followedPrecursorLink: candidateUrl,
       };
     }
   }
@@ -1012,13 +1098,22 @@ async function inspectExternalApplicationPageWithRetry(
     await page.waitForTimeout(delayMs);
     embeddedApplicationCandidates = await inspectEmbeddedApplicationCandidates(page);
     for (const candidate of embeddedApplicationCandidates) {
-      await page.goto(candidate.href);
+      const candidateUrl = await tryNavigateToExternalCandidate(
+        page,
+        candidate.href,
+        getExternalPageUrl(page, sourceUrl),
+        retryPolicy,
+        "Delayed embedded application URL",
+      );
+      if (!candidateUrl) {
+        continue;
+      }
       await waitForExternalDiscoverySignals(page, retryPolicy);
       inspection = await inspectExternalApplicationPage(page, sourceUrl);
       if (inspection.fields.length > 0 || inspection.precursorLinks.length > 0) {
         return {
           ...inspection,
-          followedPrecursorLink: candidate.href,
+          followedPrecursorLink: candidateUrl,
         };
       }
     }
@@ -1047,12 +1142,22 @@ export async function followExternalApplicationLink(
   href: string,
   retryPolicy: ExternalDiscoveryRetryPolicy = DEFAULT_EXTERNAL_DISCOVERY_RETRY_POLICY,
 ): Promise<ExternalApplicationDiscovery> {
-  await page.goto(href);
+  const resolvedHref = resolveExternalNavigationCandidate(
+    href,
+    getExternalPageUrl(page, sourceUrl),
+    retryPolicy,
+  );
+  await safePageGoto(
+    page,
+    resolvedHref,
+    undefined,
+    externalNavigationOptions(retryPolicy, "External application precursor URL"),
+  );
   await waitForExternalDiscoverySignals(page, retryPolicy);
   const discovered = await inspectExternalApplicationPageWithRetry(page, sourceUrl, retryPolicy);
   return {
     ...discovered,
-    followedPrecursorLink: href,
+    followedPrecursorLink: resolvedHref,
   };
 }
 

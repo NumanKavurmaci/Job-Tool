@@ -77,6 +77,7 @@ export function createMockPage(options?: {
   onFill?: (selector: string, value: string, context: MockPageContext) => void | Promise<void>;
   onClick?: (selector: string, context: MockPageContext) => void | Promise<void>;
   onWaitForTimeout?: (timeoutMs: number, context: MockPageContext) => void | Promise<void>;
+  evaluateResult?: unknown;
 }) {
   let state: MockPageState = {
     selectors: options?.selectors,
@@ -144,5 +145,8 @@ export function createMockPage(options?: {
     title: async () => state.title ?? "Fallback Page Title",
     goto,
     waitForTimeout,
+    ...(Object.prototype.hasOwnProperty.call(options ?? {}, "evaluateResult")
+      ? { evaluate: async () => options?.evaluateResult }
+      : {}),
   };
 }

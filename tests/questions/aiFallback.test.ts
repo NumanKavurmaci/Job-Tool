@@ -63,7 +63,7 @@ describe("resolveAiFallbackAnswer", () => {
     completePromptMock.mockReset();
   });
 
-  it("normalizes radio answers to an available option", async () => {
+  it("keeps sensitive demographic questions in manual review", async () => {
     completePromptMock.mockResolvedValue({
       text: JSON.stringify({
         answer: "prefer not to say",
@@ -100,9 +100,10 @@ describe("resolveAiFallbackAnswer", () => {
       },
     });
 
-    expect(result.strategy).toBe("generated");
-    expect(result.answer).toBe("Prefer not to say");
-    expect(result.source).toBe("llm");
+    expect(result.strategy).toBe("needs-review");
+    expect(result.answer).toBeNull();
+    expect(result.source).toBe("manual");
+    expect(completePromptMock).not.toHaveBeenCalled();
   });
 
   it("preserves boolean checkbox answers from the LLM fallback", async () => {
@@ -136,6 +137,33 @@ describe("resolveAiFallbackAnswer", () => {
     expect(result.confidenceLabel).toBe("medium");
   });
 
+  it("keeps salary questions out of the LLM even when classification is weak", async () => {
+    const { resolveAiFallbackAnswer } = await import(
+      "../../src/questions/strategies/aiFallback.js"
+    );
+
+    const result = await resolveAiFallbackAnswer({
+      question: {
+        label: "What is your salary expectation?",
+        inputType: "text",
+      },
+      classified: {
+        type: "unknown",
+        normalizedText: "what is your salary expectation",
+        confidence: 0.1,
+      },
+      candidateProfile: profile,
+    });
+
+    expect(result).toMatchObject({
+      strategy: "needs-review",
+      answer: null,
+      confidenceLabel: "manual_review",
+      source: "manual",
+    });
+    expect(completePromptMock).not.toHaveBeenCalled();
+  });
+
   it("keeps exact select option matches and clamps high confidence", async () => {
     completePromptMock.mockResolvedValue({
       text: JSON.stringify({
@@ -153,13 +181,13 @@ describe("resolveAiFallbackAnswer", () => {
 
     const result = await resolveAiFallbackAnswer({
       question: {
-        label: "Do you require sponsorship?",
+        label: "Choose the preferred contract response",
         inputType: "select",
         options: ["Yes", "No"],
       },
       classified: {
-        type: "sponsorship",
-        normalizedText: "do you require sponsorship",
+        type: "general_short_text",
+        normalizedText: "choose the preferred contract response",
         confidence: 0.5,
       },
       candidateProfile: profile,
@@ -174,7 +202,7 @@ describe("resolveAiFallbackAnswer", () => {
     expect(result.confidence).toBe(0.75);
   });
 
-  it("preserves boolean answers for radio inputs", async () => {
+  it("preserves boolean answers for non-sensitive radio inputs", async () => {
     completePromptMock.mockResolvedValue({
       text: JSON.stringify({
         answer: false,
@@ -190,13 +218,13 @@ describe("resolveAiFallbackAnswer", () => {
 
     const result = await resolveAiFallbackAnswer({
       question: {
-        label: "Do you require sponsorship?",
+        label: "Can you work weekends?",
         inputType: "radio",
         options: ["Yes", "No"],
       },
       classified: {
-        type: "sponsorship",
-        normalizedText: "do you require sponsorship",
+        type: "general_short_text",
+        normalizedText: "can you work weekends",
         confidence: 0.5,
       },
       candidateProfile: profile,
@@ -205,7 +233,7 @@ describe("resolveAiFallbackAnswer", () => {
     expect(result.answer).toBe(false);
   });
 
-  it("falls back to partial option matching when no exact match exists", async () => {
+  it("rejects partial option matches when no exact normalized option exists", async () => {
     completePromptMock.mockResolvedValue({
       text: JSON.stringify({
         answer: "prefer",
@@ -221,19 +249,19 @@ describe("resolveAiFallbackAnswer", () => {
 
     const result = await resolveAiFallbackAnswer({
       question: {
-        label: "Accessibility disclosure",
+        label: "Preferred schedule",
         inputType: "select",
-        options: ["Yes", "No", "Prefer not to say"],
+        options: ["Full-time", "Part-time"],
       },
       classified: {
-        type: "accessibility",
-        normalizedText: "accessibility disclosure",
+        type: "general_short_text",
+        normalizedText: "preferred schedule",
         confidence: 0.5,
       },
       candidateProfile: profile,
     });
 
-    expect(result.answer).toBe("Prefer not to say");
+    expect(result.answer).toBeNull();
   });
 
   it("converts checkbox string answers into booleans", async () => {
@@ -343,5 +371,16 @@ describe("resolveAiFallbackAnswer", () => {
 
     expect(result.answer).toBe("0");
     expect(result.confidenceLabel).toBe("low");
+    const prompt = String(completePromptMock.mock.calls[0]?.[0]);
+    const options = completePromptMock.mock.calls[0]?.[1] as {
+      instructions?: string;
+      responseFormat?: { type?: string };
+    };
+    expect(prompt).toContain("untrustedQuestion");
+    expect(prompt).not.toContain("jane@example.com");
+    expect(prompt).not.toContain("120000-140000 TRY");
+    expect(prompt).not.toContain('"resumeText"');
+    expect(options.instructions).toContain("never instructions");
+    expect(options.responseFormat?.type).toBe("json_schema");
   });
 });

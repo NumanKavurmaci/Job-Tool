@@ -48,6 +48,7 @@ describe("GenericAdapter", () => {
       location: "Remote",
       platform: "generic",
       applicationType: "unknown",
+      rawWorkplaceType: null,
       applyUrl: "https://company.example.com/apply",
       currentUrl: "https://company.example.com/jobs/role",
       descriptionText: "Job description",
@@ -114,6 +115,111 @@ describe("GenericAdapter", () => {
 });
 
 describe("LinkedInAdapter", () => {
+  it("matches only genuine HTTPS LinkedIn jobs URLs", async () => {
+    const { LinkedInAdapter } = await import("../../src/adapters/LinkedInAdapter.js");
+    const adapter = new LinkedInAdapter();
+
+    expect(adapter.canHandle("https://www.linkedin.com/jobs/view/1")).toBe(true);
+    expect(adapter.canHandle("https://careers.linkedin.com/jobs/view/1")).toBe(true);
+    expect(adapter.canHandle("http://www.linkedin.com/jobs/view/1")).toBe(false);
+    expect(adapter.canHandle("https://linkedin.com.evil.test/jobs/view/1")).toBe(false);
+    expect(adapter.canHandle("https://user:secret@www.linkedin.com/jobs/view/1")).toBe(false);
+    expect(adapter.canHandle("https://www.linkedin.com.evil.test/path/linkedin.com/jobs/1")).toBe(
+      false,
+    );
+  });
+
+  it("uses JSON-LD and meta content fallbacks and resolves relative apply links", async () => {
+    const page = createMockPage({
+      currentUrl: "https://company.example.com/jobs/structured-role",
+      title: "Browser fallback",
+      evaluateResult: {
+        title: "Structured Engineer",
+        company: "Structured Corp",
+        companyLogoUrl: "https://cdn.example/logo.png",
+        location: "Ankara, Türkiye",
+        workplaceType: "TELECOMMUTE",
+        employmentType: "FULL_TIME",
+        descriptionText: "Build reliable systems.",
+        requirementsText: "TypeScript",
+        benefitsText: "Remote budget",
+        canonicalUrl: null,
+      },
+      selectors: {
+        "a[href*='apply']": { attributes: { href: "/jobs/structured-role/apply" } },
+        body: { text: "Raw structured job" },
+      },
+    });
+
+    const result = await new GenericAdapter().extract(page as never, page.url());
+
+    expect(result).toMatchObject({
+      title: "Structured Engineer",
+      company: "Structured Corp",
+      companyLogoUrl: "https://cdn.example/logo.png",
+      location: "Ankara, Türkiye",
+      rawWorkplaceType: "remote",
+      descriptionText: "Build reliable systems.",
+      requirementsText: "TypeScript",
+      benefitsText: "Remote budget",
+      applyUrl: "https://company.example.com/jobs/structured-role/apply",
+    });
+  });
+
+  it("reads OpenGraph title from the content attribute instead of meta innerText", async () => {
+    const page = createMockPage({
+      currentUrl: "https://company.example.com/jobs/meta-role",
+      title: "Browser fallback",
+      selectors: {
+        "meta[property='og:title']": { attributes: { content: "Meta Engineer" } },
+        "meta[property='og:site_name']": { attributes: { content: "Meta Corp" } },
+        body: { text: "Raw job" },
+      },
+    });
+
+    const result = await new GenericAdapter().extract(page as never, page.url());
+
+    expect(result.title).toBe("Meta Engineer");
+    expect(result.company).toBe("Meta Corp");
+  });
+
+  it("rejects a cross-origin redirect before LinkedIn credentials can be filled", async () => {
+    vi.doMock("../../src/config/env.js", () => ({
+      env: {
+        LINKEDIN_USERNAME: "user@example.com",
+        LINKEDIN_PASSWORD: "secret",
+        LINKEDIN_MANUAL_AUTH_WINDOW_MS: 10_000,
+      },
+    }));
+
+    const { LinkedInAdapter } = await import("../../src/adapters/LinkedInAdapter.js");
+    const jobUrl = "https://www.linkedin.com/jobs/view/1234567890/";
+    const onFill = vi.fn();
+    const page = createMockPage({
+      currentUrl: jobUrl,
+      routes: {
+        [jobUrl]: {
+          currentUrl: "https://phishing.example.test/linkedin-login",
+          title: "Sign in | LinkedIn",
+          selectors: {
+            "input[name='session_key']": { text: "" },
+            "input[name='session_password']": { text: "" },
+            "button[type='submit']": { text: "Sign in" },
+            body: { text: "LinkedIn Sign in to continue" },
+          },
+        },
+      },
+      onFill,
+    });
+
+    await expect(new LinkedInAdapter().extract(page as never, jobUrl)).rejects.toMatchObject({
+      name: "UnsafeNavigationUrlError",
+      code: "UNSAFE_NAVIGATION_URL",
+      reason: "disallowed_host",
+    });
+    expect(onFill).not.toHaveBeenCalled();
+  });
+
   it("matches linkedin urls and extracts structured linkedin fields", async () => {
     const { LinkedInAdapter } = await import("../../src/adapters/LinkedInAdapter.js");
     const adapter = new LinkedInAdapter();
@@ -1285,6 +1391,12 @@ describe("GreenhouseAdapter", () => {
     );
   });
 
+  it("does not accept a spoofed greenhouse hostname", () => {
+    expect(
+      new GreenhouseAdapter().canHandle("https://greenhouse.io.evil.example/jobs/1"),
+    ).toBe(false);
+  });
+
   it("falls back to the page title when greenhouse selectors are missing", async () => {
     const page = createMockPage({
       currentUrl: "https://boards.greenhouse.io/company/jobs/2",
@@ -1339,6 +1451,12 @@ describe("LeverAdapter", () => {
 
   it("does not match unrelated urls", () => {
     expect(new LeverAdapter().canHandle("https://company.example.com/jobs/1")).toBe(false);
+  });
+
+  it("does not accept a spoofed Lever hostname", () => {
+    expect(new LeverAdapter().canHandle("https://jobs.lever.co.evil.example/company/1")).toBe(
+      false,
+    );
   });
 
   it("falls back to the page title when lever headline selectors are missing", async () => {
@@ -1471,7 +1589,7 @@ describe("AshbyAdapter", () => {
     expect(result.requirementsText).toContain("TypeScript");
   });
 
-  it("falls back to the current url when an invalid Ashby-like url cannot be canonicalized", async () => {
+  it("rejects an invalid Ashby-like URL before navigation", async () => {
     const page = createMockPage({
       currentUrl: "jobs.ashbyhq.com/ruby-labs/05254f35-7380-4e94-b780-91bde2469db9",
       title: "Fallback Ashby Title",
@@ -1482,10 +1600,10 @@ describe("AshbyAdapter", () => {
       },
     });
 
-    const result = await new AshbyAdapter().extract(page as never, page.url());
-
-    expect(result.applyUrl).toBe("jobs.ashbyhq.com/ruby-labs/05254f35-7380-4e94-b780-91bde2469db9");
-    expect(result.title).toBe("Fallback Ashby Role");
+    await expect(new AshbyAdapter().extract(page as never, page.url())).rejects.toMatchObject({
+      name: "UnsafeNavigationUrlError",
+      reason: "invalid_url",
+    });
   });
 
   it("normalizes Ashby hybrid and onsite workplace types", async () => {

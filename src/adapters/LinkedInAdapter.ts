@@ -3,6 +3,10 @@ import { env } from "../config/env.js";
 import { capturePageArtifacts } from "../utils/artifacts.js";
 import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
+import {
+  assertSafeLinkedInNavigationUrl,
+  safeLinkedInPageGoto,
+} from "../security/navigationSafety.js";
 import type { ExtractedJobContent, JobAdapter } from "./types.js";
 import {
   compactText,
@@ -10,7 +14,6 @@ import {
   getAttributeBySelectors,
   getCurrentUrl,
   getTextBySelectors,
-  gotoJobPage,
   optionalText,
 } from "./helpers.js";
 
@@ -131,6 +134,18 @@ const LINKEDIN_ABOUT_COMPANY_SELECTORS = [
   "[data-test-id='about-company']",
   ".jobs-company__box",
 ];
+
+function assertCurrentLinkedInPage(page: Page, context: string): URL {
+  return assertSafeLinkedInNavigationUrl(page.url(), context);
+}
+
+async function gotoLinkedInJobPage(page: Page, url: string): Promise<void> {
+  await safeLinkedInPageGoto(page, url, {
+    waitUntil: "domcontentloaded",
+    timeout: 60_000,
+  });
+  await page.waitForTimeout(2_000);
+}
 
 function parseLinkedInPageTitle(
   pageTitle: string | null,
@@ -710,6 +725,7 @@ async function waitForLocator(
 }
 
 export async function isLinkedInSignInWall(page: Page): Promise<boolean> {
+  assertCurrentLinkedInPage(page, "LinkedIn sign-in detection");
   const currentUrl = page.url().toLowerCase();
   if (currentUrl.includes("/login") || currentUrl.includes("/checkpoint")) {
     return true;
@@ -746,10 +762,7 @@ type LinkedInAuthState = "authenticated" | "login" | "challenge";
 
 function isLikelyAuthenticatedLinkedInRoute(url: string): boolean {
   try {
-    const parsed = new URL(url);
-    if (!/linkedin\.com$/i.test(parsed.hostname) && !/\.linkedin\.com$/i.test(parsed.hostname)) {
-      return false;
-    }
+    const parsed = assertSafeLinkedInNavigationUrl(url, "LinkedIn auth state");
 
     const path = parsed.pathname.toLowerCase();
     if (
@@ -775,6 +788,7 @@ function isLikelyAuthenticatedLinkedInRoute(url: string): boolean {
 }
 
 async function getLinkedInAuthState(page: Page): Promise<LinkedInAuthState> {
+  assertCurrentLinkedInPage(page, "LinkedIn auth state");
   if (await hasAnyLocator(page, LINKEDIN_SIGNED_IN_SELECTORS)) {
     return "authenticated";
   }
@@ -838,7 +852,7 @@ async function waitForManualLinkedInIntervention(
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const state = await getLinkedInAuthState(page);
     if (state === "authenticated") {
-      await gotoJobPage(page, url);
+      await gotoLinkedInJobPage(page, url);
       const unlockedState = await waitForLinkedInAuthResolution(page, 2_000);
       if (unlockedState === "authenticated") {
         logger.info(
@@ -870,7 +884,12 @@ export class LinkedInAdapter implements JobAdapter {
   name = "linkedin";
 
   canHandle(url: string): boolean {
-    return url.includes("linkedin.com/jobs");
+    try {
+      const parsed = assertSafeLinkedInNavigationUrl(url, "LinkedIn adapter URL");
+      return /^\/jobs(?:\/|$)/i.test(parsed.pathname);
+    } catch {
+      return false;
+    }
   }
 
   private async ensureAuthenticated(page: Page, url: string): Promise<void> {
@@ -1030,7 +1049,7 @@ export class LinkedInAdapter implements JobAdapter {
 }
 
 export async function ensureLinkedInAuthenticated(page: Page, url: string): Promise<void> {
-  await gotoJobPage(page, url);
+  await gotoLinkedInJobPage(page, url);
 
   const initialState = await getLinkedInAuthState(page);
   logger.info(
@@ -1058,7 +1077,10 @@ export async function ensureLinkedInAuthenticated(page: Page, url: string): Prom
   let passwordInput = await waitForLocator(page, LINKEDIN_PASSWORD_SELECTORS, 5_000);
 
   if (!usernameInput || !passwordInput) {
-    await page.goto(LINKEDIN_LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    await safeLinkedInPageGoto(page, LINKEDIN_LOGIN_URL, {
+      waitUntil: "domcontentloaded",
+      timeout: 60_000,
+    });
     await page.waitForTimeout(1_000);
     usernameInput = await waitForLocator(page, LINKEDIN_USERNAME_SELECTORS, 10_000);
     passwordInput = await waitForLocator(page, LINKEDIN_PASSWORD_SELECTORS, 10_000);
@@ -1102,8 +1124,11 @@ export async function ensureLinkedInAuthenticated(page: Page, url: string): Prom
   );
 
   logger.info({ event: "linkedin.auth.submit", url: page.url() }, "Submitting LinkedIn credentials");
+  assertCurrentLinkedInPage(page, "LinkedIn username fill");
   await usernameInput.fill(env.LINKEDIN_USERNAME);
+  assertCurrentLinkedInPage(page, "LinkedIn password fill");
   await passwordInput.fill(env.LINKEDIN_PASSWORD);
+  assertCurrentLinkedInPage(page, "LinkedIn login submit");
   await submitButton.click();
   const postSubmitState = await waitForLinkedInAuthResolution(page);
 
@@ -1126,7 +1151,7 @@ export async function ensureLinkedInAuthenticated(page: Page, url: string): Prom
     });
   }
 
-  await gotoJobPage(page, url);
+  await gotoLinkedInJobPage(page, url);
 
   const finalState = await waitForLinkedInAuthResolution(page, 5_000);
   if (finalState === "challenge") {

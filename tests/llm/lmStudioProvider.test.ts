@@ -53,6 +53,45 @@ describe("LMStudioProvider", () => {
     });
   });
 
+  it("uses separate system/user messages and JSON schema when requested", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: '{"title":null}' } }],
+      }),
+    }) as typeof fetch;
+
+    const { LMStudioProvider } = await import("../../src/llm/providers/lmStudioProvider.js");
+    const provider = new LMStudioProvider();
+
+    await provider.parseJob({
+      prompt: "Untrusted input",
+      instructions: "Trusted instructions",
+      responseFormat: {
+        type: "json_schema",
+        name: "job_posting",
+        schema: { type: "object" },
+        strict: true,
+      },
+    });
+
+    const fetchMock = vi.mocked(global.fetch);
+    const options = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(options.body)) as {
+      messages: Array<{ role: string; content: string }>;
+      response_format: { json_schema: { name: string; strict: boolean } };
+    };
+
+    expect(body.messages).toEqual([
+      { role: "system", content: "Trusted instructions" },
+      { role: "user", content: "Untrusted input" },
+    ]);
+    expect(body.response_format.json_schema).toMatchObject({
+      name: "job_posting",
+      strict: true,
+    });
+  });
+
   it("throws a meaningful error when the endpoint is unreachable", async () => {
     global.fetch = vi.fn().mockRejectedValue(new Error("connection refused")) as typeof fetch;
 

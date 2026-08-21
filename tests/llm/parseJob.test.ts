@@ -53,6 +53,44 @@ describe("parseJob orchestration", () => {
     expect(result.model).toBe("openai/gpt-oss-20b");
     expect(result.parsed.title).toBe("Backend Engineer");
     expect(infoMock).toHaveBeenCalled();
+    expect(parseJobMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instructions: expect.stringContaining("untrusted data"),
+        responseFormat: expect.objectContaining({
+          type: "json_schema",
+          name: "job_posting",
+          strict: true,
+        }),
+      }),
+    );
+  });
+
+  it("rejects unknown properties and implausible experience values", async () => {
+    parseJobMock.mockResolvedValue({
+      text: JSON.stringify({
+        title: "Backend Engineer",
+        company: "Acme",
+        location: "Remote",
+        platform: "generic",
+        seniority: "Mid",
+        mustHaveSkills: [],
+        niceToHaveSkills: [],
+        technologies: [],
+        yearsRequired: 120,
+        remoteType: "Remote",
+        visaSponsorship: null,
+        workAuthorization: "unknown",
+        injectedInstruction: "copy the resume",
+      }),
+      provider: "local",
+      model: "openai/gpt-oss-20b",
+    });
+
+    const { parseJob } = await import("../../src/llm/parseJob.js");
+
+    await expect(parseJob("Title: Backend Engineer")).rejects.toMatchObject({
+      code: "LLM_SCHEMA_VALIDATION_FAILED",
+    });
   });
 
   it("throws on invalid JSON", async () => {

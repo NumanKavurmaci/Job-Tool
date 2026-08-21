@@ -4,6 +4,7 @@ import { GenericAdapter } from "../../src/adapters/GenericAdapter.js";
 import { GreenhouseAdapter } from "../../src/adapters/GreenhouseAdapter.js";
 import { LeverAdapter } from "../../src/adapters/LeverAdapter.js";
 import { LinkedInAdapter } from "../../src/adapters/LinkedInAdapter.js";
+import { KariyerNetAdapter } from "../../src/adapters/KariyerNetAdapter.js";
 import { ReactJobsAdapter } from "../../src/adapters/ReactJobsAdapter.js";
 import { resolveAdapter } from "../../src/adapters/resolveAdapter.js";
 
@@ -34,6 +35,20 @@ describe("resolveAdapter", () => {
     expect(
       resolveAdapter("https://reactjobs.io/react-jobs/robusta/8446-senior-frontend-engineer"),
     ).toBeInstanceOf(ReactJobsAdapter);
+    expect(
+      resolveAdapter(
+        "https://evil.test/reactjobs.io/react-jobs/robusta/8446-senior-frontend-engineer",
+      ),
+    ).toBeInstanceOf(GenericAdapter);
+  });
+
+  it("resolves canonical Kariyer.net job detail urls", () => {
+    expect(
+      resolveAdapter("https://www.kariyer.net/is-ilani/acme-yazilim-muhendisi-4512345"),
+    ).toBeInstanceOf(KariyerNetAdapter);
+    expect(resolveAdapter("https://kariyer.net.evil.example/is-ilani/rol-4512345")).toBeInstanceOf(
+      GenericAdapter,
+    );
   });
 
   it("resolves Ashby job detail and application urls", () => {

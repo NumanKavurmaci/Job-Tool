@@ -2,9 +2,9 @@ import { ZodError } from "zod";
 import { AppError, ensureAppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
 import { parseJsonResponse } from "./json.js";
-import { buildParseJobPrompt } from "./prompts.js";
+import { buildParseJobPrompt, PARSE_JOB_SYSTEM_INSTRUCTIONS } from "./prompts.js";
 import { resolveProvider } from "./providers/resolveProvider.js";
-import { ParsedJobSchema, type ParsedJob } from "./schema.js";
+import { parsedJobJsonSchema, ParsedJobSchema, type ParsedJob } from "./schema.js";
 import type { LlmProviderName } from "./types.js";
 
 export interface ParseJobResult {
@@ -45,7 +45,16 @@ export async function parseJob(
   );
 
   try {
-    const response = await provider.parseJob({ prompt });
+    const response = await provider.parseJob({
+      prompt,
+      instructions: PARSE_JOB_SYSTEM_INSTRUCTIONS,
+      responseFormat: {
+        type: "json_schema",
+        name: "job_posting",
+        schema: parsedJobJsonSchema,
+        strict: true,
+      },
+    });
     const durationMs = Date.now() - startedAt;
 
     if (!response.text.trim()) {

@@ -26,6 +26,8 @@ const candidateProfile = {
   resumeText: "Backend engineer.",
 } as any;
 
+const resumeFixturePath = "tests/fixtures/resume.pdf";
+
 beforeEach(() => {
   repairAnswerFromSiteFeedbackMock.mockReset();
   repairAnswerFromSiteFeedbackMock.mockResolvedValue(null);
@@ -180,7 +182,7 @@ describe("external fill", () => {
           fieldLabel: "Upload your resume (only pdf)",
           fieldType: "file",
           question: { label: "Upload your resume (only pdf)", inputType: "file" },
-          answer: "C:\\Users\\numan\\OneDrive\\Desktop\\Job Tool\\user\\resume.pdf",
+          answer: resumeFixturePath,
           source: "candidate-profile",
           confidenceLabel: "high",
         },
@@ -202,7 +204,7 @@ describe("external fill", () => {
         {
           type: "file",
           selector: `input[type="file"][aria-label="Upload your resume (only pdf)"]`,
-          value: "C:\\Users\\numan\\OneDrive\\Desktop\\Job Tool\\user\\resume.pdf",
+          value: resumeFixturePath,
         },
         { type: "click", selector: `button:has-text("Next")` },
       ]),
@@ -988,7 +990,7 @@ describe("external fill", () => {
           fieldType: "file",
           semanticKey: "resume.upload",
           question: { label: "Resume", inputType: "file" },
-          answer: "C:\\Users\\numan\\OneDrive\\Desktop\\Job Tool\\user\\resume.pdf",
+          answer: resumeFixturePath,
           source: "candidate-profile",
           confidenceLabel: "high",
           resolutionStrategy: "semantic:resume-upload",
@@ -2448,7 +2450,7 @@ describe("external fill", () => {
           fieldLabel: "Upload Resume*",
           fieldType: "file",
           question: { label: "Upload Resume*", inputType: "file" },
-          answer: "C:\\Users\\numan\\OneDrive\\Desktop\\Job Tool\\user\\resume.pdf",
+          answer: resumeFixturePath,
           source: "candidate-profile",
           confidenceLabel: "high",
         },
@@ -2467,7 +2469,7 @@ describe("external fill", () => {
       selector: `.file-input-container .button.resume`,
     });
     expect(setFiles).toHaveBeenCalledWith(
-      "C:\\Users\\numan\\OneDrive\\Desktop\\Job Tool\\user\\resume.pdf",
+      resumeFixturePath,
     );
   });
 
@@ -2542,7 +2544,7 @@ describe("external fill", () => {
           fieldLabel: "Upload Resume*",
           fieldType: "file",
           question: { label: "Upload Resume*", inputType: "file" },
-          answer: "C:\\Users\\numan\\OneDrive\\Desktop\\Job Tool\\user\\resume.pdf",
+          answer: resumeFixturePath,
           source: "candidate-profile",
           confidenceLabel: "high",
         },
@@ -2557,5 +2559,122 @@ describe("external fill", () => {
       }),
     );
     expect(result.blockingRequiredFields).toEqual(["Upload Resume*"]);
+  });
+
+  it("selects and reads back the explicit No radio option", async () => {
+    const actions: string[] = [];
+    let noChecked = false;
+    const noSelector = `input[type="radio"][name="workAuthorization"][value="No"]`;
+    const page = {
+      async evaluate() { return []; },
+      locator(selector: string) {
+        const present = selector === `[name="workAuthorization"]` || selector === noSelector || selector === `button:has-text("İleri")`;
+        return {
+          first() { return this; },
+          async count() { return present ? 1 : 0; },
+          async check() { if (selector === noSelector) { noChecked = true; actions.push(`check:${selector}`); } },
+          async isChecked() { return selector === noSelector && noChecked; },
+          async getAttribute() { return null; },
+          async click() { actions.push(`click:${selector}`); },
+          async blur() { return undefined; },
+          async fill() { return undefined; },
+          async press() { return undefined; },
+        };
+      },
+      waitForTimeout: vi.fn(async () => undefined),
+    };
+
+    const result = await fillExternalApplicationPage({
+      page: page as never,
+      discovery: {
+        sourceUrl: "https://example.com/form",
+        finalUrl: "https://example.com/form",
+        pageTitle: "Çalışma izni",
+        platform: "generic",
+        precursorLinks: [],
+        followedPrecursorLink: null,
+        fields: [{
+          key: "workAuthorization",
+          label: "Çalışma izniniz var mı?",
+          type: "boolean",
+          htmlTag: "input",
+          htmlInputType: "radio",
+          required: true,
+          options: ["Yes", "No"],
+          placeholder: null,
+          helpText: null,
+          accept: null,
+        }],
+      },
+      answerPlan: [{
+        fieldKey: "workAuthorization",
+        fieldLabel: "Çalışma izniniz var mı?",
+        fieldType: "boolean",
+        question: { label: "Çalışma izniniz var mı?", inputType: "boolean", options: ["Yes", "No"] },
+        answer: "No",
+        source: "candidate-profile",
+        confidenceLabel: "high",
+      }],
+      candidateProfile,
+    });
+
+    expect(noChecked).toBe(true);
+    expect(actions).toContain(`check:${noSelector}`);
+    expect(result.fieldResults[0]).toEqual(expect.objectContaining({
+      status: "filled",
+      details: "Selected and verified the No radio option.",
+    }));
+    expect(result.primaryAction).toBe("next");
+  });
+
+  it("expands a multi-select answer into native option arrays and recognizes Turkish submit actions", async () => {
+    const { page, register, registerNativeSelect, actions } = createLocatorRecorder();
+    registerNativeSelect(`[name="skills"]`);
+    register(`button:has-text("Başvur")`);
+
+    const result = await fillExternalApplicationPage({
+      page: page as never,
+      discovery: {
+        sourceUrl: "https://example.com/form",
+        finalUrl: "https://example.com/form",
+        pageTitle: "Başvuru",
+        platform: "generic",
+        precursorLinks: [],
+        followedPrecursorLink: null,
+        fields: [{
+          key: "skills",
+          label: "Teknik yetkinlikler",
+          type: "multi_select",
+          htmlTag: "select",
+          required: true,
+          options: ["TypeScript", "Node.js", "Python"],
+          placeholder: null,
+          helpText: null,
+          accept: null,
+        }],
+      },
+      answerPlan: [{
+        fieldKey: "skills",
+        fieldLabel: "Teknik yetkinlikler",
+        fieldType: "multi_select",
+        question: { label: "Teknik yetkinlikler", inputType: "multi_select", options: ["TypeScript", "Node.js", "Python"] },
+        answer: "TypeScript, Node.js",
+        source: "candidate-profile",
+        confidenceLabel: "high",
+      }],
+      candidateProfile,
+      submit: true,
+    });
+
+    expect(actions).toContainEqual({
+      type: "selectOption",
+      selector: `[name="skills"]`,
+      value: JSON.stringify([{ label: "TypeScript" }, { label: "Node.js" }]),
+    });
+    expect(result.fieldResults[0]).toEqual(expect.objectContaining({
+      status: "filled",
+      details: "Selected multiple native options.",
+    }));
+    expect(result.primaryAction).toBe("submit");
   });
 });

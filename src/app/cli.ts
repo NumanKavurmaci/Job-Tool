@@ -7,6 +7,10 @@ import {
 } from "./constants.js";
 import { isReactJobsListingUrl } from "../reactjobs/listing.js";
 import { isAshbyListingUrl } from "../ashby/listing.js";
+import {
+  assertSafeLinkedInNavigationUrl,
+  assertSafeNavigationUrl,
+} from "../security/navigationSafety.js";
 
 export type ScoringMode = "local" | "ai";
 
@@ -249,6 +253,10 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
     if (!url) {
       throw new Error("--url is required for external-apply.");
     }
+    assertSafeNavigationUrl(url, {
+      requireHttps: true,
+      context: "External application URL",
+    });
 
     return {
       mode: "external-apply",
@@ -325,9 +333,11 @@ export function parseCliArgs(args = process.argv.slice(2)): CliArgs {
   }
 
   if ((first === "score" || first === "decide" || first === "explore") && tail[0]) {
+    assertSafeNavigationUrl(tail[0], { context: "Job URL" });
     return { mode: first, url: tail[0], scoringMode };
   }
 
+  assertSafeNavigationUrl(first, { context: "Job URL" });
   return { mode: "decide", url: first, scoringMode };
 }
 
@@ -465,6 +475,7 @@ function assertLinkedInCollectionMode(mode: LinkedInBatchMode, url: string) {
 }
 
 function assertSupportedApplyBatchUrl(url: string) {
+  assertSafeNavigationUrl(url, { context: "Apply batch URL" });
   if (!isLinkedInBatchUrl(url) && !isReactJobsListingUrl(url) && !isAshbyListingUrl(url)) {
     throw new Error(
       "apply-batch requires a supported listing URL (LinkedIn collection/search-results, ReactJobs, or Ashby).",
@@ -483,6 +494,7 @@ function parseExplicitLinkedInSingleCommand(args: {
   if (!normalizedUrl) {
     throw new Error(`--url is required for ${args.mode}.`);
   }
+  assertSafeLinkedInNavigationUrl(normalizedUrl, `${args.mode} URL`);
   if (isLinkedInBatchUrl(normalizedUrl)) {
     throw new Error(
       `${args.mode} requires a single LinkedIn job URL, not a collection URL.`,
@@ -504,6 +516,7 @@ function parseLinkedInFamilyCommand(args: {
   const batchShape = readLinkedInBatchShape(args);
   const normalizedUrl =
     batchShape.count === 1 ? resolveLinkedInSingleJobUrl(batchShape.url) : batchShape.url;
+  assertSafeNavigationUrl(normalizedUrl, { context: `${args.family} URL` });
 
   if (
     isLinkedInBatchUrl(normalizedUrl) ||
@@ -511,6 +524,11 @@ function parseLinkedInFamilyCommand(args: {
     isAshbyListingUrl(normalizedUrl) ||
     batchShape.count > 1
   ) {
+    if (args.family === "easy-apply") {
+      assertLinkedInCollectionMode("easy-apply-batch", normalizedUrl);
+    } else {
+      assertSupportedApplyBatchUrl(normalizedUrl);
+    }
     return {
       mode: `${args.family}-batch` as const,
       url: normalizedUrl,
@@ -523,6 +541,7 @@ function parseLinkedInFamilyCommand(args: {
     };
   }
 
+  assertSafeLinkedInNavigationUrl(normalizedUrl, `${args.family} URL`);
   return {
     mode: args.family,
     url: normalizedUrl,

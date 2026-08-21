@@ -114,6 +114,27 @@ describe("easy apply helpers", () => {
       "https://company.example/apply",
     );
   });
+
+  it("rejects unsafe external targets and unwraps only trusted LinkedIn wrappers", () => {
+    expect(resolveLinkedInExternalApplyUrl("linkedin-external:Apply on company website")).toBeNull();
+    expect(resolveLinkedInExternalApplyUrl("javascript:alert(1)")).toBeNull();
+    expect(resolveLinkedInExternalApplyUrl("http://company.example/apply")).toBeNull();
+    expect(resolveLinkedInExternalApplyUrl("http://127.0.0.1/admin")).toBeNull();
+    expect(resolveLinkedInExternalApplyUrl("https://user:secret@company.example/apply")).toBeNull();
+    expect(resolveLinkedInExternalApplyUrl("http://www.linkedin.com/safety/go/?url=https://company.example/apply")).toBeNull();
+    expect(
+      resolveLinkedInExternalApplyUrl(
+        "https://www.linkedin.com/safety/go/?url=http%3A%2F%2F169.254.169.254%2Flatest%2Fmeta-data%2F",
+      ),
+    ).toBeNull();
+
+    const untrustedWrapper =
+      "https://redirect.example/path?url=https%3A%2F%2Fcompany.example%2Fapply";
+    expect(resolveLinkedInExternalApplyUrl(untrustedWrapper)).toBe(untrustedWrapper);
+    const lookalikeWrapper =
+      "https://linkedin.com.evil.test/safety/go/?url=https%3A%2F%2Fcompany.example%2Fapply";
+    expect(resolveLinkedInExternalApplyUrl(lookalikeWrapper)).toBe(lookalikeWrapper);
+  });
 });
 
 describe("runEasyApplyDryRun", () => {

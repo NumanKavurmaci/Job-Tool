@@ -21,10 +21,10 @@ export function formatJobForLLM(
     `Apply URL: ${job.applyUrl ?? "N/A"}`,
     `Current URL: ${job.currentUrl}`,
     "",
-    section("Description", job.descriptionText ?? job.rawText),
-    "",
     section("Requirements", job.requirementsText),
     "",
     section("Benefits", job.benefitsText),
+    "",
+    section("Description", job.descriptionText ?? job.rawText),
   ].join("\n");
 }

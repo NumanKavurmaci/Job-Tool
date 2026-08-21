@@ -93,7 +93,7 @@ export type ExternalApplicationPlannedAnswer = {
   fieldType: ExternalApplicationFieldType;
   semanticKey?: ExternalApplicationFieldSemanticKey | undefined;
   question: InputQuestion;
-  answer: string | null;
+  answer: string | string[] | null;
   source: string;
   confidenceLabel: string;
   resolutionStrategy?: string | undefined;

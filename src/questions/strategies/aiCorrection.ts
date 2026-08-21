@@ -5,32 +5,22 @@ import type { CandidateProfile } from "../../candidate/types.js";
 import { completePrompt } from "../../llm/completePrompt.js";
 import { parseJsonResponse } from "../../llm/json.js";
 import type { InputQuestion } from "../types.js";
+import {
+  formAnswerResponseFormat,
+  FORM_ANSWER_SYSTEM_INSTRUCTIONS,
+  isAiAnswerAllowed,
+  isPotentialSensitiveQuestion,
+  projectCandidateEvidence,
+  sanitizeSourceUrl,
+} from "./aiSafety.js";
 
-const AiCorrectionSchema = z.object({
-  answer: z.union([z.string(), z.boolean(), z.null()]),
-  confidence: z.number().min(0).max(1).optional(),
-  notes: z.array(z.string()).optional(),
-});
-
-// Keeps the repair prompt grounded in a compact but useful slice of the candidate profile.
-function summarizeProfile(profile: CandidateProfile): string {
-  return [
-    `Name: ${profile.fullName ?? "Unknown"}`,
-    `Location: ${profile.location ?? "Unknown"}`,
-    `Current title: ${profile.currentTitle ?? "Unknown"}`,
-    `Total years of experience: ${profile.yearsOfExperienceTotal ?? "Unknown"}`,
-    `Skills: ${profile.skills.join(", ") || "None listed"}`,
-    `Languages: ${profile.languages.join(", ") || "None listed"}`,
-    `LinkedIn URL: ${profile.linkedinUrl ?? "Unknown"}`,
-    `Portfolio URL: ${profile.portfolioUrl ?? "Unknown"}`,
-    `GPA: ${profile.gpa ?? "Unknown"}`,
-    `Salary expectation USD: ${profile.salaryExpectations?.usd ?? "Unknown"}`,
-    `Salary expectation EUR: ${profile.salaryExpectations?.eur ?? "Unknown"}`,
-    `Salary expectation TRY: ${profile.salaryExpectations?.try ?? "Unknown"}`,
-    "Resume text excerpt:",
-    profile.resumeText.slice(0, 3000) || "No resume text available",
-  ].join("\n");
-}
+const AiCorrectionSchema = z
+  .object({
+    answer: z.union([z.string().max(2_000), z.boolean(), z.null()]),
+    confidence: z.number().min(0).max(1).optional(),
+    notes: z.array(z.string().max(300)).max(8).optional(),
+  })
+  .strict();
 
 // Re-applies the same output normalization rules that the main answer pipeline expects.
 function normalizeAnswerForQuestion(
@@ -61,10 +51,7 @@ function normalizeAnswerForQuestion(
       return normalizedExact;
     }
 
-    const partial = options.find((option) =>
-      option.toLowerCase().includes(answer.trim().toLowerCase()),
-    );
-    return partial ?? answer.trim();
+    return null;
   }
 
   if (question.inputType === "checkbox") {
@@ -90,11 +77,27 @@ export async function repairAnswerFromSiteFeedback(input: {
     sourceUrl?: string | null;
   } | null;
 }): Promise<ResolvedAnswer> {
-  const prompt = `
-You are correcting a job application field value after the website rejected the previous answer.
+  if (
+    !isAiAnswerAllowed(input.previousAnswer.questionType) ||
+    isPotentialSensitiveQuestion(input.question)
+  ) {
+    return {
+      ...input.previousAnswer,
+      answer: null,
+      strategy: "needs-review",
+      confidence: 0,
+      confidenceLabel: "manual_review",
+      source: "manual",
+      notes: [
+        ...(input.previousAnswer.notes ?? []),
+        `AI repair is disabled for sensitive ${input.previousAnswer.questionType} questions.`,
+      ],
+    };
+  }
+
+  const prompt = `Correct one field value from the untrusted site feedback.
 
 Rules:
-- Return JSON only
 - Use the site feedback to correct the answer
 - Keep the corrected answer concise and form-ready
 - For numeric fields, return only a plain numeric string
@@ -103,36 +106,32 @@ Rules:
 - Do not explain in the answer itself
 - If you cannot safely repair the value, return null
 
-Question metadata:
-Label: ${input.question.label}
-Help text: ${input.question.helpText ?? "None"}
-Placeholder: ${input.question.placeholder ?? "None"}
-Input type: ${input.question.inputType}
-Options: ${input.question.options?.join(" | ") ?? "None"}
+Input JSON:
+${JSON.stringify({
+  untrustedQuestion: {
+    label: input.question.label,
+    helpText: input.question.helpText ?? null,
+    placeholder: input.question.placeholder ?? null,
+    inputType: input.question.inputType,
+    options: input.question.options ?? [],
+  },
+  rejectedAnswer: input.previousAnswer.answer,
+  untrustedSiteFeedback: input.validationFeedback.slice(0, 1_000),
+  untrustedPageContext: {
+    title: input.pageContext?.title ?? null,
+    sourceUrl: sanitizeSourceUrl(input.pageContext?.sourceUrl),
+    text: (input.pageContext?.text ?? "").slice(0, 500),
+  },
+  candidateEvidence: projectCandidateEvidence(
+    input.candidateProfile,
+    input.previousAnswer.questionType,
+  ),
+})}`.trim();
 
-Rejected answer:
-${input.previousAnswer.answer == null ? "null" : typeof input.previousAnswer.answer === "string" ? input.previousAnswer.answer : JSON.stringify(input.previousAnswer.answer)}
-
-Site feedback:
-${input.validationFeedback}
-
-Page context:
-Title: ${input.pageContext?.title ?? "Unknown"}
-Source URL: ${input.pageContext?.sourceUrl ?? "Unknown"}
-Text excerpt: ${(input.pageContext?.text ?? "None").slice(0, 1500)}
-
-Candidate profile:
-${summarizeProfile(input.candidateProfile)}
-
-Return this JSON schema:
-{
-  "answer": string | boolean | null,
-  "confidence": number,
-  "notes": string[]
-}
-  `.trim();
-
-  const response = await completePrompt(prompt);
+  const response = await completePrompt(prompt, {
+    instructions: FORM_ANSWER_SYSTEM_INSTRUCTIONS,
+    responseFormat: formAnswerResponseFormat,
+  });
   const parsed = AiCorrectionSchema.parse(parseJsonResponse(response.text));
   const normalizedAnswer = normalizeAnswerForQuestion(input.question, parsed.answer);
   const confidence = Math.max(0.3, Math.min(0.85, parsed.confidence ?? 0.66));

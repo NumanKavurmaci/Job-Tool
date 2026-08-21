@@ -1,5 +1,6 @@
 import type { Locator, Page } from "@playwright/test";
 import { ensureLinkedInAuthenticated } from "../adapters/LinkedInAdapter.js";
+import { safeLinkedInPageGoto } from "../security/navigationSafety.js";
 import type {
   EasyApplyDriver,
   EasyApplyExternalDetection,
@@ -477,7 +478,10 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
   }
 
   async open(url: string): Promise<void> {
-    await this.page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    await safeLinkedInPageGoto(this.page, url, {
+      waitUntil: "domcontentloaded",
+      timeout: 60_000,
+    });
     await this.waitForLinkedInJobSurface();
   }
 

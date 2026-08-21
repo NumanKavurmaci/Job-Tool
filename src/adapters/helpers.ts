@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { safePageGoto } from "../security/navigationSafety.js";
 
 function normalizeWhitespace(value: string | null | undefined): string | null {
   if (!value) {
@@ -93,6 +94,6 @@ export async function getCurrentUrl(page: Page): Promise<string> {
 }
 
 export async function gotoJobPage(page: Page, url: string): Promise<void> {
-  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  await safePageGoto(page, url, { waitUntil: "domcontentloaded", timeout: 60_000 });
   await page.waitForTimeout(2_000);
 }

@@ -32,6 +32,7 @@ import type {
   EasyApplyStepReport,
 } from "../../linkedin/easyApply.js";
 import { resolveLinkedInExternalApplyUrl } from "../../linkedin/easyApply.js";
+import { assertSafeNavigationUrl } from "../../security/navigationSafety.js";
 import {
   runExternalApplyDryRunFlow,
   runExternalApplyFlow,
@@ -177,14 +178,24 @@ async function continueExternalApplyFromLinkedIn(args: {
   }
 
   const rawExternalApplyUrl = args.easyApplyResult.externalApplyUrl;
-  const canonicalUrl = resolveLinkedInExternalApplyUrl(rawExternalApplyUrl);
-  if (!rawExternalApplyUrl || !canonicalUrl) {
+  if (!rawExternalApplyUrl) {
     return null;
   }
 
   const handoffScope =
     args.runType === "easy-apply-batch" ? "linkedin.batch" : "linkedin.easy_apply";
   const handoffRunType = args.runType.endsWith("dry-run") ? "dry-run" : "submit";
+  const canonicalUrl = resolveLinkedInExternalApplyUrl(rawExternalApplyUrl);
+  if (!canonicalUrl) {
+    return {
+      sourceUrl: args.easyApplyResult.url,
+      externalApplyUrl: rawExternalApplyUrl,
+      canonicalUrl: rawExternalApplyUrl,
+      runType: handoffRunType,
+      status: "failed",
+      stopReason: "Resolved external application URL was unsafe or invalid.",
+    };
+  }
 
   await persistSystemEvent(
     {
@@ -201,14 +212,19 @@ async function continueExternalApplyFromLinkedIn(args: {
     args.deps,
   );
 
-  if (!/^https?:\/\//i.test(canonicalUrl)) {
+  try {
+    assertSafeNavigationUrl(canonicalUrl, {
+      requireHttps: true,
+      context: "LinkedIn external application handoff",
+    });
+  } catch {
     return {
       sourceUrl: args.easyApplyResult.url,
       externalApplyUrl: rawExternalApplyUrl,
       canonicalUrl,
       runType: handoffRunType,
       status: "failed",
-      stopReason: "Resolved external application URL was not a valid http(s) URL.",
+      stopReason: "Resolved external application URL was unsafe or invalid.",
     };
   }
 

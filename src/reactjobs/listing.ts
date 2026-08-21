@@ -1,4 +1,8 @@
 import type { Page } from "@playwright/test";
+import {
+  assertSafeNavigationUrl,
+  safePageGoto,
+} from "../security/navigationSafety.js";
 
 export type ReactJobsListing = {
   url: string;
@@ -39,15 +43,33 @@ const REACTJOBS_LISTING_SCRIPT = `(() => {
 })()`;
 
 export function isReactJobsListingUrl(url: string): boolean {
-  return /reactjobs\.io\/jobs(?:\/|$)/i.test(url);
+  try {
+    const parsed = assertSafeNavigationUrl(url, { context: "ReactJobs listing URL" });
+    const hostname = parsed.hostname.toLowerCase().replace(/\.$/, "");
+    return (
+      (hostname === "reactjobs.io" || hostname.endsWith(".reactjobs.io")) &&
+      /^\/jobs(?:\/|$)/i.test(parsed.pathname)
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function isReactJobsDetailUrl(url: string): boolean {
-  return /reactjobs\.io\/react-jobs\/[^/]+\/\d+-/i.test(url);
+  try {
+    const parsed = assertSafeNavigationUrl(url, { context: "ReactJobs detail URL" });
+    const hostname = parsed.hostname.toLowerCase().replace(/\.$/, "");
+    return (
+      (hostname === "reactjobs.io" || hostname.endsWith(".reactjobs.io")) &&
+      /^\/react-jobs\/[^/]+\/\d+-[^/]+\/?$/i.test(parsed.pathname)
+    );
+  } catch {
+    return false;
+  }
 }
 
 export async function extractReactJobsListings(page: Page, url: string): Promise<ReactJobsListing[]> {
-  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  await safePageGoto(page, url, { waitUntil: "domcontentloaded", timeout: 60_000 });
   await page.waitForTimeout(1_000);
   return page.evaluate(REACTJOBS_LISTING_SCRIPT);
 }
@@ -110,7 +132,7 @@ export async function extractReactJobsListingsBatch(
   url: string,
   targetCount: number,
 ): Promise<ReactJobsListingBatch> {
-  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  await safePageGoto(page, url, { waitUntil: "domcontentloaded", timeout: 60_000 });
   await page.waitForTimeout(1_000);
 
   const uniqueListings = new Map<string, ReactJobsListing>();

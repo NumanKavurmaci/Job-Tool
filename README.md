@@ -15,7 +15,7 @@ The companion UI lives in the sibling `Job Tool Dashboard` project.
 
 | Area | Purpose |
 | --- | --- |
-| Job extraction | Reads LinkedIn, ReactJobs, Ashby, Greenhouse, Lever, Workable-style, and generic job/application pages. |
+| Job extraction | Reads LinkedIn, Kariyer.net, ReactJobs, Ashby, Greenhouse, Lever, Workable-style, and generic job/application pages. |
 | Scoring | Uses deterministic policy checks or a configured LLM scoring mode. |
 | Candidate context | Builds and reuses a local candidate profile and resume-derived facts. |
 | Apply automation | Supports LinkedIn Easy Apply and external apply handoff flows, including dry runs. |
@@ -63,6 +63,8 @@ LINKEDIN_BROWSER_PROFILE_PATH=.auth/linkedin-profile
 
 OpenAI-compatible local providers such as LM Studio work through `LOCAL_LLM_BASE_URL`. The dashboard checks this same configuration when it reports local readiness.
 
+Job and form LLM calls use separate trusted instructions plus strict JSON schemas. Page text, field labels, and validation messages are treated as untrusted data; sensitive questions such as consent, work authorization, salary, and contact details stay on deterministic/manual paths instead of receiving the full candidate profile.
+
 ## 🧪 Common Commands
 
 ```bash
@@ -105,6 +107,19 @@ Legacy aliases such as `easy-apply`, `easy-apply-batch`, `easy-apply-dry-run`, `
 | `apply` | Can submit | Yes | Applying to one approved job. |
 | `apply-batch --dry-run` | No final submit | Yes | Batch rehearsal. |
 | `apply-batch` | Can submit | Yes | Batch apply with scoring gates. |
+
+Kariyer.net extraction prefers the current page's data-test fields, then JSON-LD, metadata, and DOM fallbacks. External forms include Turkish field semantics, explicit `Evet/Hayır` radio selection, native multi-select support, and conservative KVKK/privacy handling. Optional consent and every SMS/marketing consent remain manual.
+
+## 🛡️ Navigation Safety
+
+Production browser navigation is centralized and fail-closed:
+
+- LinkedIn URLs must use HTTPS and a genuine `linkedin.com` hostname.
+- External application URLs must use HTTPS.
+- URL credentials, localhost, private/link-local/metadata IP ranges, unsafe redirects, and private DNS results are rejected before form data or LinkedIn credentials are entered.
+- Main-document redirects are checked continuously in Chromium and the final URL is verified again.
+
+The private-host opt-in and injected DNS resolver are test-fixture features only; do not enable them for production application flows.
 
 ## 🔄 Engine To Dashboard Flow
 

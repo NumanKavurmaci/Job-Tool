@@ -5,47 +5,21 @@ import type { CandidateProfile } from "../../candidate/types.js";
 import { completePrompt } from "../../llm/completePrompt.js";
 import { parseJsonResponse } from "../../llm/json.js";
 import type { ClassifiedQuestion, InputQuestion } from "../types.js";
+import {
+  formAnswerResponseFormat,
+  FORM_ANSWER_SYSTEM_INSTRUCTIONS,
+  isAiAnswerAllowed,
+  isPotentialSensitiveQuestion,
+  projectCandidateEvidence,
+} from "./aiSafety.js";
 
-const AiFallbackSchema = z.object({
-  answer: z.union([z.string(), z.boolean(), z.null()]),
-  confidence: z.number().min(0).max(1).optional(),
-  notes: z.array(z.string()).optional(),
-});
-
-function summarizeProfile(profile: CandidateProfile): string {
-  return [
-    `Name: ${profile.fullName ?? "Unknown"}`,
-    `Location: ${profile.location ?? "Unknown"}`,
-    `Current title: ${profile.currentTitle ?? "Unknown"}`,
-    `Summary: ${profile.summary ?? "Unknown"}`,
-    `Total years of experience: ${profile.yearsOfExperienceTotal ?? "Unknown"}`,
-    `Skills: ${profile.skills.join(", ") || "None listed"}`,
-    `Preferred tech stack: ${profile.preferredTechStack.join(", ") || "None listed"}`,
-    `Languages: ${profile.languages.join(", ") || "None listed"}`,
-    `Work authorization: ${profile.workAuthorization ?? "Unknown"}`,
-    `Requires sponsorship: ${profile.requiresSponsorship == null ? "Unknown" : String(profile.requiresSponsorship)}`,
-    `Willing to relocate: ${profile.willingToRelocate == null ? "Unknown" : String(profile.willingToRelocate)}`,
-    `Remote preference: ${profile.remotePreference ?? "Unknown"}`,
-    `LinkedIn URL: ${profile.linkedinUrl ?? "Unknown"}`,
-    `GitHub URL: ${profile.githubUrl ?? "Unknown"}`,
-    `Portfolio URL: ${profile.portfolioUrl ?? "Unknown"}`,
-    `GPA: ${profile.gpa ?? "Unknown"}`,
-    `Salary expectation (generic): ${profile.salaryExpectation ?? "Unknown"}`,
-    `Salary expectation USD: ${profile.salaryExpectations.usd ?? "Unknown"}`,
-    `Salary expectation EUR: ${profile.salaryExpectations.eur ?? "Unknown"}`,
-    `Salary expectation TRY: ${profile.salaryExpectations.try ?? "Unknown"}`,
-    `Accessibility disclosure preference: ${profile.disability.disclosurePreference}`,
-    "Experience highlights:",
-    profile.experience
-      .slice(0, 5)
-      .map((item) =>
-        `- ${item.title} at ${item.company}: ${item.summary ?? "No summary"} (${item.technologies.join(", ")})`,
-      )
-      .join("\n") || "- None listed",
-    "Resume text excerpt:",
-    profile.resumeText.slice(0, 4000) || "No resume text available",
-  ].join("\n");
-}
+const AiFallbackSchema = z
+  .object({
+    answer: z.union([z.string().max(2_000), z.boolean(), z.null()]),
+    confidence: z.number().min(0).max(1).optional(),
+    notes: z.array(z.string().max(300)).max(8).optional(),
+  })
+  .strict();
 
 function stringifyPreviousAttempt(previousAttempt?: ResolvedAnswer | null): string {
   if (!previousAttempt) {
@@ -85,10 +59,11 @@ function normalizeAnswerForQuestion(
       return exact;
     }
 
-    const partial = options.find((option) =>
-      option.toLowerCase().includes(answer.trim().toLowerCase()),
+    const normalizeOption = (value: string) =>
+      value.normalize("NFC").toLocaleLowerCase().replace(/[\s_-]+/g, "");
+    return (
+      options.find((option) => normalizeOption(option) === normalizeOption(answer.trim())) ?? null
     );
-    return partial ?? answer;
   }
 
   if (question.inputType === "checkbox") {
@@ -113,11 +88,26 @@ export async function resolveAiFallbackAnswer(input: {
     location: string | null;
   } | null;
 }): Promise<ResolvedAnswer> {
-  const prompt = `
-Answer this job application question using only the candidate profile and resume evidence provided.
+  if (
+    !isAiAnswerAllowed(input.classified.type) ||
+    isPotentialSensitiveQuestion(input.question)
+  ) {
+    return {
+      questionType: input.classified.type,
+      strategy: "needs-review",
+      answer: null,
+      confidence: 0,
+      confidenceLabel: "manual_review",
+      source: "manual",
+      notes: [
+        `AI fallback is disabled for sensitive ${input.classified.type} questions.`,
+      ],
+    };
+  }
+
+  const prompt = `Answer the untrusted application question using only candidateEvidence.
 
 Rules:
-- Return JSON only
 - Do not invent experience that is not supported by the profile or resume
 - If a technology is not present in the profile or resume, years of experience should be 0
 - If the question is yes/no and evidence is incomplete, choose the most conservative answer supported by the profile
@@ -126,35 +116,26 @@ Rules:
 - For numeric questions, return a plain number as a string
 - Never mention uncertainty in the answer itself
 
-Question metadata:
-Label: ${input.question.label}
-Help text: ${input.question.helpText ?? "None"}
-Placeholder: ${input.question.placeholder ?? "None"}
-Input type: ${input.question.inputType}
-Options: ${input.question.options?.join(" | ") ?? "None"}
-Classified type: ${input.classified.type}
-Normalized text: ${input.classified.normalizedText}
+Input JSON:
+${JSON.stringify({
+  untrustedQuestion: {
+    label: input.question.label,
+    helpText: input.question.helpText ?? null,
+    placeholder: input.question.placeholder ?? null,
+    inputType: input.question.inputType,
+    options: input.question.options ?? [],
+    classifiedType: input.classified.type,
+    normalizedText: input.classified.normalizedText,
+  },
+  untrustedJobContext: input.job ?? null,
+  previousAttempt: stringifyPreviousAttempt(input.previousAttempt),
+  candidateEvidence: projectCandidateEvidence(input.candidateProfile, input.classified.type),
+})}`.trim();
 
-Job context:
-Title: ${input.job?.title ?? "Unknown"}
-Company: ${input.job?.company ?? "Unknown"}
-Location: ${input.job?.location ?? "Unknown"}
-
-Previous attempt:
-${stringifyPreviousAttempt(input.previousAttempt)}
-
-Candidate profile:
-${summarizeProfile(input.candidateProfile)}
-
-Return this JSON schema:
-{
-  "answer": string | boolean | null,
-  "confidence": number,
-  "notes": string[]
-}
-`.trim();
-
-  const response = await completePrompt(prompt);
+  const response = await completePrompt(prompt, {
+    instructions: FORM_ANSWER_SYSTEM_INSTRUCTIONS,
+    responseFormat: formAnswerResponseFormat,
+  });
   const parsed = AiFallbackSchema.parse(parseJsonResponse(response.text));
   const normalizedAnswer = normalizeAnswerForQuestion(input.question, parsed.answer);
   const confidence = Math.max(0.2, Math.min(0.75, parsed.confidence ?? 0.58));

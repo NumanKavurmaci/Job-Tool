@@ -13,13 +13,16 @@ type SemanticAnalysis = {
 
 function normalizeSemanticText(value: string | null | undefined): string {
   return String(value ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/ı/g, "i")
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
 }
 
 function includesAny(haystack: string, needles: string[]): boolean {
-  return needles.some((needle) => haystack.includes(needle));
+  return needles.some((needle) => haystack.includes(normalizeSemanticText(needle)));
 }
 
 function pushSignal(signals: string[], condition: boolean, signal: string) {
@@ -64,7 +67,8 @@ function findOptionByKeywords(options: string[], keywords: string[]): string | n
   }));
 
   for (const keyword of keywords) {
-    const match = normalizedOptions.find((option) => option.normalized.includes(keyword));
+    const normalizedKeyword = normalizeSemanticText(keyword);
+    const match = normalizedOptions.find((option) => option.normalized.includes(normalizedKeyword));
     if (match) {
       return match.raw;
     }
@@ -107,6 +111,9 @@ function findSensitiveDisclosureOptOutAnswer(field: ExternalApplicationField): s
       "choose not to answer",
       "not specified",
       "not disclose",
+      "belirtmek istemiyorum",
+      "cevaplamak istemiyorum",
+      "paylaşmak istemiyorum",
     ]) ?? null;
 
   if (explicitOptOut) {
@@ -155,10 +162,20 @@ function findDemographicAnswerFromProfile(
 }
 
 function parseCompensationNumber(value: string | null | undefined): number | null {
-  const normalized = String(value ?? "").replace(/[^0-9.,]/g, "").replace(/,/g, "");
-  if (!normalized) {
+  const token = String(value ?? "").match(/\d+(?:[.,]\d+)*/)?.[0];
+  if (!token) {
     return null;
   }
+
+  const parts = token.split(/[.,]/);
+  const separators = token.match(/[.,]/g) ?? [];
+  const hasThousandsGrouping =
+    separators.length > 0 && parts.slice(1).every((part) => part.length === 3);
+  const normalized = hasThousandsGrouping
+    ? parts.join("")
+    : separators.length > 0
+      ? `${parts.slice(0, -1).join("")}.${parts.at(-1)}`
+      : token;
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -167,9 +184,22 @@ function formatCompensationNumber(value: number): string {
   return String(Math.round(value));
 }
 
+type CompensationPeriod = "monthly" | "yearly";
+
+function inferCompensationPeriod(value: string | null | undefined): CompensationPeriod | null {
+  const normalized = normalizeSemanticText(value);
+  if (includesAny(normalized, ["per month", "monthly", "/month", "aylik", "ay basina"])) {
+    return "monthly";
+  }
+  if (includesAny(normalized, ["per year", "yearly", "annual", "annually", "/year", "yillik"])) {
+    return "yearly";
+  }
+  return null;
+}
+
 function inferSalaryContext(field: ExternalApplicationField): {
   preferredCurrency: "TRY" | "EUR" | "USD" | null;
-  preferredPeriod: "monthly" | "yearly";
+  preferredPeriod: CompensationPeriod | null;
 } {
   const combined = buildCombinedFieldText(field);
   const preferredCurrency = combined.includes("usd")
@@ -179,8 +209,7 @@ function inferSalaryContext(field: ExternalApplicationField): {
       : combined.includes("try") || combined.includes("turkish lira") || combined.includes(" tl ")
         ? "TRY"
         : null;
-  const preferredPeriod =
-    includesAny(combined, ["per month", "monthly", "month"]) ? "monthly" : "yearly";
+  const preferredPeriod = inferCompensationPeriod(combined);
 
   return { preferredCurrency, preferredPeriod };
 }
@@ -239,6 +268,10 @@ function findBooleanStyleOption(options: string[], desired: boolean): string | n
     "accept",
     "opt in",
     "consent",
+    "evet",
+    "kabul ediyorum",
+    "uygunum",
+    "yetkiliyim",
   ];
   const negativeKeywords = [
     "no",
@@ -249,6 +282,10 @@ function findBooleanStyleOption(options: string[], desired: boolean): string | n
     "opt out",
     "decline",
     "disagree",
+    "hayır",
+    "hayir",
+    "kabul etmiyorum",
+    "istemiyorum",
   ];
 
   return findOptionByKeywords(options, desired ? positiveKeywords : negativeKeywords);
@@ -423,7 +460,7 @@ function resolveRegionalSponsorshipPreference(args: {
 }
 
 function analyzeSalarySemantics(field: ExternalApplicationField, combined: string): SemanticAnalysis | null {
-  if (!/salary|compensation|pay|annual compensation/.test(combined)) {
+  if (!/salary|compensation|pay|annual compensation|maas|ucret|kazanc/.test(combined)) {
     return null;
   }
 
@@ -441,11 +478,11 @@ function analyzeSalarySemantics(field: ExternalApplicationField, combined: strin
       normalizedOptions.some((option) => option.includes("lira")) ||
       normalizedOptions.some((option) => /^[a-z]{3}$/.test(option)));
 
-  pushSignal(signals, field.key.toLowerCase().includes("salary"), "key:salary");
-  pushSignal(signals, field.label.toLowerCase().includes("salary"), "label:salary");
+  pushSignal(signals, /salary|maas|ucret/.test(normalizeSemanticText(field.key)), "key:salary");
+  pushSignal(signals, /salary|maas|ucret/.test(normalizeSemanticText(field.label)), "label:salary");
   pushSignal(signals, looksLikeCurrencyOptions || field.key.toLowerCase().includes("currency"), "options:currency");
   pushSignal(signals, looksLikePeriodOptions, "options:period");
-  pushSignal(signals, /desired salary/.test(combined), "context:desired-salary");
+  pushSignal(signals, /desired salary|maas beklentisi|ucret beklentisi/.test(combined), "context:desired-salary");
 
   if (looksLikePeriodOptions) {
     return {
@@ -476,8 +513,8 @@ function analyzeResumeSemantics(field: ExternalApplicationField, combined: strin
   }
 
   const signals: string[] = [];
-  pushSignal(signals, /resume|cv/.test(combined), "text:resume");
-  pushSignal(signals, /upload resume/.test(combined), "cta:upload-resume");
+  pushSignal(signals, /resume|cv|ozgecmis/.test(combined), "text:resume");
+  pushSignal(signals, /upload resume|ozgecmis yukle|cv yukle/.test(combined), "cta:upload-resume");
 
   if (signals.length === 0) {
     return null;
@@ -494,12 +531,12 @@ function analyzeCoverLetterSemantics(
   field: ExternalApplicationField,
   combined: string,
 ): SemanticAnalysis | null {
-  if (!/cover letter/.test(combined)) {
+  if (!/cover letter|on yazi|motivasyon mektubu/.test(combined)) {
     return null;
   }
 
   const signals: string[] = [];
-  pushSignal(signals, /cover letter/.test(normalizeSemanticText(field.label)), "label:cover-letter");
+  pushSignal(signals, /cover letter|on yazi|motivasyon mektubu/.test(normalizeSemanticText(field.label)), "label:cover-letter");
   pushSignal(signals, field.type === "file", "type:file");
   pushSignal(signals, field.type === "long_text" || field.type === "short_text", "type:text");
 
@@ -512,9 +549,9 @@ function analyzeCoverLetterSemantics(
 
 function analyzeConsentSemantics(field: ExternalApplicationField, combined: string): SemanticAnalysis | null {
   const signals: string[] = [];
-  pushSignal(signals, /sms/.test(combined), "text:sms");
-  pushSignal(signals, /text messages|message rates|reply stop|application via sms/.test(combined), "text:sms-copy");
-  pushSignal(signals, /privacy|terms|policy|gdpr|data processing/.test(combined), "text:privacy");
+  pushSignal(signals, /sms|kisa mesaj/.test(combined), "text:sms");
+  pushSignal(signals, /text messages|message rates|reply stop|application via sms|mesaj almak|pazarlama mesaj/.test(combined), "text:sms-copy");
+  pushSignal(signals, /privacy|terms|policy|gdpr|data processing|kvkk|kisisel veri|aydinlatma metni|gizlilik/.test(combined), "text:privacy");
   pushSignal(signals, field.type === "boolean", "type:boolean");
 
   if (signals.includes("text:sms") || signals.includes("text:sms-copy")) {
@@ -574,6 +611,9 @@ export function analyzeFieldSemantics(field: ExternalApplicationField): Semantic
     "work permit",
     "legally authorized",
     "eligible to work",
+    "calisma izni",
+    "calismaya yetkili",
+    "yasal calisma hakki",
   ]), "text:work-authorization");
   if (signals.length > 0) {
     return {
@@ -591,6 +631,8 @@ export function analyzeFieldSemantics(field: ExternalApplicationField): Semantic
     "requires sponsorship",
     "work visa",
     "sponsorworkvisa",
+    "vize sponsorlugu",
+    "sponsorluk",
   ]), "text:sponsorship");
   if (signals.includes("text:sponsorship")) {
     const looksLikeDetailsField = includesAny(combined, [
@@ -620,7 +662,7 @@ export function analyzeFieldSemantics(field: ExternalApplicationField): Semantic
     };
   }
 
-  pushSignal(signals, includesAny(combined, ["relocate", "relocation", "willing to move"]), "text:relocation");
+  pushSignal(signals, includesAny(combined, ["relocate", "relocation", "willing to move", "tasinmaya", "sehir degisikligi"]), "text:relocation");
   if (signals.includes("text:relocation")) {
     return {
       semanticKey: "relocation.willing",
@@ -629,7 +671,7 @@ export function analyzeFieldSemantics(field: ExternalApplicationField): Semantic
     };
   }
 
-  pushSignal(signals, includesAny(combined, ["city of residence", "city", "current city"]), "text:city");
+  pushSignal(signals, includesAny(combined, ["city of residence", "city", "current city", "ikamet ettiginiz sehir", "ikamet sehri", "ikametgah"]), "text:city");
   if (signals.includes("text:city") && !includesAny(combined, ["countrycode", "country code"])) {
     return {
       semanticKey: "location.city",
@@ -638,7 +680,7 @@ export function analyzeFieldSemantics(field: ExternalApplicationField): Semantic
     };
   }
 
-  pushSignal(signals, includesAny(combined, ["country of residence", "current country"]), "text:country");
+  pushSignal(signals, includesAny(combined, ["country of residence", "current country", "ikamet ettiginiz ulke", "ikamet ulkesi"]), "text:country");
   if (signals.includes("text:country")) {
     return {
       semanticKey: "location.country",
@@ -656,7 +698,7 @@ export function analyzeFieldSemantics(field: ExternalApplicationField): Semantic
     };
   }
 
-  pushSignal(signals, includesAny(combined, ["phone number", "phone", "mobile", "telephone"]), "text:phone-number");
+  pushSignal(signals, includesAny(combined, ["phone number", "phone", "mobile", "telephone", "telefon", "cep telefonu"]), "text:phone-number");
   if (signals.includes("text:phone-number")) {
     return {
       semanticKey: "phone.number",
@@ -692,7 +734,7 @@ export function analyzeFieldSemantics(field: ExternalApplicationField): Semantic
     };
   }
 
-  pushSignal(signals, includesAny(combined, ["years of experience", "years of relevant experience", "years experience", "yoe"]), "text:experience-years");
+  pushSignal(signals, includesAny(combined, ["years of experience", "years of relevant experience", "years experience", "yoe", "deneyim yili", "tecrube yili", "kac yil deneyim"]), "text:experience-years");
   if (signals.includes("text:experience-years")) {
     return {
       semanticKey: "experience.years",
@@ -701,7 +743,7 @@ export function analyzeFieldSemantics(field: ExternalApplicationField): Semantic
     };
   }
 
-  pushSignal(signals, includesAny(combined, ["availability to start", "start a new role", "start date", "notice period"]), "text:availability-start");
+  pushSignal(signals, includesAny(combined, ["availability to start", "start a new role", "start date", "notice period", "ne zaman baslayabilirsiniz", "ihbar suresi", "ihbar sur", "ise baslama tarihi"]), "text:availability-start");
   if (signals.includes("text:availability-start")) {
     return {
       semanticKey: "availability.start",
@@ -719,7 +761,7 @@ export function analyzeFieldSemantics(field: ExternalApplicationField): Semantic
     };
   }
 
-  pushSignal(signals, includesAny(combined, ["english proficiency", "english level", "proficiency level"]), "text:english-proficiency");
+  pushSignal(signals, includesAny(combined, ["english proficiency", "english level", "proficiency level", "ingilizce seviyesi", "ingilizce yeterliligi"]), "text:english-proficiency");
   if (signals.includes("text:english-proficiency")) {
     return {
       semanticKey: "language.english_proficiency",
@@ -819,25 +861,45 @@ export function resolveSemanticExternalAnswer(args: {
                 args.candidateProfile.salaryExpectations.usd ??
                 null;
       const parsedAmount = parseCompensationNumber(structuredAmount);
-      const normalizedAmount =
-        parsedAmount == null
-          ? structuredAmount
-          : salaryContext.preferredPeriod === "monthly" && parsedAmount >= 20000
-            ? formatCompensationNumber(parsedAmount / 12)
-            : formatCompensationNumber(parsedAmount);
+      const sourcePeriod = inferCompensationPeriod(structuredAmount);
+      const conversion =
+        parsedAmount != null && sourcePeriod && salaryContext.preferredPeriod
+          ? sourcePeriod === "yearly" && salaryContext.preferredPeriod === "monthly"
+            ? "yearly-to-monthly"
+            : sourcePeriod === "monthly" && salaryContext.preferredPeriod === "yearly"
+              ? "monthly-to-yearly"
+              : "none"
+          : "none";
+      const normalizedAmount = parsedAmount == null
+        ? null
+        : formatCompensationNumber(
+            conversion === "yearly-to-monthly"
+              ? parsedAmount / 12
+              : conversion === "monthly-to-yearly"
+                ? parsedAmount * 12
+                : parsedAmount,
+          );
       return {
         answer: normalizedAmount,
-        source: "candidate-profile",
-        confidenceLabel: normalizedAmount ? "high" : "manual_review",
+        source: normalizedAmount ? "candidate-profile" : "manual",
+        confidenceLabel:
+          normalizedAmount == null
+            ? "manual_review"
+            : salaryContext.preferredPeriod && !sourcePeriod
+              ? "medium"
+              : "high",
         resolutionStrategy: "semantic:salary-amount",
         ...(normalizedAmount
           ? {
-              notes:
-                salaryContext.preferredPeriod === "monthly" && parsedAmount != null && parsedAmount >= 20000
-                  ? "Resolved from candidate salary expectations and normalized to a monthly amount."
-                  : "Resolved from candidate salary expectations.",
+              notes: conversion === "yearly-to-monthly"
+                ? "Resolved from an explicitly yearly candidate expectation and converted to a monthly amount."
+                : conversion === "monthly-to-yearly"
+                  ? "Resolved from an explicitly monthly candidate expectation and converted to a yearly amount."
+                  : sourcePeriod || !salaryContext.preferredPeriod
+                    ? "Resolved from candidate salary expectations without guessing a period conversion."
+                    : "Resolved without period conversion because the candidate expectation period was not explicit.",
             }
-          : { notes: "No structured salary amount was available in the candidate profile." }),
+          : { notes: "No numeric salary amount was available in the candidate profile." }),
       };
     }
     case "salary.currency": {
@@ -867,18 +929,25 @@ export function resolveSemanticExternalAnswer(args: {
       };
     }
     case "salary.period": {
-      const period =
-        args.field.options.find((option) =>
-          ["yearly", "annually"].includes(normalizeSemanticText(option)),
-        ) ??
-        args.field.options[0] ??
-        "Yearly";
+      const structuredExpectation =
+        args.candidateProfile.salaryExpectations.try ??
+        args.candidateProfile.salaryExpectations.eur ??
+        args.candidateProfile.salaryExpectations.usd;
+      const sourcePeriod = inferCompensationPeriod(structuredExpectation);
+      const period = sourcePeriod
+        ? args.field.options.find((option) => inferCompensationPeriod(option) === sourcePeriod) ??
+          (args.field.options.length === 0
+            ? sourcePeriod === "monthly" ? "Monthly" : "Yearly"
+            : null)
+        : null;
       return {
         answer: period,
-        source: "candidate-profile",
-        confidenceLabel: "medium",
+        source: period ? "candidate-profile" : "manual",
+        confidenceLabel: period ? "high" : "manual_review",
         resolutionStrategy: "semantic:salary-period",
-        notes: "Defaulted salary period to a yearly amount for structured salary widgets.",
+        notes: period
+          ? "Resolved from the explicit period in the candidate salary expectation."
+          : "Salary period is not explicit in the candidate profile and was left for manual review.",
       };
     }
     case "work.authorization": {
@@ -1160,6 +1229,13 @@ export function resolveSemanticExternalAnswer(args: {
           : { notes: "No resume path was available in the candidate profile." }),
       };
     case "consent.sms":
+      return {
+        answer: null,
+        source: "manual",
+        confidenceLabel: "manual_review",
+        resolutionStrategy: "semantic:consent.sms",
+        notes: "SMS or marketing-message consent is never auto-accepted, including when the site marks it required.",
+      };
     case "consent.privacy":
       return {
         answer: args.field.required ? "Yes" : null,

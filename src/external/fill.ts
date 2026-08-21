@@ -31,6 +31,12 @@ const EXTERNAL_NEXT_BUTTON_LABELS = [
   "Review application",
   "Volgende",
   "Verder",
+  "Devam",
+  "İleri",
+  "Ileri",
+  "Sonraki",
+  "Başvuruya devam et",
+  "Basvuruya devam et",
 ];
 
 const EXTERNAL_SUBMIT_BUTTON_LABELS = [
@@ -42,6 +48,14 @@ const EXTERNAL_SUBMIT_BUTTON_LABELS = [
   "Complete application",
   "Solliciteer",
   "Versturen",
+  "Başvur",
+  "Basvur",
+  "Başvuruyu gönder",
+  "Basvuruyu gonder",
+  "Gönder",
+  "Gonder",
+  "Başvuruyu tamamla",
+  "Basvuruyu tamamla",
 ];
 
 export type ExternalFieldFillResult = {
@@ -158,15 +172,34 @@ async function uploadFileViaChooser(
   }
 }
 
-function normalizeAnswerValue(answer: string | null): string {
-  return answer?.trim() ?? "";
+function normalizeAnswerValues(answer: string | string[] | null): string[] {
+  const values = Array.isArray(answer) ? answer : answer == null ? [] : [answer];
+  return values.map((value) => value.trim()).filter(Boolean);
+}
+
+function normalizeAnswerValue(answer: string | string[] | null): string {
+  return normalizeAnswerValues(answer).join(", ");
+}
+
+function normalizeMultiSelectAnswerValues(
+  answer: string | string[] | null,
+  options: string[],
+): string[] {
+  const values = Array.isArray(answer)
+    ? normalizeAnswerValues(answer)
+    : normalizeAnswerValues(answer).flatMap((value) => value.split(/[,;\n]/).map((part) => part.trim()));
+  return values
+    .filter(Boolean)
+    .map((value) =>
+      options.find((option) => option.trim().toLocaleLowerCase("tr-TR") === value.toLocaleLowerCase("tr-TR")) ?? value,
+    );
 }
 
 function normalizeBooleanAnswer(answer: string, options: string[]): {
   shouldCheck: boolean;
   matchedOption?: string | undefined;
 } | null {
-  const normalized = answer.trim().toLowerCase();
+  const normalized = answer.trim().toLocaleLowerCase("tr-TR");
   if (!normalized) {
     return null;
   }
@@ -176,22 +209,22 @@ function normalizeBooleanAnswer(answer: string, options: string[]): {
   );
   if (matchedOption) {
     const option = matchedOption;
-    if (/^(yes|true|on|agree|accepted|allow|opt in)$/i.test(matchedOption.trim())) {
+    if (/^(yes|true|on|agree|accepted|allow|opt in|evet|kabul ediyorum)$/i.test(matchedOption.trim())) {
       return option
         ? { shouldCheck: true, matchedOption: option }
         : { shouldCheck: true };
     }
-    if (/^(no|false|off|decline|disagree|opt out)$/i.test(matchedOption.trim())) {
+    if (/^(no|false|off|decline|disagree|opt out|hayır|hayir|kabul etmiyorum)$/i.test(matchedOption.trim())) {
       return option
         ? { shouldCheck: false, matchedOption: option }
         : { shouldCheck: false };
     }
   }
 
-  if (/^(yes|true|on|agree|accepted|allow|opt in)$/i.test(normalized)) {
+  if (/^(yes|true|on|agree|accepted|allow|opt in|evet|kabul ediyorum)$/i.test(normalized)) {
     return { shouldCheck: true, matchedOption };
   }
-  if (/^(no|false|off|decline|disagree|opt out)$/i.test(normalized)) {
+  if (/^(no|false|off|decline|disagree|opt out|hayır|hayir|kabul etmiyorum)$/i.test(normalized)) {
     return { shouldCheck: false, matchedOption };
   }
 
@@ -206,11 +239,19 @@ function shouldAutoAcceptConsent(
     return false;
   }
 
+  if (
+    field.semanticKey === "consent.sms" ||
+    /sms|text message|kısa mesaj|kisa mesaj|pazarlama mesaj/i.test(`${field.label} ${field.helpText ?? ""}`)
+  ) {
+    return false;
+  }
+
   return (
     field.semanticKey === "consent.privacy" ||
-    field.semanticKey === "consent.sms" ||
-    /consent|privacy|policy|terms|gdpr|kvkk/i.test(field.label) ||
-    /semantic:consent\./.test(plan?.resolutionStrategy ?? "")
+    /privacy|privacy policy|terms|gdpr|kvkk|personal data|kişisel veri|kisisel veri|aydınlatma metni|aydinlatma metni/i.test(
+      `${field.label} ${field.helpText ?? ""}`,
+    ) ||
+    /semantic:consent\.privacy/.test(plan?.resolutionStrategy ?? "")
   );
 }
 
@@ -268,7 +309,7 @@ async function getLocatorControlKind(
   }
 
   return (locator as unknown as {
-    evaluate: <T>(callback: (element: Element) => T) => Promise<T>;
+    evaluate: <T>(callback: (element: unknown) => T) => Promise<T>;
   }).evaluate((element) => {
     const control = element as {
       tagName?: string;
@@ -313,6 +354,56 @@ async function checkBooleanLikeControl(
     await checkable.click();
   }
   return typeof checkable.isChecked === "function" ? !(await checkable.isChecked()) : true;
+}
+
+async function selectRadioOptionAndVerify(
+  page: Page,
+  field: ExternalApplicationField,
+  option: string,
+): Promise<boolean> {
+  const key = escapeAttributeValue(field.key);
+  const escapedOption = escapeAttributeValue(option);
+  const normalizedOption = escapeAttributeValue(option.toLocaleLowerCase("tr-TR"));
+  const selectors = [
+    `input[type="radio"][name="${key}"][value="${escapedOption}"]`,
+    `input[type="radio"][name="${key}"][value="${normalizedOption}"]`,
+    `label:has-text("${escapedOption}") input[type="radio"][name="${key}"]`,
+    `label:has-text("${escapedOption}") input[type="radio"]`,
+    `input[type="radio"][aria-label="${escapedOption}"]`,
+    `[role="radio"][aria-label="${escapedOption}"]`,
+  ];
+  let radio = await findFirstLocator(page, selectors);
+  if (!radio && typeof (page as Page & { getByLabel?: unknown }).getByLabel === "function") {
+    radio = (page as Page & {
+      getByLabel: (label: string, options?: { exact?: boolean }) => ReturnType<Page["locator"]>;
+    }).getByLabel(option, { exact: true }).first();
+    if ((await radio.count().catch(() => 0)) === 0) {
+      radio = null;
+    }
+  }
+  if (!radio) {
+    return false;
+  }
+
+  const checkable = radio as unknown as {
+    check?: () => Promise<void>;
+    click: () => Promise<void>;
+    isChecked?: () => Promise<boolean>;
+    getAttribute?: (name: string) => Promise<string | null>;
+  };
+  if (typeof checkable.check === "function") {
+    await checkable.check();
+  } else {
+    await checkable.click();
+  }
+  if (typeof checkable.isChecked === "function") {
+    const checked = await checkable.isChecked().catch(() => null);
+    if (checked !== null) {
+      return checked;
+    }
+  }
+  const ariaChecked = await checkable.getAttribute?.("aria-checked").catch(() => null);
+  return ariaChecked === "true";
 }
 
 function isTextFillCompatibleControl(control: {
@@ -480,17 +571,16 @@ async function selectAshbyComboboxOption(
 
 async function selectNativeOption(
   locator: Awaited<ReturnType<typeof findFirstLocator>>,
-  answer: string,
+  answer: string | string[],
 ): Promise<boolean> {
   if (!locator || typeof (locator as { selectOption?: unknown }).selectOption !== "function") {
     return false;
   }
 
-  const attempts: Array<string | { label: string } | { value: string }> = [
-    { label: answer },
-    { value: answer },
-    answer,
-  ];
+  const answers = Array.isArray(answer) ? answer : [answer];
+  const attempts: unknown[] = answers.length > 1
+    ? [answers.map((value) => ({ label: value })), answers.map((value) => ({ value })), answers]
+    : [{ label: answers[0] }, { value: answers[0] }, answers[0]];
 
   for (const attempt of attempts) {
     try {
@@ -520,7 +610,10 @@ async function fillSingleField(
     sourceUrl?: string | null;
   },
 ): Promise<ExternalFieldFillResult> {
-  const answer = normalizeAnswerValue(plan?.answer ?? null);
+  const answerValues = field.type === "multi_select"
+    ? normalizeMultiSelectAnswerValues(plan?.answer ?? null, field.options)
+    : normalizeAnswerValues(plan?.answer ?? null);
+  const answer = answerValues.join(", ");
   if (!answer) {
     return {
       fieldKey: field.key,
@@ -592,6 +685,24 @@ async function fillSingleField(
         };
       }
 
+      if (isRadioControl(field) && booleanAnswer.matchedOption) {
+        const selected = await selectRadioOptionAndVerify(
+          page,
+          field,
+          booleanAnswer.matchedOption,
+        ).catch(() => false);
+        await locator.blur().catch(() => undefined);
+        return {
+          fieldKey: field.key,
+          fieldLabel: field.label,
+          required: field.required,
+          status: selected ? "filled" : "failed",
+          details: selected
+            ? `Selected and verified the ${booleanAnswer.matchedOption} radio option.`
+            : `Could not select and verify the ${booleanAnswer.matchedOption} radio option.`,
+        };
+      }
+
       if (booleanAnswer.shouldCheck) {
         const clickedOption = await clickVisibleOption(
           page,
@@ -653,8 +764,8 @@ async function fillSingleField(
       }
 
       if (isRadioControl(field) || controlKind?.inputType === "radio") {
-        const clickedOption = await clickVisibleOption(page, answer, field).catch(() => false);
-        if (!clickedOption) {
+        const selectedOption = await selectRadioOptionAndVerify(page, field, answer).catch(() => false);
+        if (!selectedOption) {
           return {
             fieldKey: field.key,
             fieldLabel: field.label,
@@ -705,7 +816,10 @@ async function fillSingleField(
         (field.selectorHints ?? []).some((hint) => hint.includes("react-select-"));
       await locator.click().catch(() => undefined);
       await page.waitForTimeout(900);
-      const selectedNativeOption = await selectNativeOption(locator, answer).catch(() => false);
+      const selectedNativeOption = await selectNativeOption(
+        locator,
+        field.type === "multi_select" ? answerValues : answer,
+      ).catch(() => false);
       const clickedOption = selectedNativeOption
         ? false
         : await clickVisibleOption(page, answer, field).catch(() => false);
@@ -742,7 +856,9 @@ async function fillSingleField(
         required: field.required,
         status: "filled",
         details: selectedNativeOption
-          ? "Selected a native option."
+          ? field.type === "multi_select" && answerValues.length > 1
+            ? "Selected multiple native options."
+            : "Selected a native option."
           : clickedOption
           ? "Selected a visible option."
           : clickedLabelControl

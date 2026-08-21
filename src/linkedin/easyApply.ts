@@ -8,6 +8,11 @@ import {
 } from "../utils/errors.js";
 import type { SiteFeedbackSnapshot } from "../browser/siteFeedback.js";
 import { repairAnswerFromSiteFeedback } from "../questions/strategies/aiCorrection.js";
+import {
+  assertSafeLinkedInNavigationUrl,
+  assertSafeNavigationUrl,
+  isLinkedInHostname,
+} from "../security/navigationSafety.js";
 
 export type EasyApplyPrimaryAction = "next" | "review" | "submit" | "unknown";
 
@@ -307,16 +312,31 @@ export function resolveLinkedInExternalApplyUrl(
     return null;
   }
 
-  if (!/^https?:\/\//i.test(normalized)) {
-    return normalized;
-  }
-
   try {
-    const parsed = new URL(normalized);
-    const wrappedTarget = parsed.searchParams.get("url");
-    return wrappedTarget ? wrappedTarget : parsed.toString();
+    const parsed = assertSafeNavigationUrl(normalized, {
+      requireHttps: true,
+      context: "LinkedIn external application URL",
+    });
+    if (isLinkedInHostname(parsed.hostname)) {
+      assertSafeLinkedInNavigationUrl(normalized, "LinkedIn external application URL");
+    }
+
+    const isLinkedInSafetyWrapper =
+      isLinkedInHostname(parsed.hostname) &&
+      /^\/safety\/go(?:\/|$)/i.test(parsed.pathname);
+    const wrappedTarget = isLinkedInSafetyWrapper
+      ? parsed.searchParams.get("url")?.trim()
+      : null;
+    if (!wrappedTarget) {
+      return parsed.toString();
+    }
+
+    return assertSafeNavigationUrl(wrappedTarget, {
+      requireHttps: true,
+      context: "LinkedIn external application target",
+    }).toString();
   } catch {
-    return normalized;
+    return null;
   }
 }
 

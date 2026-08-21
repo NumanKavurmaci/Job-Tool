@@ -1,6 +1,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { env } from "../config/env.js";
+import { assertSafeLinkedInNavigationUrl } from "../security/navigationSafety.js";
 
 export const PARSE_VERSION = "phase-5";
 export const DEFAULT_LINKEDIN_EASY_APPLY_URL =
@@ -20,12 +21,9 @@ export const LINKEDIN_EVALUATION_SESSION_OPTIONS = {
 
 export function isLinkedInBatchUrl(url: string): boolean {
   try {
-    const parsed = new URL(url);
-    const isLinkedInHost =
-      /linkedin\.com$/i.test(parsed.hostname) || /\.linkedin\.com$/i.test(parsed.hostname);
+    const parsed = assertSafeLinkedInNavigationUrl(url, "LinkedIn batch URL");
 
     return (
-      isLinkedInHost &&
       /^\/jobs\/(collections|search-results|search)(\/|$)/i.test(parsed.pathname)
     );
   } catch {
@@ -35,10 +33,7 @@ export function isLinkedInBatchUrl(url: string): boolean {
 
 export function getLinkedInCurrentJobId(url: string): string | null {
   try {
-    const parsed = new URL(url);
-    if (!/linkedin\.com$/i.test(parsed.hostname) && !/\.linkedin\.com$/i.test(parsed.hostname)) {
-      return null;
-    }
+    const parsed = assertSafeLinkedInNavigationUrl(url, "LinkedIn job URL");
 
     const currentJobId = parsed.searchParams.get("currentJobId")?.trim();
     return currentJobId && /^\d+$/.test(currentJobId) ? currentJobId : null;

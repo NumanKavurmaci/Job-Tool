@@ -39,9 +39,9 @@ function buildCandidateProfile(overrides: Record<string, unknown> = {}) {
     skills: [],
     languages: [],
     salaryExpectations: {
-      usd: "80000",
-      eur: "70000",
-      try: "1500000",
+      usd: "80000 USD yearly",
+      eur: "70000 EUR yearly",
+      try: "1500000 TRY yearly",
     },
     salaryExpectation: null,
     experienceOverrides: {},
@@ -360,12 +360,14 @@ describe("external semantics", () => {
           semanticKey: "salary.period",
           options: ["Monthly"],
         }),
-        candidateProfile,
+        candidateProfile: buildCandidateProfile({
+          salaryExpectations: { usd: null, eur: null, try: "120000 TRY net monthly" },
+        }),
       }),
     ).toEqual(
       expect.objectContaining({
         answer: "Monthly",
-        confidenceLabel: "medium",
+        confidenceLabel: "high",
       }),
     );
 
@@ -755,5 +757,121 @@ describe("external semantics", () => {
         resolutionStrategy: "profile:demographics",
       }),
     );
+  });
+
+  it("parses salary ranges and never divides an explicitly monthly TRY amount", () => {
+    const candidateProfile = buildCandidateProfile({
+      salaryExpectations: {
+        usd: null,
+        eur: null,
+        try: "120.000-140.000 TRY net monthly",
+      },
+    });
+
+    expect(
+      resolveSemanticExternalAnswer({
+        field: buildField({
+          key: "salary",
+          label: "Aylık maaş beklentiniz (TRY)",
+          semanticKey: "salary.amount",
+        }),
+        candidateProfile,
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        answer: "120000",
+        confidenceLabel: "high",
+        notes: "Resolved from candidate salary expectations without guessing a period conversion.",
+      }),
+    );
+  });
+
+  it("does not guess a conversion when the stored salary period is ambiguous", () => {
+    const candidateProfile = buildCandidateProfile({
+      salaryExpectations: { usd: "80000", eur: null, try: null },
+    });
+
+    expect(
+      resolveSemanticExternalAnswer({
+        field: buildField({
+          key: "salary",
+          label: "Desired rate per month (USD)",
+          semanticKey: "salary.amount",
+        }),
+        candidateProfile,
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        answer: "80000",
+        confidenceLabel: "medium",
+      }),
+    );
+  });
+
+  it("classifies common Turkish application fields", () => {
+    const cases = [
+      ["Maaş beklentiniz nedir?", "short_text", "salary.amount"],
+      ["Kaç yıl deneyiminiz var?", "number", "experience.years"],
+      ["Türkiye'de çalışma izniniz var mı?", "boolean", "work.authorization"],
+      ["KVKK aydınlatma metnini kabul ediyorum", "boolean", "consent.privacy"],
+      ["SMS ile pazarlama mesajları almak istiyorum", "boolean", "consent.sms"],
+      ["Özgeçmiş yükle", "file", "resume.upload"],
+      ["Ön yazı", "long_text", "cover_letter.text"],
+      ["İhbar süreniz nedir?", "short_text", "availability.start"],
+    ] as const;
+
+    for (const [label, type, semanticKey] of cases) {
+      expect(analyzeFieldSemantics(buildField({ key: label, label, type }))).toEqual(
+        expect.objectContaining({ semanticKey }),
+      );
+    }
+  });
+
+  it("never auto-accepts required SMS marketing consent", () => {
+    const candidateProfile = buildCandidateProfile();
+    const resolved = resolveSemanticExternalAnswer({
+      field: buildField({
+        key: "smsMarketing",
+        label: "SMS ile pazarlama mesajları almak istiyorum",
+        type: "boolean",
+        semanticKey: "consent.sms",
+        required: true,
+      }),
+      candidateProfile,
+    });
+
+    expect(resolved).toEqual(expect.objectContaining({
+      answer: null,
+      source: "manual",
+      confidenceLabel: "manual_review",
+      resolutionStrategy: "semantic:consent.sms",
+    }));
+  });
+
+  it("accepts required KVKK consent but leaves optional KVKK consent for review", () => {
+    const candidateProfile = buildCandidateProfile();
+    const required = resolveSemanticExternalAnswer({
+      field: buildField({
+        key: "kvkkRequired",
+        label: "KVKK aydınlatma metnini kabul ediyorum",
+        type: "boolean",
+        semanticKey: "consent.privacy",
+        required: true,
+      }),
+      candidateProfile,
+    });
+    const optional = resolveSemanticExternalAnswer({
+      field: buildField({
+        key: "kvkkOptional",
+        label: "KVKK kapsamında isteğe bağlı veri paylaşımı",
+        type: "boolean",
+        semanticKey: "consent.privacy",
+        required: false,
+      }),
+      candidateProfile,
+    });
+
+    expect(required).toEqual(expect.objectContaining({ answer: "Yes", source: "policy" }));
+    expect(optional).toEqual(expect.objectContaining({ answer: null, source: "manual" }));
   });
 });

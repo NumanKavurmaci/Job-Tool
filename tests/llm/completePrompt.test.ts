@@ -44,6 +44,32 @@ describe("completePrompt", () => {
     expect(infoMock).toHaveBeenCalled();
   });
 
+  it("forwards trusted instructions and a structured output contract", async () => {
+    providerParseMock.mockResolvedValue({
+      text: '{"answer":null}',
+      provider: "local",
+      model: "openai/gpt-oss-20b",
+    });
+    const responseFormat = {
+      type: "json_schema" as const,
+      name: "answer",
+      schema: { type: "object" },
+      strict: true as const,
+    };
+
+    const { completePrompt } = await import("../../src/llm/completePrompt.js");
+    await completePrompt("Untrusted input", {
+      instructions: "Trusted instructions",
+      responseFormat,
+    });
+
+    expect(providerParseMock).toHaveBeenCalledWith({
+      prompt: "Untrusted input",
+      instructions: "Trusted instructions",
+      responseFormat,
+    });
+  });
+
   it("throws on empty responses", async () => {
     providerParseMock.mockResolvedValue({
       text: "   ",

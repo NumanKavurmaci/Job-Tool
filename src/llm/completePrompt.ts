@@ -1,6 +1,6 @@
 import { logger } from "../utils/logger.js";
 import { resolveProvider } from "./providers/resolveProvider.js";
-import type { LlmProviderName } from "./types.js";
+import type { JsonSchemaResponseFormat, LlmProviderName } from "./types.js";
 
 export interface PromptCompletionResult {
   text: string;
@@ -8,7 +8,15 @@ export interface PromptCompletionResult {
   model: string;
 }
 
-export async function completePrompt(prompt: string): Promise<PromptCompletionResult> {
+export interface CompletePromptOptions {
+  instructions?: string;
+  responseFormat?: JsonSchemaResponseFormat;
+}
+
+export async function completePrompt(
+  prompt: string,
+  options: CompletePromptOptions = {},
+): Promise<PromptCompletionResult> {
   const provider = resolveProvider();
   const startedAt = Date.now();
 
@@ -22,7 +30,11 @@ export async function completePrompt(prompt: string): Promise<PromptCompletionRe
   );
 
   try {
-    const response = await provider.parseJob({ prompt });
+    const response = await provider.parseJob({
+      prompt,
+      ...(options.instructions ? { instructions: options.instructions } : {}),
+      ...(options.responseFormat ? { responseFormat: options.responseFormat } : {}),
+    });
 
     if (!response.text.trim()) {
       throw new Error("The LLM provider returned an empty response.");

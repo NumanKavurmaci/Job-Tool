@@ -12,6 +12,7 @@ vi.mock("../../src/answers/resolveAnswer.js", () => ({
 }));
 import { resolveAnswer } from "../../src/answers/resolveAnswer.js";
 import {
+  DEFAULT_EXTERNAL_DISCOVERY_RETRY_POLICY,
   discoverExternalApplication,
   extractExternalPageText,
   followExternalApplicationLink,
@@ -31,6 +32,11 @@ import {
 
 const mockedResolveAnswer = vi.mocked(resolveAnswer);
 let browser: Browser;
+
+const ROUTED_PUBLIC_DISCOVERY_POLICY = {
+  ...DEFAULT_EXTERNAL_DISCOVERY_RETRY_POLICY,
+  hostnameResolver: async () => ["93.184.216.34"],
+};
 
 beforeAll(async () => {
   browser = await chromium.launch({ headless: true });
@@ -382,7 +388,7 @@ describe("external application discovery", () => {
     ]);
   });
 
-  it("returns the initial empty inspection when no retry timer is available", async () => {
+  it("rejects an invalid source URL before discovery starts", async () => {
     const goto = vi.fn();
     const evaluate = vi.fn().mockResolvedValue({
       url: "notaurl",
@@ -391,14 +397,162 @@ describe("external application discovery", () => {
       precursorLinks: [],
     });
 
+    await expect(
+      discoverExternalApplication({ goto, evaluate } as never, "notaurl"),
+    ).rejects.toMatchObject({
+      name: "UnsafeNavigationUrlError",
+      reason: "invalid_url",
+    });
+    expect(goto).not.toHaveBeenCalled();
+  });
+
+  it("requires HTTPS for production external application discovery", async () => {
+    const goto = vi.fn();
+    await expect(
+      discoverExternalApplication(
+        { goto } as never,
+        "http://apply.example.com/form",
+      ),
+    ).rejects.toMatchObject({
+      name: "UnsafeNavigationUrlError",
+      reason: "unsupported_protocol",
+    });
+    expect(goto).not.toHaveBeenCalled();
+  });
+
+  it("supports an explicit test-only private-host option for local fixtures", async () => {
+    const goto = vi.fn();
+    const sourceUrl = "http://127.0.0.1:4173/apply";
+    const evaluate = vi.fn().mockResolvedValue({
+      url: sourceUrl,
+      title: "Local test fixture",
+      fields: [],
+      precursorLinks: [],
+    });
+
     const result = await discoverExternalApplication(
       { goto, evaluate } as never,
-      "notaurl",
+      sourceUrl,
+      {
+        delayedEmbedRetryDelaysMs: [],
+        signalTimeoutMs: 1,
+        allowPrivateHosts: true,
+      },
     );
 
-    expect(result.platform).toBe("generic");
+    expect(goto).toHaveBeenCalledWith(sourceUrl);
+    expect(result.finalUrl).toBe(sourceUrl);
+  });
+
+  it("skips unsafe embedded application targets", async () => {
+    const sourceUrl = "https://careers.example.test/job/1";
+    const goto = vi.fn();
+    const evaluate = vi
+      .fn()
+      .mockResolvedValueOnce({
+        url: sourceUrl,
+        title: "Careers",
+        fields: [],
+        precursorLinks: [],
+      })
+      .mockResolvedValueOnce([
+        { href: "http://169.254.169.254/latest/meta-data/", score: 100 },
+      ]);
+
+    const result = await discoverExternalApplication(
+      { goto, evaluate } as never,
+      sourceUrl,
+    );
+
+    expect(goto).toHaveBeenCalledTimes(1);
     expect(result.fields).toEqual([]);
-    expect(result.precursorLinks).toEqual([]);
+    expect(result.followedPrecursorLink).toBeNull();
+  });
+
+  it("rejects unsafe precursor links before navigation", async () => {
+    const goto = vi.fn();
+    const page = {
+      goto,
+      url: () => "https://careers.example.test/job/1",
+    };
+
+    await expect(
+      followExternalApplicationLink(
+        page as never,
+        "https://careers.example.test/job/1",
+        "https://127.0.0.1/admin",
+      ),
+    ).rejects.toMatchObject({
+      name: "UnsafeNavigationUrlError",
+      reason: "private_host",
+    });
+    expect(goto).not.toHaveBeenCalled();
+  });
+
+  it("blocks an unsafe redirect before the private target is requested", async () => {
+    const page = await browser.newPage();
+    const sourceUrl = "https://redirect.example.test/start";
+    const privateUrl = "https://127.0.0.1/private-form";
+    let privateTargetRequested = false;
+    await page.route(privateUrl, async (route) => {
+      privateTargetRequested = true;
+      await route.fulfill({ status: 200, body: "private" });
+    });
+    await page.route(sourceUrl, async (route) => {
+      await route.fulfill({
+        status: 302,
+        headers: { location: privateUrl },
+      });
+    });
+
+    try {
+      await expect(
+        discoverExternalApplication(page, sourceUrl, ROUTED_PUBLIC_DISCOVERY_POLICY),
+      ).rejects.toMatchObject({
+        name: "UnsafeNavigationUrlError",
+        reason: "private_host",
+      });
+      expect(privateTargetRequested).toBe(false);
+    } finally {
+      await page.close();
+    }
+  });
+
+  it("re-resolves redirect hostnames and blocks public-looking names that resolve privately", async () => {
+    const page = await browser.newPage();
+    const sourceUrl = "https://redirect.example.test/start";
+    const targetUrl = "https://rebound.example.test/private-form";
+    let privateTargetRequested = false;
+    const hostnameResolver = vi.fn(async (hostname: string) =>
+      hostname === "rebound.example.test" ? ["127.0.0.1"] : ["93.184.216.34"],
+    );
+    await page.route(targetUrl, async (route) => {
+      privateTargetRequested = true;
+      await route.fulfill({ status: 200, body: "private" });
+    });
+    await page.route(sourceUrl, async (route) => {
+      await route.fulfill({
+        status: 302,
+        headers: { location: targetUrl },
+      });
+    });
+
+    try {
+      await expect(
+        discoverExternalApplication(page, sourceUrl, {
+          ...DEFAULT_EXTERNAL_DISCOVERY_RETRY_POLICY,
+          hostnameResolver,
+        }),
+      ).rejects.toMatchObject({
+        name: "UnsafeNavigationUrlError",
+        reason: "private_host",
+      });
+      expect(hostnameResolver).toHaveBeenCalledWith("redirect.example.test");
+      expect(hostnameResolver).toHaveBeenCalledWith("rebound.example.test");
+      expect(privateTargetRequested).toBe(false);
+    } finally {
+      await page.close();
+    }
   });
 
   it("ignores waitForFunction failures while continuing discovery", async () => {
@@ -718,6 +872,7 @@ describe("external application discovery", () => {
     const result = await discoverExternalApplication(
       page,
       "https://jobs.lever.co/commencis/a3be10ef-53ab-4842-b114-ae9f60b43e99",
+      ROUTED_PUBLIC_DISCOVERY_POLICY,
     );
 
     expect(result.platform).toBe("lever");
@@ -827,6 +982,7 @@ describe("external application discovery", () => {
     const result = await discoverExternalApplication(
       page,
       "https://fundraiseup.test/careers/4597227005",
+      ROUTED_PUBLIC_DISCOVERY_POLICY,
     );
 
     expect(result.finalUrl).toBe("https://job-boards.greenhouse.io/embed/job_app?for=fundraiseup&token=123");
@@ -874,6 +1030,7 @@ describe("external application discovery", () => {
     const result = await discoverExternalApplication(
       page,
       "https://10x.team/search-roles/?ashby_jid=32d15c28-c3e9-4afd-8f2e-e4ab81a3e06e&utm_source=LinkedInPaid",
+      ROUTED_PUBLIC_DISCOVERY_POLICY,
     );
 
     expect(result.finalUrl).toBe("https://jobs.ashbyhq.com/10xteam/32d15c28-c3e9-4afd-8f2e-e4ab81a3e06e?utm_source=LinkedInPaid&embed=js");
@@ -977,6 +1134,7 @@ describe("external application discovery", () => {
     const result = await discoverExternalApplication(
       page,
       "https://jobs.ashbyhq.com/ruby-labs/05254f35-7380-4e94-b780-91bde2469db9/application?utm_source=test",
+      ROUTED_PUBLIC_DISCOVERY_POLICY,
     );
 
     expect(result.platform).toBe("ashby");
@@ -1051,6 +1209,7 @@ describe("external application discovery", () => {
     const result = await discoverExternalApplication(
       page,
       "https://globalcareers-githubinc.icims.com/jobs/5151/login?iis=Job%20Board&iisn=LinkedIn",
+      ROUTED_PUBLIC_DISCOVERY_POLICY,
     );
 
     expect(result.finalUrl).toBe("https://globalcareers-githubinc.icims.com/jobs/5151/login?iis=Job+Board&iisn=LinkedIn&in_iframe=1");
@@ -1113,6 +1272,7 @@ describe("external application discovery", () => {
       {
         delayedEmbedRetryDelaysMs: [300],
         signalTimeoutMs: 500,
+        hostnameResolver: ROUTED_PUBLIC_DISCOVERY_POLICY.hostnameResolver,
       },
     );
 
@@ -1487,8 +1647,9 @@ describe("external application discovery", () => {
       }),
       expect.objectContaining({
         fieldKey: "salaryPeriod",
-        answer: "Yearly",
-        source: "candidate-profile",
+        answer: null,
+        source: "manual",
+        confidenceLabel: "manual_review",
         semanticKey: "salary.period",
         resolutionStrategy: "semantic:salary-period",
       }),
@@ -1745,7 +1906,7 @@ describe("external application discovery", () => {
       ],
       candidateProfile: buildCandidateProfile({
         salaryExpectations: {
-          usd: "80000",
+          usd: "80000 USD yearly",
           eur: null,
           try: null,
         },
@@ -1762,7 +1923,7 @@ describe("external application discovery", () => {
         fieldKey: "salary",
         answer: "6667",
         resolutionStrategy: "semantic:salary-amount",
-        notes: "Resolved from candidate salary expectations and normalized to a monthly amount.",
+        notes: "Resolved from an explicitly yearly candidate expectation and converted to a monthly amount.",
       }),
     ]);
   });

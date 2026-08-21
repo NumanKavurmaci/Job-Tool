@@ -21,6 +21,7 @@ describe("formatJobForLLM", () => {
     expect(output).toContain("Description:\nBuild APIs");
     expect(output).toContain("Requirements:\nTypeScript");
     expect(output).toContain("Benefits:\nEquity");
+    expect(output.indexOf("Requirements:")).toBeLessThan(output.indexOf("Description:"));
   });
 
   it("uses fallback values for empty sections", () => {

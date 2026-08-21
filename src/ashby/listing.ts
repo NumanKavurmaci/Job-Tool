@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { safePageGoto } from "../security/navigationSafety.js";
 
 export type AshbyListing = {
   title: string;
@@ -114,7 +115,7 @@ export function isAshbyJobDetailUrl(url: string): boolean {
 }
 
 export async function extractAshbyListings(page: Page, url: string): Promise<AshbyListing[]> {
-  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  await safePageGoto(page, url, { waitUntil: "domcontentloaded", timeout: 60_000 });
   await page.waitForTimeout(2_000);
 
   const listings = await page.evaluate(ASHBY_LISTING_SCRIPT) as AshbyListing[];

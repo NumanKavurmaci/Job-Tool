@@ -22,6 +22,14 @@ export class OpenAIProvider implements LlmProvider {
       response = await this.client.responses.create({
         model: this.model,
         input: request.prompt,
+        ...(request.instructions ? { instructions: request.instructions } : {}),
+        ...(request.responseFormat
+          ? {
+              text: {
+                format: request.responseFormat,
+              },
+            }
+          : {}),
       });
     } catch (error) {
       throw new AppError({

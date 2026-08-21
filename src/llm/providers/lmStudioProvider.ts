@@ -83,11 +83,31 @@ export class LMStudioProvider implements LlmProvider {
           model: this.model,
           temperature: 0,
           messages: [
+            ...(request.instructions
+              ? [
+                  {
+                    role: "system",
+                    content: request.instructions,
+                  },
+                ]
+              : []),
             {
               role: "user",
               content: request.prompt,
             },
           ],
+          ...(request.responseFormat
+            ? {
+                response_format: {
+                  type: "json_schema",
+                  json_schema: {
+                    name: request.responseFormat.name,
+                    schema: request.responseFormat.schema,
+                    strict: request.responseFormat.strict,
+                  },
+                },
+              }
+            : {}),
         }),
         signal: AbortSignal.timeout(this.timeoutMs),
       });

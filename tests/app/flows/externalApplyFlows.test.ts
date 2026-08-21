@@ -16,11 +16,13 @@ import {
   runExternalApplyFlow,
 } from "../../../src/app/flows/externalApplyFlows.js";
 
+const resumeFixturePath = "tests/fixtures/resume.pdf";
+
 function buildCandidateProfile() {
   return {
     fullName: "Jane Doe",
     linkedinUrl: "https://linkedin.com/in/jane",
-    sourceMetadata: { resumePath: "./user/resume.pdf" },
+    sourceMetadata: { resumePath: resumeFixturePath },
     email: "jane@example.com",
     phone: null,
     location: null,
@@ -186,7 +188,7 @@ describe("external apply flows", () => {
       {
         mode: "external-apply",
         url: "https://example.com/start",
-        resumePath: "./user/resume.pdf",
+        resumePath: resumeFixturePath,
         dryRun: true,
       },
       deps,
@@ -201,7 +203,7 @@ describe("external apply flows", () => {
       }),
       expect.objectContaining({
         fieldKey: "resume",
-        answer: "./user/resume.pdf",
+        answer: resumeFixturePath,
       }),
     ]);
     expect(result.aiAdvisory).toEqual(
@@ -230,7 +232,7 @@ describe("external apply flows", () => {
       data: expect.objectContaining({
         fullName: "Jane Doe",
         linkedinUrl: "https://linkedin.com/in/jane",
-        resumePath: "./user/resume.pdf",
+        resumePath: resumeFixturePath,
       }),
     });
     expect(deps.prisma.preparedAnswerSet.create).toHaveBeenCalledWith({
