@@ -1331,16 +1331,15 @@ describe("runEasyApplyBatchDryRun", () => {
   });
 
   it("stops batch safely when recovery after a job failure also fails", async () => {
+    const neverRecovers = new Promise<void>(() => undefined);
     const driver = {
       open: vi.fn(),
-      openCollection: vi
-        .fn()
-        .mockResolvedValueOnce(undefined)
-        .mockRejectedValue(new Error("collection reopen failed")),
+      openCollection: vi.fn().mockResolvedValue(undefined),
       ensureAuthenticated: vi
         .fn()
         .mockResolvedValueOnce(undefined)
-        .mockResolvedValueOnce(undefined),
+        .mockResolvedValueOnce(undefined)
+        .mockReturnValue(neverRecovers),
       isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
       openEasyApply: vi.fn().mockRejectedValue(new Error("modal crashed before opening")),
       collectQuestions: vi.fn().mockResolvedValue([]),
@@ -1358,6 +1357,7 @@ describe("runEasyApplyBatchDryRun", () => {
       driver,
       url: "https://www.linkedin.com/jobs/collections/easy-apply",
       targetCount: 2,
+      collectionContextTimeoutMs: 25,
       candidateProfile: profile,
       evaluateJob: async () => ({
         shouldApply: true,
@@ -1377,22 +1377,21 @@ describe("runEasyApplyBatchDryRun", () => {
     });
 
     expect(result.status).toBe("partial");
-    expect(result.attemptedCount).toBe(2);
-    expect(result.stopReason).toContain("2 attempt(s) stopped before completion");
-    expect(result.stopReason).toContain("2 recovery attempt(s) failed");
-    expect(result.jobs[0]?.result?.recovery).toEqual({
+    expect(result.attemptedCount).toBe(1);
+    expect(result.stopReason).toContain("1 attempt(s) stopped before completion");
+    expect(result.stopReason).toContain("1 recovery attempt(s) failed");
+    expect(result.stopReason).toContain(
+      "collection context recovery timed out after 25ms",
+    );
+    expect(result.jobs[0]?.result?.recovery).toMatchObject({
       attempted: true,
       succeeded: false,
-      message:
-        "Failed to recover batch context after failure on https://www.linkedin.com/jobs/view/1: collection reopen failed",
     });
-    expect(result.jobs[1]?.result?.recovery).toEqual({
-      attempted: true,
-      succeeded: false,
-      message:
-        "Failed to recover batch context after failure on https://www.linkedin.com/jobs/view/2: collection reopen failed",
-    });
-    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs[0]?.result?.recovery?.message).toContain(
+      "LinkedIn collection context recovery timed out after 25ms",
+    );
+    expect(result.jobs).toHaveLength(1);
+    expect(driver.open).not.toHaveBeenCalledWith("https://www.linkedin.com/jobs/view/2");
   });
 
   it("keeps the batch alive when evaluateJob throws for one listing", async () => {
@@ -1789,7 +1788,12 @@ describe("runEasyApplyBatchInternal", () => {
     const neverResolves = new Promise<void>(() => undefined);
     const driver = {
       open: vi.fn(),
-      openCollection: vi.fn().mockResolvedValue(undefined),
+      openCollection: vi.fn().mockImplementation((url: string) => {
+        if (new URL(url).searchParams.get("currentJobId") === "1") {
+          return neverResolves;
+        }
+        return Promise.resolve();
+      }),
       ensureAuthenticated: vi.fn().mockResolvedValue(undefined),
       isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
       openEasyApply: vi
@@ -1814,6 +1818,7 @@ describe("runEasyApplyBatchInternal", () => {
         url: "https://www.linkedin.com/jobs/collections/easy-apply",
         targetCount: 2,
         jobProcessingTimeoutMs: 25,
+        collectionContextTimeoutMs: 25,
         candidateProfile: profile,
         evaluateJob: async () => ({
           shouldApply: true,
@@ -1833,11 +1838,74 @@ describe("runEasyApplyBatchInternal", () => {
       status: "stopped_unknown_action",
       failureReasonCode: "linkedin.approved_job_processing_timeout",
       retryable: true,
+      recovery: {
+        attempted: true,
+        succeeded: true,
+      },
     });
     expect(result.jobs[0]?.result?.stopReason).toContain("timed out after 25ms");
     expect(result.jobs[1]?.result?.status).toBe("ready_to_submit");
     expect(result.stopReason).toContain("1 attempt(s) stopped before completion");
     expect(driver.openEasyApply).toHaveBeenCalledTimes(2);
+    expect(driver.openCollection).not.toHaveBeenCalledWith(
+      expect.stringContaining("currentJobId=1"),
+    );
+    expect(driver.open).toHaveBeenCalledWith("https://www.linkedin.com/jobs/view/2");
+  });
+
+  it("returns a bounded partial result when restoring collection context hangs after a successful job", async () => {
+    const neverRestores = new Promise<void>(() => undefined);
+    const driver = {
+      open: vi.fn(),
+      openCollection: vi.fn().mockImplementation((url: string) =>
+        new URL(url).searchParams.has("currentJobId")
+          ? neverRestores
+          : Promise.resolve()
+      ),
+      ensureAuthenticated: vi.fn().mockResolvedValue(undefined),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn().mockResolvedValue(undefined),
+      collectQuestions: vi.fn().mockResolvedValue([]),
+      collectVisibleJobs: vi.fn().mockResolvedValue([
+        { url: "https://www.linkedin.com/jobs/view/1", alreadyApplied: false },
+        { url: "https://www.linkedin.com/jobs/view/2", alreadyApplied: false },
+      ]),
+      goToNextResultsPage: vi.fn().mockResolvedValue(false),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn().mockResolvedValue("submit"),
+      advance: vi.fn(),
+      dismissCompletionModal: vi.fn(),
+    };
+
+    const result = await runEasyApplyBatchInternal(
+      {
+        driver,
+        url: "https://www.linkedin.com/jobs/collections/easy-apply",
+        targetCount: 2,
+        collectionContextTimeoutMs: 25,
+        candidateProfile: profile,
+        evaluateJob: async () => ({
+          shouldApply: true,
+          finalDecision: "APPLY",
+          score: 90,
+          reason: "Strong fit.",
+          policyAllowed: true,
+        }),
+        resolveAnswer: vi.fn(),
+      },
+      "dry-run",
+    );
+
+    expect(result.status).toBe("partial");
+    expect(result.attemptedCount).toBe(1);
+    expect(result.jobs).toHaveLength(1);
+    expect(result.jobs[0]?.result?.status).toBe("ready_to_submit");
+    expect(result.stopReason).toContain(
+      "collection context restore timed out after 25ms",
+    );
+    expect(result.stopReason).toContain("driver context could not be safely reused");
+    expect(driver.open).not.toHaveBeenCalledWith("https://www.linkedin.com/jobs/view/2");
+    expect(driver.goToNextResultsPage).not.toHaveBeenCalled();
   });
 
   it("blocks late driver calls from a timed-out job after recovery starts", async () => {
@@ -1879,6 +1947,7 @@ describe("runEasyApplyBatchInternal", () => {
         url: "https://www.linkedin.com/jobs/collections/easy-apply",
         targetCount: 2,
         jobProcessingTimeoutMs: 25,
+        collectionContextTimeoutMs: 25,
         candidateProfile: profile,
         evaluateJob: async () => ({
           shouldApply: true,
@@ -1909,7 +1978,10 @@ describe("runEasyApplyBatchInternal", () => {
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
     expect(driver.fillAnswer).not.toHaveBeenCalled();
-    expect(driver.openCollection.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(driver.openCollection).toHaveBeenCalledTimes(3);
+    expect(driver.openCollection).not.toHaveBeenCalledWith(
+      expect.stringContaining("currentJobId=1"),
+    );
   });
 
   it("stops after consecutive pages produce no new unique jobs", async () => {
@@ -2305,7 +2377,7 @@ describe("runEasyApplyBatchInternal", () => {
     expect(driver.advance).not.toHaveBeenCalledWith("submit");
   });
 
-  it("continues to the next approved job even when recovery after a failed job attempt does not succeed", async () => {
+  it("stops before the next approved job when collection restore and recovery both fail", async () => {
     const driver = {
       open: vi.fn(),
       openCollection: vi.fn()
@@ -2313,8 +2385,8 @@ describe("runEasyApplyBatchInternal", () => {
         .mockRejectedValueOnce(new Error("collection reopen failed")),
       ensureAuthenticated: vi.fn()
         .mockResolvedValueOnce(undefined)
-        .mockRejectedValueOnce(new Error("auth refresh failed"))
-        .mockResolvedValueOnce(undefined),
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error("auth refresh failed")),
       isEasyApplyAvailable: vi.fn()
         .mockResolvedValueOnce(true)
         .mockResolvedValueOnce(true),
@@ -2363,21 +2435,17 @@ describe("runEasyApplyBatchInternal", () => {
     );
 
     expect(result.status).toBe("partial");
-    expect(result.attemptedCount).toBe(2);
-    expect(result.jobs[0]?.result).toEqual(
-      expect.objectContaining({
-        status: "stopped_unknown_action",
-        recovery: expect.objectContaining({
-          attempted: true,
-          succeeded: false,
-        }),
-      }),
+    expect(result.attemptedCount).toBe(1);
+    expect(result.jobs[0]?.result?.status).toBe("submitted");
+    expect(result.stopReason).toContain(
+      "Collection restore failed for https://www.linkedin.com/jobs/view/1",
     );
-    expect(result.jobs[1]?.result?.status).toBe("submitted");
-    expect(driver.open).toHaveBeenCalledWith("https://www.linkedin.com/jobs/view/2");
+    expect(result.stopReason).toContain("driver context could not be safely reused");
+    expect(result.jobs).toHaveLength(1);
+    expect(driver.open).not.toHaveBeenCalledWith("https://www.linkedin.com/jobs/view/2");
   });
 
-  it("mentions recovery failures in the partial batch stop reason without aborting immediately", async () => {
+  it("mentions recovery failures in the bounded partial batch stop reason", async () => {
     const driver = {
       open: vi.fn(),
       openCollection: vi.fn()
