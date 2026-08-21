@@ -209,6 +209,20 @@ async function navigateToKariyerListing(page: Page, url: string): Promise<string
         await page.waitForTimeout(KARIYER_LISTING_HYDRATION_INTERVAL_MS);
       }
     }
+
+    if ((await cardLocator.count().catch(() => 0)) === 0) {
+      const title = await page.title().catch(() => "");
+      const bodyText = await page.locator("body").innerText().catch(() => "");
+      if (
+        /access to this page has been denied|güvenlik doğrulaması|guvenlik dogrulamasi|butona basılı tut|butona basili tut/iu.test(
+          `${title}\n${bodyText}`,
+        )
+      ) {
+        throw new Error(
+          "Kariyer.net requires manual security verification in the configured persistent browser profile before listings can be read.",
+        );
+      }
+    }
   } else {
     await page.waitForTimeout(1_000);
   }

@@ -97,8 +97,36 @@ describe("Kariyer.net listing extraction", () => {
     };
 
     await expect(extractKariyerListings(page as never, listingUrl)).resolves.toHaveLength(1);
-    expect(count).toHaveBeenCalledTimes(3);
+    expect(count).toHaveBeenCalledTimes(4);
     expect(page.waitForTimeout).toHaveBeenCalledTimes(2);
+  });
+
+  it("fails explicitly instead of reporting an empty batch on a security verification page", async () => {
+    let currentUrl = listingUrl;
+    const body = {
+      innerText: vi.fn(async () =>
+        "Kısa bir güvenlik doğrulaması yapacağız. Aşağıdaki butona basılı tut.",
+      ),
+    };
+    const page = {
+      goto: vi.fn(async (url: string) => {
+        currentUrl = url;
+      }),
+      url: vi.fn(() => currentUrl),
+      title: vi.fn(async () => "Access to this page has been denied"),
+      waitForTimeout: vi.fn(async () => undefined),
+      locator: vi.fn((selector: string) =>
+        selector === "body"
+          ? body
+          : { count: vi.fn(async () => 0) },
+      ),
+      evaluate: vi.fn(),
+    };
+
+    await expect(extractKariyerListings(page as never, listingUrl)).rejects.toThrow(
+      "requires manual security verification",
+    );
+    expect(page.evaluate).not.toHaveBeenCalled();
   });
 
   it("follows safe cp pagination until the requested unique count is reached", async () => {
