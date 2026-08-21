@@ -249,14 +249,14 @@ describe("easy apply flows", () => {
     (deps.resolveAnswer as any).mockResolvedValue({ answer: "ok" });
     (deps.createEasyApplyDriver as any).mockResolvedValue({ driver: true });
     (deps.runEasyApplyBatchDryRun as any).mockResolvedValue({
-      status: "completed",
+      status: "partial",
       collectionUrl: "https://www.linkedin.com/jobs/collections/easy-apply",
       requestedCount: 2,
       attemptedCount: 1,
       evaluatedCount: 1,
       skippedCount: 1,
       pagesVisited: 1,
-      stopReason: "Processed 1 job.",
+      stopReason: "Processed 1 approved LinkedIn apply job(s), but 1 attempt(s) stopped before completion.",
       jobs: [
         {
           url: "https://www.linkedin.com/jobs/view/1",
@@ -378,7 +378,7 @@ describe("easy apply flows", () => {
     (deps.writeRunReport as any).mockResolvedValue("artifacts/batch-runs/run.json");
 
     const { runApplyDryRunFlow } = await import("../../../src/app/flows/applyFlows.js");
-    await runApplyDryRunFlow(
+    const result = await runApplyDryRunFlow(
       {
         mode: "apply-batch",
         url: "https://www.linkedin.com/jobs/collections/easy-apply",
@@ -391,6 +391,11 @@ describe("easy apply flows", () => {
       },
       deps,
     );
+
+    expect(result.easyApply).toMatchObject({
+      status: "completed",
+      stopReason: "Processed 1 LinkedIn apply job(s), including completed external handoffs.",
+    });
 
     expect(deps.prisma.jobReviewHistory.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
