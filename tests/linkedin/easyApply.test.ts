@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ResolvedAnswer } from "../../src/answers/types.js";
 const { repairAnswerFromSiteFeedbackMock } = vi.hoisted(() => ({
   repairAnswerFromSiteFeedbackMock: vi.fn(),
 }));
@@ -177,6 +178,44 @@ describe("runEasyApplyDryRun", () => {
     expect(result.status).toBe("ready_to_submit");
     expect(driver.advance).toHaveBeenCalledWith("next");
     expect(result.steps).toHaveLength(2);
+  });
+
+  it("stops for manual review when the dry-run submit step still has a required blocker", async () => {
+    const driver = {
+      open: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn().mockResolvedValue([
+        {
+          fieldKey: "salary",
+          label: "Salary expectation",
+          inputType: "text",
+          required: true,
+        },
+      ]),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn().mockResolvedValue("submit"),
+      advance: vi.fn(),
+    };
+
+    const result = await runEasyApplyDryRun({
+      driver,
+      url: "https://www.linkedin.com/jobs/view/1",
+      candidateProfile: profile,
+      resolveAnswer: async () => ({
+        questionType: "salary",
+        strategy: "needs-review",
+        answer: null,
+        confidence: 0.2,
+        confidenceLabel: "manual_review",
+        source: "manual",
+      }),
+    });
+
+    expect(result.status).toBe("stopped_manual_review");
+    expect(result.stopReason).toContain("before submitting");
+    expect(driver.advance).not.toHaveBeenCalled();
   });
 
   it("skips required fields that LinkedIn already pre-filled", async () => {
@@ -1217,7 +1256,8 @@ describe("runEasyApplyBatchDryRun", () => {
       }),
     });
 
-    expect(result.status).toBe("completed");
+    expect(result.status).toBe("partial");
+    expect(result.stopReason).toContain("1 attempt(s) stopped before completion");
     expect(result.jobs[0]?.result.status).toBe("ready_to_submit");
     expect(result.jobs[1]?.result.status).toBe("stopped_unknown_action");
     expect(result.jobs[1]?.result.stopReason).toContain("message=modal did not open");
@@ -1282,7 +1322,7 @@ describe("runEasyApplyBatchDryRun", () => {
       "submit",
     );
 
-    expect(result.status).toBe("completed");
+    expect(result.status).toBe("partial");
     expect(result.jobs[0]?.url).toBe("https://www.linkedin.com/jobs/view/4386362641");
     expect(result.jobs[0]?.result?.status).toBe("stopped_unknown_action");
     expect(result.jobs[0]?.result?.stopReason).toContain(
@@ -1336,9 +1376,10 @@ describe("runEasyApplyBatchDryRun", () => {
       }),
     });
 
-    expect(result.status).toBe("completed");
+    expect(result.status).toBe("partial");
     expect(result.attemptedCount).toBe(2);
-    expect(result.stopReason).toBe("Processed 2 LinkedIn apply job(s).");
+    expect(result.stopReason).toContain("2 attempt(s) stopped before completion");
+    expect(result.stopReason).toContain("2 recovery attempt(s) failed");
     expect(result.jobs[0]?.result?.recovery).toEqual({
       attempted: true,
       succeeded: false,
@@ -1744,6 +1785,213 @@ describe("runEasyApplyBatch", () => {
 });
 
 describe("runEasyApplyBatchInternal", () => {
+  it("times out a stuck approved job and continues with the next job", async () => {
+    const neverResolves = new Promise<void>(() => undefined);
+    const driver = {
+      open: vi.fn(),
+      openCollection: vi.fn().mockResolvedValue(undefined),
+      ensureAuthenticated: vi.fn().mockResolvedValue(undefined),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi
+        .fn()
+        .mockImplementationOnce(() => neverResolves)
+        .mockResolvedValueOnce(undefined),
+      collectQuestions: vi.fn().mockResolvedValue([]),
+      collectVisibleJobs: vi.fn().mockResolvedValue([
+        { url: "https://www.linkedin.com/jobs/view/1", alreadyApplied: false },
+        { url: "https://www.linkedin.com/jobs/view/2", alreadyApplied: false },
+      ]),
+      goToNextResultsPage: vi.fn().mockResolvedValue(false),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn().mockResolvedValue("submit"),
+      advance: vi.fn(),
+      dismissCompletionModal: vi.fn(),
+    };
+
+    const result = await runEasyApplyBatchInternal(
+      {
+        driver,
+        url: "https://www.linkedin.com/jobs/collections/easy-apply",
+        targetCount: 2,
+        jobProcessingTimeoutMs: 25,
+        candidateProfile: profile,
+        evaluateJob: async () => ({
+          shouldApply: true,
+          finalDecision: "APPLY",
+          score: 90,
+          reason: "Strong fit.",
+          policyAllowed: true,
+        }),
+        resolveAnswer: vi.fn(),
+      },
+      "dry-run",
+    );
+
+    expect(result.status).toBe("partial");
+    expect(result.attemptedCount).toBe(2);
+    expect(result.jobs[0]?.result).toMatchObject({
+      status: "stopped_unknown_action",
+      failureReasonCode: "linkedin.approved_job_processing_timeout",
+      retryable: true,
+    });
+    expect(result.jobs[0]?.result?.stopReason).toContain("timed out after 25ms");
+    expect(result.jobs[1]?.result?.status).toBe("ready_to_submit");
+    expect(result.stopReason).toContain("1 attempt(s) stopped before completion");
+    expect(driver.openEasyApply).toHaveBeenCalledTimes(2);
+  });
+
+  it("blocks late driver calls from a timed-out job after recovery starts", async () => {
+    let resolveDelayedAnswer!: (answer: ResolvedAnswer) => void;
+    const delayedAnswer = new Promise<ResolvedAnswer>((resolve) => {
+      resolveDelayedAnswer = resolve;
+    });
+    const driver = {
+      open: vi.fn(),
+      openCollection: vi.fn().mockResolvedValue(undefined),
+      ensureAuthenticated: vi.fn().mockResolvedValue(undefined),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn().mockResolvedValue(undefined),
+      collectQuestions: vi
+        .fn()
+        .mockResolvedValueOnce([
+          {
+            fieldKey: "salary",
+            label: "Salary expectation",
+            inputType: "text",
+            required: true,
+          },
+        ])
+        .mockResolvedValueOnce([]),
+      collectVisibleJobs: vi.fn().mockResolvedValue([
+        { url: "https://www.linkedin.com/jobs/view/1", alreadyApplied: false },
+        { url: "https://www.linkedin.com/jobs/view/2", alreadyApplied: false },
+      ]),
+      goToNextResultsPage: vi.fn().mockResolvedValue(false),
+      fillAnswer: vi.fn().mockResolvedValue({ filled: true }),
+      getPrimaryAction: vi.fn().mockResolvedValue("submit"),
+      advance: vi.fn(),
+      dismissCompletionModal: vi.fn(),
+    };
+
+    const result = await runEasyApplyBatchInternal(
+      {
+        driver,
+        url: "https://www.linkedin.com/jobs/collections/easy-apply",
+        targetCount: 2,
+        jobProcessingTimeoutMs: 25,
+        candidateProfile: profile,
+        evaluateJob: async () => ({
+          shouldApply: true,
+          finalDecision: "APPLY",
+          score: 90,
+          reason: "Strong fit.",
+          policyAllowed: true,
+        }),
+        resolveAnswer: vi.fn().mockReturnValueOnce(delayedAnswer),
+      },
+      "dry-run",
+    );
+
+    expect(result.status).toBe("partial");
+    expect(result.jobs[0]?.result?.failureReasonCode).toBe(
+      "linkedin.approved_job_processing_timeout",
+    );
+    expect(result.jobs[1]?.result?.status).toBe("ready_to_submit");
+
+    resolveDelayedAnswer({
+      questionType: "salary",
+      strategy: "generated",
+      answer: "100000",
+      confidence: 0.9,
+      confidenceLabel: "high",
+      source: "llm",
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(driver.fillAnswer).not.toHaveBeenCalled();
+    expect(driver.openCollection.mock.calls.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("stops after consecutive pages produce no new unique jobs", async () => {
+    const driver = {
+      open: vi.fn(),
+      openCollection: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn(),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn(),
+      collectVisibleJobs: vi.fn().mockResolvedValue([
+        { url: "https://www.linkedin.com/jobs/view/1", alreadyApplied: true },
+      ]),
+      goToNextResultsPage: vi.fn().mockResolvedValue(true),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn(),
+      advance: vi.fn(),
+    };
+
+    const result = await runEasyApplyBatchInternal(
+      {
+        driver,
+        url: "https://www.linkedin.com/jobs/collections/easy-apply",
+        targetCount: 2,
+        maxConsecutiveNoProgressPages: 2,
+        candidateProfile: profile,
+        evaluateJob: vi.fn(),
+        resolveAnswer: vi.fn(),
+      },
+      "dry-run",
+    );
+
+    expect(result.status).toBe("partial");
+    expect(result.pagesVisited).toBe(3);
+    expect(result.stopReason).toContain("2 consecutive page(s) produced no new unique jobs");
+    expect(driver.goToNextResultsPage).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops at the configured global page limit", async () => {
+    let pageNumber = 0;
+    const driver = {
+      open: vi.fn(),
+      openCollection: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn(),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn(),
+      collectVisibleJobs: vi.fn().mockImplementation(async () => {
+        pageNumber += 1;
+        return [
+          {
+            url: `https://www.linkedin.com/jobs/view/${pageNumber}`,
+            alreadyApplied: true,
+          },
+        ];
+      }),
+      goToNextResultsPage: vi.fn().mockResolvedValue(true),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn(),
+      advance: vi.fn(),
+    };
+
+    const result = await runEasyApplyBatchInternal(
+      {
+        driver,
+        url: "https://www.linkedin.com/jobs/collections/easy-apply",
+        targetCount: 1,
+        maxPages: 2,
+        candidateProfile: profile,
+        evaluateJob: vi.fn(),
+        resolveAnswer: vi.fn(),
+      },
+      "dry-run",
+    );
+
+    expect(result.status).toBe("partial");
+    expect(result.pagesVisited).toBe(2);
+    expect(result.jobs).toHaveLength(2);
+    expect(result.stopReason).toContain("configured maximum of 2 page(s)");
+    expect(driver.goToNextResultsPage).toHaveBeenCalledTimes(1);
+  });
+
   it("uses submit mode to return submitted results for approved jobs", async () => {
     const driver = {
       open: vi.fn(),
@@ -2114,7 +2362,7 @@ describe("runEasyApplyBatchInternal", () => {
       "submit",
     );
 
-    expect(result.status).toBe("completed");
+    expect(result.status).toBe("partial");
     expect(result.attemptedCount).toBe(2);
     expect(result.jobs[0]?.result).toEqual(
       expect.objectContaining({

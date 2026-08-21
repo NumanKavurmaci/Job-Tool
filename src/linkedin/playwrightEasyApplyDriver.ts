@@ -33,6 +33,15 @@ const LINKEDIN_COLLECTION_STABLE_SCAN_LIMIT = 3;
 const LINKEDIN_COLLECTION_SCROLL_WAIT_MS = 350;
 const LINKEDIN_COLLECTION_HYDRATION_ATTEMPTS = 30;
 const LINKEDIN_COLLECTION_HYDRATION_WAIT_MS = 500;
+const LINKEDIN_PAGINATION_CHANGE_TIMEOUT_MS = 10_000;
+const LINKEDIN_PAGINATION_POLL_INTERVAL_MS = 200;
+const LINKEDIN_ACTIVE_PAGE_SELECTOR = [
+  ".jobs-search-pagination [aria-current='page']",
+  ".jobs-search-pagination [aria-current='true']",
+  ".artdeco-pagination [aria-current='page']",
+  ".artdeco-pagination [aria-current='true']",
+  ".jobs-search-pagination__indicator-button--active",
+].join(", ");
 import { createEmptySiteFeedbackSnapshot, type SiteFeedbackSnapshot } from "../browser/siteFeedback.js";
 import {
   buildLinkedInJobSurfaceSelector,
@@ -303,10 +312,99 @@ async function annotateQuestions(page: Page): Promise<EasyApplyQuestionView[]> {
   ).catch(() => []);
 }
 
+interface PlaywrightLinkedInEasyApplyDriverOptions {
+  paginationChangeTimeoutMs?: number;
+  paginationPollIntervalMs?: number;
+}
+
+interface LinkedInResultsPageFingerprint {
+  url: string;
+  activePage: string | null;
+  jobIds: string[];
+}
+
 export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
   private collectionUrl: string | null = null;
 
-  constructor(private page: Page) {}
+  constructor(
+    private page: Page,
+    private readonly options: PlaywrightLinkedInEasyApplyDriverOptions = {},
+  ) {}
+
+  private normalizePaginationUrl(url: string): string {
+    try {
+      const parsed = new URL(url);
+      parsed.searchParams.delete("currentJobId");
+      parsed.hash = "";
+      return parsed.toString();
+    } catch {
+      return url;
+    }
+  }
+
+  private async readResultsPageFingerprint(): Promise<LinkedInResultsPageFingerprint> {
+    const [jobIds, activePage] = await Promise.all([
+      this.page
+        .locator(LINKEDIN_JOB_CARD_SELECTOR)
+        .evaluateAll((elements) => {
+          const ids = elements.flatMap((element: any) => {
+            const directId =
+              element.getAttribute("data-occludable-job-id") ??
+              element.getAttribute("data-job-id");
+            if (directId && /^\d+$/.test(directId)) {
+              return [directId];
+            }
+
+            const href = element
+              .querySelector("a[href*='/jobs/view/']")
+              ?.getAttribute("href");
+            const jobId = href?.match(/\/jobs\/view\/(\d+)/)?.[1];
+            return jobId ? [jobId] : [];
+          });
+          return [...new Set(ids)].sort();
+        })
+        .catch(() => [] as string[]),
+      this.page
+        .locator(LINKEDIN_ACTIVE_PAGE_SELECTOR)
+        .evaluateAll((elements: any[]) => {
+          const element = elements[0];
+          if (!element) {
+            return null;
+          }
+          return (
+            element.getAttribute("aria-label") ??
+            element.getAttribute("data-test-pagination-page-btn") ??
+            element.textContent ??
+            ""
+          )
+            .replace(/\s+/g, " ")
+            .trim();
+        })
+        .catch(() => null),
+    ]);
+
+    return {
+      url: this.normalizePaginationUrl(this.page.url()),
+      activePage: activePage || null,
+      jobIds,
+    };
+  }
+
+  private hasResultsPageChanged(
+    before: LinkedInResultsPageFingerprint,
+    after: LinkedInResultsPageFingerprint,
+  ): boolean {
+    if (after.url !== before.url) {
+      return true;
+    }
+    if (after.activePage && after.activePage !== before.activePage) {
+      return true;
+    }
+    return (
+      after.jobIds.length > 0 &&
+      after.jobIds.join(",") !== before.jobIds.join(",")
+    );
+  }
 
   // LinkedIn keeps changing the external-apply CTA markup. We first prefer the
   // explicit company-website selectors, then fall back to the generic header
@@ -913,9 +1011,43 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
       return false;
     }
 
-    await locator.click();
-    await this.page.waitForTimeout(2_000);
-    return true;
+    const before = await this.readResultsPageFingerprint();
+    try {
+      await locator.click();
+    } catch {
+      return false;
+    }
+
+    const timeoutMs = Math.max(
+      1,
+      Math.floor(
+        this.options.paginationChangeTimeoutMs ??
+          LINKEDIN_PAGINATION_CHANGE_TIMEOUT_MS,
+      ),
+    );
+    const pollIntervalMs = Math.max(
+      1,
+      Math.floor(
+        this.options.paginationPollIntervalMs ??
+          LINKEDIN_PAGINATION_POLL_INTERVAL_MS,
+      ),
+    );
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt <= timeoutMs) {
+      const after = await this.readResultsPageFingerprint();
+      if (this.hasResultsPageChanged(before, after)) {
+        return true;
+      }
+
+      const remainingMs = timeoutMs - (Date.now() - startedAt);
+      if (remainingMs <= 0) {
+        break;
+      }
+      await this.page.waitForTimeout(Math.min(pollIntervalMs, remainingMs));
+    }
+
+    return false;
   }
 
   async collectStepState(): Promise<EasyApplyStepStateSnapshot> {

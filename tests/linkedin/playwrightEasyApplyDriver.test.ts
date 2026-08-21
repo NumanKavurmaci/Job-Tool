@@ -405,6 +405,59 @@ describe("PlaywrightLinkedInEasyApplyDriver", () => {
     await page.close();
   });
 
+  it("returns false when the next-page control does not change pagination state", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <ul>
+        <li data-occludable-job-id="4443235445">
+          <a href="https://www.linkedin.com/jobs/view/4443235445/">Software Engineer</a>
+        </li>
+      </ul>
+      <button class="jobs-search-pagination__button--next">Next</button>
+    `);
+
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page, {
+      paginationChangeTimeoutMs: 60,
+      paginationPollIntervalMs: 10,
+    });
+
+    await expect(driver.goToNextResultsPage()).resolves.toBe(false);
+
+    await page.close();
+  });
+
+  it("waits for a changed job-id fingerprint before confirming the next page", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <ul id="results">
+        <li data-occludable-job-id="4443235445">
+          <a href="https://www.linkedin.com/jobs/view/4443235445/">Software Engineer</a>
+        </li>
+      </ul>
+      <button id="next" class="jobs-search-pagination__button--next">Next</button>
+      <script>
+        document.querySelector('#next').addEventListener('click', () => {
+          setTimeout(() => {
+            document.querySelector('#results').innerHTML =
+              '<li data-occludable-job-id="4444570774"><a href="https://www.linkedin.com/jobs/view/4444570774/">Platform Engineer</a></li>';
+          }, 30);
+        });
+      </script>
+    `);
+
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page, {
+      paginationChangeTimeoutMs: 500,
+      paginationPollIntervalMs: 10,
+    });
+
+    await expect(driver.goToNextResultsPage()).resolves.toBe(true);
+    await expect(driver.collectVisibleJobs()).resolves.toEqual([
+      { url: "https://www.linkedin.com/jobs/view/4444570774", alreadyApplied: false },
+    ]);
+
+    await page.close();
+  });
+
   it("continues past the job search safety reminder modal instead of stopping on it", async () => {
     const page = await browser.newPage();
     await page.setContent(linkedInSafetyReminderModalHtml);

@@ -2,6 +2,7 @@ import type { CandidateProfile } from "../candidate/types.js";
 import type { InputQuestion } from "../questions/types.js";
 import type { ResolvedAnswer } from "../answers/types.js";
 import {
+  AppError,
   getErrorMessage,
   serializeError,
   type SerializableError,
@@ -233,6 +234,9 @@ export interface EasyApplyBatchRunInput {
     candidateProfile: CandidateProfile;
   }) => Promise<ResolvedAnswer>;
   maxSteps?: number;
+  jobProcessingTimeoutMs?: number;
+  maxPages?: number;
+  maxConsecutiveNoProgressPages?: number;
   observeBatchEvent?: (event: EasyApplyBatchEvent) => Promise<void> | void;
 }
 
@@ -310,6 +314,104 @@ interface StepExecutionResult {
 }
 
 type SubmitMode = "dry-run" | "submit";
+
+const DEFAULT_JOB_PROCESSING_TIMEOUT_MS = 120_000;
+const DEFAULT_BATCH_MAX_PAGES = 100;
+const DEFAULT_BATCH_MAX_CONSECUTIVE_NO_PROGRESS_PAGES = 3;
+
+class ApprovedJobProcessingTimeoutError extends AppError {
+  constructor(
+    readonly jobUrl: string,
+    readonly timeoutMs: number,
+  ) {
+    super({
+      message: `Approved LinkedIn job processing timed out after ${timeoutMs}ms for ${jobUrl}.`,
+      phase: "linkedin_easy_apply",
+      code: "LINKEDIN_APPROVED_JOB_PROCESSING_TIMEOUT",
+      details: { jobUrl, timeoutMs },
+    });
+    this.name = "ApprovedJobProcessingTimeoutError";
+  }
+}
+
+function readPositiveInteger(
+  value: number | undefined,
+  fallback: number,
+): number {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) {
+    return fallback;
+  }
+  return Math.max(1, Math.floor(value));
+}
+
+function withTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  createError: () => Error,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      reject(createError());
+    }, timeoutMs);
+
+    operation.then(
+      (value) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+function getAbortReason(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : new Error("Approved LinkedIn job processing was aborted.");
+}
+
+function createAbortGuardedDriver(
+  driver: EasyApplyDriver,
+  signal: AbortSignal,
+): EasyApplyDriver {
+  return new Proxy(driver, {
+    get(target, property) {
+      const value = Reflect.get(target, property, target);
+      if (typeof value !== "function") {
+        return value;
+      }
+
+      return (...args: unknown[]) => {
+        if (signal.aborted) {
+          return Promise.reject(getAbortReason(signal));
+        }
+
+        return Promise.resolve(Reflect.apply(value, target, args)).then((result) => {
+          if (signal.aborted) {
+            throw getAbortReason(signal);
+          }
+          return result;
+        });
+      };
+    },
+  });
+}
 
 export function resolveLinkedInExternalApplyUrl(
   value: string | null | undefined,
@@ -422,6 +524,12 @@ function buildJobProcessingFailure(
     url,
     error: formatted.serialized,
     ...(recovery ? { recovery } : {}),
+    ...(error instanceof ApprovedJobProcessingTimeoutError
+      ? {
+          failureReasonCode: "linkedin.approved_job_processing_timeout",
+          retryable: true,
+        }
+      : {}),
   };
 }
 
@@ -501,15 +609,35 @@ async function processApprovedBatchJob(
   url: string,
   submitMode: SubmitMode,
 ): Promise<EasyApplyRunResult> {
-  return runEasyApplyInternal(
-    {
-      driver: input.driver,
-      url,
-      candidateProfile: input.candidateProfile,
-      resolveAnswer: input.resolveAnswer,
-      ...(input.maxSteps ? { maxSteps: input.maxSteps } : {}),
+  const timeoutMs = readPositiveInteger(
+    input.jobProcessingTimeoutMs,
+    DEFAULT_JOB_PROCESSING_TIMEOUT_MS,
+  );
+  const abortController = new AbortController();
+  const guardedDriver = createAbortGuardedDriver(
+    input.driver,
+    abortController.signal,
+  );
+  return withTimeout(
+    runEasyApplyInternal(
+      {
+        driver: guardedDriver,
+        url,
+        candidateProfile: input.candidateProfile,
+        resolveAnswer: input.resolveAnswer,
+        ...(input.maxSteps ? { maxSteps: input.maxSteps } : {}),
+      },
+      submitMode,
+    ),
+    timeoutMs,
+    () => {
+      const timeoutError = new ApprovedJobProcessingTimeoutError(url, timeoutMs);
+      // Recovery uses the original driver to navigate back to the collection.
+      // The aborted proxy prevents the timed-out coroutine from issuing any
+      // later driver calls if an LLM/browser promise settles after recovery.
+      abortController.abort(timeoutError);
+      return timeoutError;
     },
-    submitMode,
   );
 }
 
@@ -898,23 +1026,23 @@ async function runEasyApplyInternal(
     }
 
     if (step.report.action === "submit") {
-      if (submitMode === "dry-run") {
-        return {
-          status: "ready_to_submit",
-          steps,
-          stopReason:
-            "Reached the final submit step. Dry run stops before submission.",
-          url: input.url,
-          ...(latestSiteFeedback ? { siteFeedback: latestSiteFeedback } : {}),
-        };
-      }
-
       if (step.hasRequiredManualReview) {
         return {
           status: "stopped_manual_review",
           steps,
           stopReason:
             "A required Easy Apply question needs manual review before submitting.",
+          url: input.url,
+          ...(latestSiteFeedback ? { siteFeedback: latestSiteFeedback } : {}),
+        };
+      }
+
+      if (submitMode === "dry-run") {
+        return {
+          status: "ready_to_submit",
+          steps,
+          stopReason:
+            "Reached the final submit step. Dry run stops before submission.",
           url: input.url,
           ...(latestSiteFeedback ? { siteFeedback: latestSiteFeedback } : {}),
         };
@@ -1005,12 +1133,19 @@ export async function runEasyApplyBatchInternal(
   submitMode: SubmitMode,
 ): Promise<EasyApplyBatchRunResult> {
   const requestedCount = Math.max(1, Math.floor(input.targetCount));
+  const maxPages = readPositiveInteger(input.maxPages, DEFAULT_BATCH_MAX_PAGES);
+  const maxConsecutiveNoProgressPages = readPositiveInteger(
+    input.maxConsecutiveNoProgressPages,
+    DEFAULT_BATCH_MAX_CONSECUTIVE_NO_PROGRESS_PAGES,
+  );
   const seenUrls = new Set<string>();
   const jobs: EasyApplyBatchJobResult[] = [];
   let pagesVisited = 0;
   let skippedCount = 0;
   let attemptedCount = 0;
   let recoveryFailureCount = 0;
+  let consecutiveNoProgressPages = 0;
+  let boundedStopReason: string | null = null;
 
   await input.driver.ensureAuthenticated(input.url);
   await input.driver.openCollection(input.url);
@@ -1022,6 +1157,7 @@ export async function runEasyApplyBatchInternal(
   });
 
   while (attemptedCount < requestedCount) {
+    const seenCountBeforePage = seenUrls.size;
     const visibleJobs = await collectVisibleBatchJobs(input.driver);
 
     for (const job of visibleJobs) {
@@ -1170,6 +1306,23 @@ export async function runEasyApplyBatchInternal(
       break;
     }
 
+    const discoveredNewJobs = seenUrls.size > seenCountBeforePage;
+    consecutiveNoProgressPages = discoveredNewJobs
+      ? 0
+      : consecutiveNoProgressPages + 1;
+
+    if (pagesVisited >= maxPages) {
+      boundedStopReason =
+        `Stopped LinkedIn pagination after the configured maximum of ${maxPages} page(s).`;
+      break;
+    }
+
+    if (consecutiveNoProgressPages >= maxConsecutiveNoProgressPages) {
+      boundedStopReason =
+        `Stopped LinkedIn pagination after ${consecutiveNoProgressPages} consecutive page(s) produced no new unique jobs.`;
+      break;
+    }
+
     const advanced = await input.driver.goToNextResultsPage();
     if (!advanced) {
       break;
@@ -1193,24 +1346,29 @@ export async function runEasyApplyBatchInternal(
       skippedCount: 0,
       pagesVisited,
       jobs: [],
-      stopReason:
+      stopReason: boundedStopReason ??
         "No LinkedIn Easy Apply jobs were discovered from the collection page.",
     };
   }
 
-  const status = attemptedCount >= requestedCount ? "completed" : "partial";
   const approvedJobs = jobs.filter((job) => job.evaluation.shouldApply);
-  const incompleteApprovedJobs = approvedJobs.filter((job) =>
-    job.result != null &&
-    job.result.status !== "submitted" &&
-    job.result.status !== "ready_to_submit"
+  const incompleteApprovedJobs = approvedJobs.filter(
+    (job) =>
+      job.result == null ||
+      (job.result.status !== "submitted" &&
+        job.result.status !== "ready_to_submit"),
   );
+  const status =
+    attemptedCount >= requestedCount && incompleteApprovedJobs.length === 0
+      ? "completed"
+      : "partial";
   const stopReason =
     status === "completed"
       ? `Processed ${attemptedCount} LinkedIn apply job(s).`
       : incompleteApprovedJobs.length > 0
         ? `Processed ${attemptedCount} approved LinkedIn apply job(s), but ${incompleteApprovedJobs.length} attempt(s) stopped before completion${recoveryFailureCount > 0 ? ` and ${recoveryFailureCount} recovery attempt(s) failed` : ""}.`
-        : `Only found and processed ${attemptedCount} matching LinkedIn apply job(s) before pagination ended.`;
+        : boundedStopReason ??
+          `Only found and processed ${attemptedCount} matching LinkedIn apply job(s) before pagination ended.`;
 
   return {
     status,
