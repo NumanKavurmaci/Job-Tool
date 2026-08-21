@@ -84,6 +84,12 @@ function parseKariyerListingUrl(input: string): URL | null {
       return null;
     }
 
+    // Kariyer emits pkw as a human-readable mirror of the stable pst position id.
+    // Canonicalize equivalent position searches to the stable id-based URL.
+    if (parsed.searchParams.has("pst") && parsed.searchParams.has("pkw")) {
+      parsed.searchParams.delete("pkw");
+    }
+
     return parsed;
   } catch {
     return null;

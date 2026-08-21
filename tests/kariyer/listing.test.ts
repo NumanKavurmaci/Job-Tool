@@ -71,10 +71,13 @@ describe("Kariyer.net listing extraction", () => {
         posted: "2 gün önce",
       },
     ]);
-    expect(page.goto).toHaveBeenCalledWith(new URL(listingUrl).toString(), {
+    expect(page.goto).toHaveBeenCalledWith(
+      "https://www.kariyer.net/is-ilanlari/yazilim+gelistirme+uzmani?pst=3193",
+      {
       waitUntil: "domcontentloaded",
       timeout: 60_000,
-    });
+      },
+    );
   });
 
   it("waits for client-side listing hydration before reading cards", async () => {
