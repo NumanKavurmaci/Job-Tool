@@ -187,6 +187,9 @@ export interface EasyApplyDriver {
   open(url: string): Promise<void>;
   openCollection(url: string): Promise<void>;
   ensureAuthenticated(url: string): Promise<void>;
+  resetAfterProcessingTimeout?(
+    input?: EasyApplyProcessingTimeoutResetInput,
+  ): Promise<void>;
   isEasyApplyAvailable(): Promise<boolean>;
   isExternalApplyAvailable?(): Promise<boolean>;
   getExternalApplyUrl?(): Promise<string | null>;
@@ -239,6 +242,11 @@ export interface EasyApplyBatchRunInput {
   maxPages?: number;
   maxConsecutiveNoProgressPages?: number;
   observeBatchEvent?: (event: EasyApplyBatchEvent) => Promise<void> | void;
+}
+
+export interface EasyApplyProcessingTimeoutResetInput {
+  waitForTimedOutOperations: () => Promise<void>;
+  signal?: AbortSignal;
 }
 
 export type EasyApplyBatchEvent =
@@ -317,6 +325,7 @@ interface StepExecutionResult {
 type SubmitMode = "dry-run" | "submit";
 
 const DEFAULT_JOB_PROCESSING_TIMEOUT_MS = 120_000;
+const DEFAULT_PROCESSING_TIMEOUT_RESET_MS = 15_000;
 const DEFAULT_COLLECTION_RESTORE_TIMEOUT_MS = 75_000;
 const DEFAULT_COLLECTION_RECOVERY_TIMEOUT_MS = 195_000;
 const DEFAULT_BATCH_MAX_PAGES = 100;
@@ -326,6 +335,7 @@ class ApprovedJobProcessingTimeoutError extends AppError {
   constructor(
     readonly jobUrl: string,
     readonly timeoutMs: number,
+    readonly waitForTimedOutOperations: () => Promise<void>,
   ) {
     super({
       message: `Approved LinkedIn job processing timed out after ${timeoutMs}ms for ${jobUrl}.`,
@@ -339,7 +349,7 @@ class ApprovedJobProcessingTimeoutError extends AppError {
 
 class CollectionContextOperationTimeoutError extends AppError {
   constructor(
-    readonly operation: "recovery" | "restore",
+    readonly operation: "recovery" | "reset" | "restore",
     readonly jobUrl: string,
     readonly timeoutMs: number,
   ) {
@@ -409,8 +419,12 @@ function getAbortReason(signal: AbortSignal): Error {
 function createAbortGuardedDriver(
   driver: EasyApplyDriver,
   signal: AbortSignal,
-): EasyApplyDriver {
-  return new Proxy(driver, {
+): {
+  driver: EasyApplyDriver;
+  waitForInFlightCalls: () => Promise<void>;
+} {
+  const inFlightCalls = new Set<Promise<unknown>>();
+  const guardedDriver = new Proxy(driver, {
     get(target, property) {
       const value = Reflect.get(target, property, target);
       if (typeof value !== "function") {
@@ -422,37 +436,54 @@ function createAbortGuardedDriver(
           return Promise.reject(getAbortReason(signal));
         }
 
-        return Promise.resolve(Reflect.apply(value, target, args)).then((result) => {
-          if (signal.aborted) {
-            throw getAbortReason(signal);
-          }
-          return result;
-        });
+        const operation = Promise.resolve()
+          .then(() => Reflect.apply(value, target, args))
+          .then((result) => {
+            if (signal.aborted) {
+              throw getAbortReason(signal);
+            }
+            return result;
+          });
+        inFlightCalls.add(operation);
+        void operation.then(
+          () => inFlightCalls.delete(operation),
+          () => inFlightCalls.delete(operation),
+        );
+        return operation;
       };
     },
   });
+
+  return {
+    driver: guardedDriver,
+    waitForInFlightCalls: async () => {
+      await Promise.allSettled([...inFlightCalls]);
+    },
+  };
 }
 
 async function runBoundedCollectionContextOperation<T>(
   input: EasyApplyBatchRunInput,
   jobUrl: string,
-  operation: "recovery" | "restore",
-  run: (driver: EasyApplyDriver) => Promise<T>,
+  operation: "recovery" | "reset" | "restore",
+  run: (driver: EasyApplyDriver, signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
   const timeoutMs = readPositiveInteger(
     input.collectionContextTimeoutMs,
     operation === "restore"
       ? DEFAULT_COLLECTION_RESTORE_TIMEOUT_MS
-      : DEFAULT_COLLECTION_RECOVERY_TIMEOUT_MS,
+      : operation === "reset"
+        ? DEFAULT_PROCESSING_TIMEOUT_RESET_MS
+        : DEFAULT_COLLECTION_RECOVERY_TIMEOUT_MS,
   );
   const abortController = new AbortController();
   const guardedDriver = createAbortGuardedDriver(
     input.driver,
     abortController.signal,
-  );
+  ).driver;
 
   return withTimeout(
-    Promise.resolve().then(() => run(guardedDriver)),
+    Promise.resolve().then(() => run(guardedDriver, abortController.signal)),
     timeoutMs,
     () => {
       const timeoutError = new CollectionContextOperationTimeoutError(
@@ -676,7 +707,7 @@ async function processApprovedBatchJob(
   return withTimeout(
     runEasyApplyInternal(
       {
-        driver: guardedDriver,
+        driver: guardedDriver.driver,
         url,
         candidateProfile: input.candidateProfile,
         resolveAnswer: input.resolveAnswer,
@@ -686,7 +717,11 @@ async function processApprovedBatchJob(
     ),
     timeoutMs,
     () => {
-      const timeoutError = new ApprovedJobProcessingTimeoutError(url, timeoutMs);
+      const timeoutError = new ApprovedJobProcessingTimeoutError(
+        url,
+        timeoutMs,
+        guardedDriver.waitForInFlightCalls,
+      );
       // Recovery uses the original driver to navigate back to the collection.
       // The aborted proxy prevents the timed-out coroutine from issuing any
       // later driver calls if an LLM/browser promise settles after recovery.
@@ -1338,7 +1373,33 @@ export async function runEasyApplyBatchInternal(
           evaluation,
           error: serializedError,
         });
-        const recovery = await recoverBatchAfterJobFailure(input, url);
+        let recovery: NonNullable<EasyApplyRunResult["recovery"]> | null = null;
+        if (
+          error instanceof ApprovedJobProcessingTimeoutError &&
+          input.driver.resetAfterProcessingTimeout
+        ) {
+          try {
+            await runBoundedCollectionContextOperation(
+              input,
+              url,
+              "reset",
+              (driver, signal) => driver.resetAfterProcessingTimeout?.({
+                waitForTimedOutOperations: error.waitForTimedOutOperations,
+                signal,
+              }) ?? Promise.resolve(),
+            );
+          } catch (resetError) {
+            recovery = {
+              attempted: false,
+              succeeded: false,
+              message:
+                `Failed to reset the timed-out LinkedIn page for ${url}: ` +
+                `${getErrorMessage(resetError)} Recovery was not attempted because ` +
+                "the driver context could not be safely reused.",
+            };
+          }
+        }
+        recovery ??= await recoverBatchAfterJobFailure(input, url);
         await input.observeBatchEvent?.({
           type: "job_processing_recovered",
           collectionUrl: input.url,
@@ -1351,7 +1412,9 @@ export async function runEasyApplyBatchInternal(
         entry.result = buildJobProcessingFailure(url, error, recovery);
         recoveredAfterProcessingFailure = recovery.succeeded;
         if (!recovery.succeeded) {
-          recoveryFailureCount += 1;
+          if (recovery.attempted) {
+            recoveryFailureCount += 1;
+          }
           boundedStopReason =
             `${recovery.message} Stopped the LinkedIn batch because the driver context could not be safely reused.`;
         }

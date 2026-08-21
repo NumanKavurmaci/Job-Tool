@@ -21,6 +21,110 @@ describe("PlaywrightLinkedInEasyApplyDriver", () => {
     await browser.close();
   });
 
+  it("replaces a timed-out page inside the same browser context", async () => {
+    const context = await browser.newContext();
+    try {
+      const timedOutPage = await context.newPage();
+      const unrelatedBlankPage = await context.newPage();
+      const unrelatedPage = await context.newPage();
+      await unrelatedPage.goto("data:text/html,<title>Unrelated page</title>");
+      const driver = new PlaywrightLinkedInEasyApplyDriver(timedOutPage, {
+        pageResetTimeoutMs: 5_000,
+      });
+      let drainObservedClosedPage = false;
+      let releaseTimedOutOperation!: () => void;
+      const timedOutOperationDrained = new Promise<void>((resolve) => {
+        releaseTimedOutOperation = resolve;
+      });
+
+      const resetPromise = driver.resetAfterProcessingTimeout({
+        waitForTimedOutOperations: async () => {
+          drainObservedClosedPage = timedOutPage.isClosed();
+          await timedOutOperationDrained;
+        },
+      });
+
+      await expect.poll(() => timedOutPage.isClosed()).toBe(true);
+      expect(drainObservedClosedPage).toBe(true);
+      expect(context.pages()).toEqual([unrelatedBlankPage, unrelatedPage]);
+      releaseTimedOutOperation();
+      await resetPromise;
+
+      expect(timedOutPage.isClosed()).toBe(true);
+      // The driver only retires pages it owns. Other pages in the shared
+      // context, including an unrelated blank page, remain untouched.
+      expect(unrelatedBlankPage.isClosed()).toBe(false);
+      expect(unrelatedPage.isClosed()).toBe(false);
+      expect(context.browser()).toBe(browser);
+
+      const replacementPage = context.pages().find((page) =>
+        page !== unrelatedBlankPage &&
+        page !== unrelatedPage &&
+        page !== timedOutPage
+      );
+      expect(replacementPage).toBeDefined();
+      await replacementPage!.setContent(linkedInPreReviewModalHtml);
+      await expect(driver.collectStepState()).resolves.toMatchObject({
+        modalTitle: "Apply to Crossing Hurdles",
+        primaryAction: "review",
+      });
+    } finally {
+      await context.close();
+    }
+  });
+
+  it("bounds page reset when the timed-out driver operation does not drain", async () => {
+    const context = await browser.newContext();
+    try {
+      const timedOutPage = await context.newPage();
+      const driver = new PlaywrightLinkedInEasyApplyDriver(timedOutPage, {
+        pageResetTimeoutMs: 25,
+      });
+
+      await expect(driver.resetAfterProcessingTimeout({
+        waitForTimedOutOperations: () => new Promise<void>(() => undefined),
+      })).rejects.toThrow("did not finish within 25ms");
+
+      expect(timedOutPage.isClosed()).toBe(true);
+      expect(context.pages()).toEqual([]);
+      const probePage = await context.newPage();
+      expect(probePage.isClosed()).toBe(false);
+    } finally {
+      await context.close();
+    }
+  });
+
+  it("does not adopt a replacement after the outer reset deadline aborts", async () => {
+    const context = await browser.newContext();
+    try {
+      const timedOutPage = await context.newPage();
+      const driver = new PlaywrightLinkedInEasyApplyDriver(timedOutPage, {
+        pageResetTimeoutMs: 5_000,
+      });
+      const abortController = new AbortController();
+      let releaseTimedOutOperation!: () => void;
+      const timedOutOperation = new Promise<void>((resolve) => {
+        releaseTimedOutOperation = resolve;
+      });
+
+      const resetPromise = driver.resetAfterProcessingTimeout({
+        waitForTimedOutOperations: () => timedOutOperation,
+        signal: abortController.signal,
+      });
+      await expect.poll(() => timedOutPage.isClosed()).toBe(true);
+      abortController.abort(new Error("outer reset deadline expired"));
+      releaseTimedOutOperation();
+
+      await expect(resetPromise).rejects.toThrow("outer reset deadline expired");
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(context.pages()).toEqual([]);
+      const probePage = await context.newPage();
+      expect(probePage.isClosed()).toBe(false);
+    } finally {
+      await context.close();
+    }
+  });
+
   it("detects the pre-review modal state from real LinkedIn-like HTML", async () => {
     const page = await browser.newPage();
     await page.setContent(linkedInPreReviewModalHtml);

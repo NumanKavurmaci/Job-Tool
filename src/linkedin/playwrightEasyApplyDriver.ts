@@ -1,4 +1,4 @@
-import type { Locator, Page } from "@playwright/test";
+import type { BrowserContext, Locator, Page } from "@playwright/test";
 import { ensureLinkedInAuthenticated } from "../adapters/LinkedInAdapter.js";
 import {
   assertSafeLinkedInNavigationUrl,
@@ -8,6 +8,7 @@ import type {
   EasyApplyDriver,
   EasyApplyExternalDetection,
   EasyApplyJobApplicationState,
+  EasyApplyProcessingTimeoutResetInput,
   EasyApplyPrimaryAction,
   EasyApplyReviewDiagnostics,
   EasyApplyStepStateSnapshot,
@@ -315,6 +316,7 @@ async function annotateQuestions(page: Page): Promise<EasyApplyQuestionView[]> {
 interface PlaywrightLinkedInEasyApplyDriverOptions {
   paginationChangeTimeoutMs?: number;
   paginationPollIntervalMs?: number;
+  pageResetTimeoutMs?: number;
 }
 
 interface LinkedInResultsPageFingerprint {
@@ -325,11 +327,14 @@ interface LinkedInResultsPageFingerprint {
 
 export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
   private collectionUrl: string | null = null;
+  private readonly ownedPages = new Set<Page>();
 
   constructor(
     private page: Page,
     private readonly options: PlaywrightLinkedInEasyApplyDriverOptions = {},
-  ) {}
+  ) {
+    this.ownedPages.add(page);
+  }
 
   private normalizePaginationUrl(url: string): string {
     try {
@@ -453,23 +458,54 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
     return url === "" || url === "about:blank";
   }
 
-  private async closeBlankPages(): Promise<void> {
-    const pages = this.page.context().pages().filter((page) => !page.isClosed());
-    for (const page of pages) {
-      if (page === this.page) {
+  private async closeBlankPages(activePage: Page = this.page): Promise<void> {
+    for (const page of [...this.ownedPages]) {
+      if (page.isClosed()) {
+        this.ownedPages.delete(page);
+        continue;
+      }
+      if (page === activePage) {
+        continue;
+      }
+      if (page.context() !== activePage.context()) {
         continue;
       }
       if (!this.isBlankPage(page)) {
         continue;
       }
       await page.close().catch(() => undefined);
+      this.ownedPages.delete(page);
     }
   }
 
-  private async adoptNewestPageAfterClick(): Promise<void> {
+  private async closeOwnedPages(context: BrowserContext): Promise<void> {
+    const pages = [...this.ownedPages].filter(
+      (page) => !page.isClosed() && page.context() === context,
+    );
+    await Promise.all(
+      pages.map(async (page) => {
+        try {
+          await page.close({ runBeforeUnload: false });
+        } catch (error) {
+          if (!page.isClosed()) {
+            throw error;
+          }
+        }
+      }),
+    );
+    for (const page of pages) {
+      this.ownedPages.delete(page);
+    }
+  }
+
+  private async adoptNewestPageAfterClick(
+    pagesBeforeClick: ReadonlySet<Page>,
+  ): Promise<void> {
     const context = this.page.context();
     const activePage = this.page;
-    const pages = context.pages().filter((page) => !page.isClosed());
+    const pages = context.pages().filter(
+      (page) => !page.isClosed() && !pagesBeforeClick.has(page),
+    );
     const newestPage = pages.at(-1);
 
     if (!newestPage || newestPage === activePage) {
@@ -477,6 +513,7 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
       return;
     }
 
+    this.ownedPages.add(newestPage);
     await newestPage.waitForLoadState("domcontentloaded").catch(() => undefined);
     if (this.isBlankPage(newestPage)) {
       await this.closeBlankPages();
@@ -537,10 +574,14 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
 
   private async clickFollowingNewPage(locator: Locator): Promise<void> {
     const originalPage = this.page;
+    const pagesBeforeClick = new Set(
+      this.page.context().pages().filter((page) => !page.isClosed()),
+    );
     const popupPromise = this.page.waitForEvent("popup", { timeout: 500 }).catch(() => null);
     await locator.click();
     const popup = await popupPromise;
     if (popup) {
+      this.ownedPages.add(popup);
       await popup.waitForLoadState("domcontentloaded").catch(() => undefined);
       let popupNavigated = !this.isBlankPage(popup);
       if (!popupNavigated && await this.hasPostClickSurface(originalPage)) {
@@ -569,7 +610,7 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
       await this.closeBlankPages();
       return;
     }
-    await this.adoptNewestPageAfterClick();
+    await this.adoptNewestPageAfterClick(pagesBeforeClick);
     await this.waitForPostClickSurface();
   }
 
@@ -608,6 +649,77 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
       .first()
       .waitFor({ state: "attached", timeout: 10_000 })
       .catch(() => undefined);
+  }
+
+  async resetAfterProcessingTimeout(
+    input?: EasyApplyProcessingTimeoutResetInput,
+  ): Promise<void> {
+    const context = this.page.context();
+    const timeoutMs = Math.max(1, Math.floor(this.options.pageResetTimeoutMs ?? 10_000));
+    const timeoutError = new Error(
+      `Timed-out LinkedIn page reset did not finish within ${timeoutMs}ms.`,
+    );
+    let expired = false;
+    const getExpirationError = (): Error =>
+      input?.signal?.reason instanceof Error
+        ? input.signal.reason
+        : timeoutError;
+    const throwIfExpired = (): void => {
+      if (expired || input?.signal?.aborted) {
+        throw getExpirationError();
+      }
+    };
+
+    const resetOperation = (async () => {
+      throwIfExpired();
+      await this.closeOwnedPages(context);
+      throwIfExpired();
+
+      // Closing the poisoned page rejects its pending Playwright operations.
+      // Wait for the abort-guard's tracked call to unwind before exposing a
+      // replacement page through this mutable driver instance.
+      await input?.waitForTimedOutOperations();
+      throwIfExpired();
+
+      // A popup may have been adopted while the poisoned operation was
+      // unwinding. It is driver-owned as well, so retire it before replacement.
+      await this.closeOwnedPages(context);
+      throwIfExpired();
+
+      const replacementPage = await context.newPage();
+      this.ownedPages.add(replacementPage);
+      if (expired || input?.signal?.aborted) {
+        await replacementPage.close({ runBeforeUnload: false }).catch(() => undefined);
+        this.ownedPages.delete(replacementPage);
+        throw getExpirationError();
+      }
+
+      await replacementPage.bringToFront().catch(() => undefined);
+      await this.closeBlankPages(replacementPage);
+      if (expired || input?.signal?.aborted) {
+        await replacementPage.close({ runBeforeUnload: false }).catch(() => undefined);
+        this.ownedPages.delete(replacementPage);
+        throw getExpirationError();
+      }
+      this.page = replacementPage;
+    })();
+
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        expired = true;
+        reject(timeoutError);
+      }, timeoutMs);
+      resetOperation.then(
+        () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      );
+    });
   }
 
   async ensureAuthenticated(url: string): Promise<void> {

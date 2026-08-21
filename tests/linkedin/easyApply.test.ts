@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ResolvedAnswer } from "../../src/answers/types.js";
+import type { EasyApplyProcessingTimeoutResetInput } from "../../src/linkedin/easyApply.js";
 const { repairAnswerFromSiteFeedbackMock } = vi.hoisted(() => ({
   repairAnswerFromSiteFeedbackMock: vi.fn(),
 }));
@@ -1340,6 +1341,7 @@ describe("runEasyApplyBatchDryRun", () => {
         .mockResolvedValueOnce(undefined)
         .mockResolvedValueOnce(undefined)
         .mockReturnValue(neverRecovers),
+      resetAfterProcessingTimeout: vi.fn(),
       isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
       openEasyApply: vi.fn().mockRejectedValue(new Error("modal crashed before opening")),
       collectQuestions: vi.fn().mockResolvedValue([]),
@@ -1391,6 +1393,7 @@ describe("runEasyApplyBatchDryRun", () => {
       "LinkedIn collection context recovery timed out after 25ms",
     );
     expect(result.jobs).toHaveLength(1);
+    expect(driver.resetAfterProcessingTimeout).not.toHaveBeenCalled();
     expect(driver.open).not.toHaveBeenCalledWith("https://www.linkedin.com/jobs/view/2");
   });
 
@@ -1785,20 +1788,32 @@ describe("runEasyApplyBatch", () => {
 
 describe("runEasyApplyBatchInternal", () => {
   it("times out a stuck approved job and continues with the next job", async () => {
-    const neverResolves = new Promise<void>(() => undefined);
+    let releaseTimedOutDriverCall!: () => void;
+    const timedOutDriverCall = new Promise<void>((resolve) => {
+      releaseTimedOutDriverCall = resolve;
+    });
+    let timedOutDriverCallDrained = false;
+    const neverRestoresTimedOutJob = new Promise<void>(() => undefined);
     const driver = {
       open: vi.fn(),
       openCollection: vi.fn().mockImplementation((url: string) => {
         if (new URL(url).searchParams.get("currentJobId") === "1") {
-          return neverResolves;
+          return neverRestoresTimedOutJob;
         }
         return Promise.resolve();
       }),
       ensureAuthenticated: vi.fn().mockResolvedValue(undefined),
+      resetAfterProcessingTimeout: vi.fn(
+        async (input?: EasyApplyProcessingTimeoutResetInput) => {
+          releaseTimedOutDriverCall();
+          await input?.waitForTimedOutOperations();
+          timedOutDriverCallDrained = true;
+        },
+      ),
       isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
       openEasyApply: vi
         .fn()
-        .mockImplementationOnce(() => neverResolves)
+        .mockImplementationOnce(() => timedOutDriverCall)
         .mockResolvedValueOnce(undefined),
       collectQuestions: vi.fn().mockResolvedValue([]),
       collectVisibleJobs: vi.fn().mockResolvedValue([
@@ -1847,10 +1862,72 @@ describe("runEasyApplyBatchInternal", () => {
     expect(result.jobs[1]?.result?.status).toBe("ready_to_submit");
     expect(result.stopReason).toContain("1 attempt(s) stopped before completion");
     expect(driver.openEasyApply).toHaveBeenCalledTimes(2);
+    expect(driver.resetAfterProcessingTimeout).toHaveBeenCalledTimes(1);
+    expect(timedOutDriverCallDrained).toBe(true);
+    expect(driver.resetAfterProcessingTimeout.mock.invocationCallOrder[0]).toBeLessThan(
+      driver.openCollection.mock.invocationCallOrder[1] ?? Number.MAX_SAFE_INTEGER,
+    );
     expect(driver.openCollection).not.toHaveBeenCalledWith(
       expect.stringContaining("currentJobId=1"),
     );
     expect(driver.open).toHaveBeenCalledWith("https://www.linkedin.com/jobs/view/2");
+  });
+
+  it("returns a bounded partial result when the timed-out page cannot be reset", async () => {
+    const neverResolves = new Promise<void>(() => undefined);
+    const driver = {
+      open: vi.fn(),
+      openCollection: vi.fn().mockResolvedValue(undefined),
+      ensureAuthenticated: vi.fn().mockResolvedValue(undefined),
+      resetAfterProcessingTimeout: vi.fn().mockRejectedValue(new Error("page close failed")),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn().mockReturnValue(neverResolves),
+      collectQuestions: vi.fn().mockResolvedValue([]),
+      collectVisibleJobs: vi.fn().mockResolvedValue([
+        { url: "https://www.linkedin.com/jobs/view/1", alreadyApplied: false },
+        { url: "https://www.linkedin.com/jobs/view/2", alreadyApplied: false },
+      ]),
+      goToNextResultsPage: vi.fn().mockResolvedValue(false),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn().mockResolvedValue("submit"),
+      advance: vi.fn(),
+      dismissCompletionModal: vi.fn(),
+    };
+
+    const result = await runEasyApplyBatchInternal(
+      {
+        driver,
+        url: "https://www.linkedin.com/jobs/collections/easy-apply",
+        targetCount: 2,
+        jobProcessingTimeoutMs: 25,
+        candidateProfile: profile,
+        evaluateJob: async () => ({
+          shouldApply: true,
+          finalDecision: "APPLY",
+          score: 90,
+          reason: "Strong fit.",
+          policyAllowed: true,
+        }),
+        resolveAnswer: vi.fn(),
+      },
+      "dry-run",
+    );
+
+    expect(result.status).toBe("partial");
+    expect(result.attemptedCount).toBe(1);
+    expect(result.jobs).toHaveLength(1);
+    expect(result.jobs[0]?.result).toMatchObject({
+      failureReasonCode: "linkedin.approved_job_processing_timeout",
+      recovery: {
+        attempted: false,
+        succeeded: false,
+      },
+    });
+    expect(result.jobs[0]?.result?.recovery?.message).toContain("page close failed");
+    expect(result.stopReason).toContain("driver context could not be safely reused");
+    expect(driver.resetAfterProcessingTimeout).toHaveBeenCalledTimes(1);
+    expect(driver.openCollection).toHaveBeenCalledTimes(1);
+    expect(driver.open).not.toHaveBeenCalledWith("https://www.linkedin.com/jobs/view/2");
   });
 
   it("returns a bounded partial result when restoring collection context hangs after a successful job", async () => {
@@ -1917,6 +1994,7 @@ describe("runEasyApplyBatchInternal", () => {
       open: vi.fn(),
       openCollection: vi.fn().mockResolvedValue(undefined),
       ensureAuthenticated: vi.fn().mockResolvedValue(undefined),
+      resetAfterProcessingTimeout: vi.fn().mockResolvedValue(undefined),
       isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
       openEasyApply: vi.fn().mockResolvedValue(undefined),
       collectQuestions: vi
@@ -1978,6 +2056,7 @@ describe("runEasyApplyBatchInternal", () => {
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
     expect(driver.fillAnswer).not.toHaveBeenCalled();
+    expect(driver.resetAfterProcessingTimeout).toHaveBeenCalledTimes(1);
     expect(driver.openCollection).toHaveBeenCalledTimes(3);
     expect(driver.openCollection).not.toHaveBeenCalledWith(
       expect.stringContaining("currentJobId=1"),
