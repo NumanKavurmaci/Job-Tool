@@ -1,11 +1,16 @@
 import { mkdtemp, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 describe("runReports", () => {
+  beforeEach(() => {
+    vi.stubEnv("JOB_TOOL_RUN_ID", "");
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it("formats a batch terminal summary with a report path", async () => {
@@ -80,5 +85,26 @@ describe("runReports", () => {
 
     const savedContent = await readFile(reportPath, "utf8");
     expect(JSON.parse(savedContent)).toEqual(payload);
+  });
+
+  it("adds the dashboard run id to the report filename and object payload", async () => {
+    vi.stubEnv("JOB_TOOL_RUN_ID", "dashboard/run:123");
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "job-tool-correlated-report-"));
+    vi.spyOn(process, "cwd").mockReturnValue(tempDir);
+    const { writeRunReport } = await import("../../src/utils/runReports.js");
+
+    const reportPath = await writeRunReport({
+      category: "batch-runs",
+      prefix: "apply-batch",
+      payload: { requestedCount: 2 },
+    });
+
+    expect(path.basename(reportPath)).toMatch(
+      /^\d{4}-\d{2}-\d{2}T.*-dashboard-run-123-apply-batch\.json$/,
+    );
+    expect(JSON.parse(await readFile(reportPath, "utf8"))).toEqual({
+      requestedCount: 2,
+      dashboardRunId: "dashboard/run:123",
+    });
   });
 });

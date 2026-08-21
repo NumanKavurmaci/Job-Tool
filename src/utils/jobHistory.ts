@@ -26,12 +26,27 @@ export interface JobReviewHistoryInput {
   details?: Record<string, unknown>;
 }
 
+function withDashboardRunId(
+  details: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  const dashboardRunId = process.env.JOB_TOOL_RUN_ID?.trim();
+  if (!dashboardRunId) {
+    return details;
+  }
+
+  return {
+    ...details,
+    dashboardRunId,
+  };
+}
+
 export async function recordJobReviewHistory(args: {
   prisma: JobHistoryWriter;
   logger: JobHistoryLogger;
   entry: JobReviewHistoryInput;
 }): Promise<void> {
   const { prisma, logger, entry } = args;
+  const details = withDashboardRunId(entry.details);
 
   try {
     await prisma.jobReviewHistory.create({
@@ -51,7 +66,7 @@ export async function recordJobReviewHistory(args: {
           ? { policyAllowed: entry.policyAllowed }
           : {}),
         ...(entry.summary ? { summary: entry.summary } : {}),
-        ...(entry.details ? { detailsJson: JSON.stringify(entry.details) } : {}),
+        ...(details ? { detailsJson: JSON.stringify(details) } : {}),
       },
     });
   } catch (error) {

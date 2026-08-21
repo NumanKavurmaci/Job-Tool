@@ -15,6 +15,20 @@ export interface SystemLogInput {
   persistToDb?: boolean;
 }
 
+function withDashboardRunId(
+  details: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  const dashboardRunId = process.env.JOB_TOOL_RUN_ID?.trim();
+  if (!dashboardRunId) {
+    return details;
+  }
+
+  return {
+    ...details,
+    dashboardRunId,
+  };
+}
+
 export function shouldPersistSystemLog(entry: SystemLogInput): boolean {
   if (typeof entry.persistToDb === "boolean") {
     return entry.persistToDb;
@@ -29,6 +43,7 @@ export async function writeSystemLog(args: {
   entry: SystemLogInput;
 }): Promise<void> {
   const { prisma, logger, entry } = args;
+  const details = withDashboardRunId(entry.details);
 
   if (!shouldPersistSystemLog(entry)) {
     return;
@@ -43,8 +58,8 @@ export async function writeSystemLog(args: {
         ...(entry.runType ? { runType: entry.runType } : {}),
         ...(entry.jobPostingId ? { jobPostingId: entry.jobPostingId } : {}),
         ...(entry.jobUrl ? { jobUrl: entry.jobUrl } : {}),
-        ...(entry.details
-          ? { detailsJson: JSON.stringify(entry.details) }
+        ...(details
+          ? { detailsJson: JSON.stringify(details) }
           : {}),
       },
     });

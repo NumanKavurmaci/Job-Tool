@@ -1,7 +1,15 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { writeSystemLog } from "../../src/utils/systemLog.js";
 
 describe("systemLog", () => {
+  beforeEach(() => {
+    vi.stubEnv("JOB_TOOL_RUN_ID", "");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("persists warning system logs to the database", async () => {
     const create = vi.fn().mockResolvedValue(undefined);
     const warn = vi.fn();
@@ -32,6 +40,57 @@ describe("systemLog", () => {
       },
     });
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("merges the dashboard run id into durable system log details", async () => {
+    vi.stubEnv("JOB_TOOL_RUN_ID", "dashboard-run-123");
+    const create = vi.fn().mockResolvedValue(undefined);
+
+    await writeSystemLog({
+      prisma: {
+        systemLog: { create },
+      } as never,
+      logger: { warn: vi.fn() } as never,
+      entry: {
+        level: "INFO",
+        scope: "kariyer.batch",
+        message: "Batch started.",
+        persistToDb: true,
+        details: { dashboardRunId: "caller-value", requestedCount: 2 },
+      },
+    });
+
+    expect(create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        detailsJson: JSON.stringify({
+          dashboardRunId: "dashboard-run-123",
+          requestedCount: 2,
+        }),
+      }),
+    });
+  });
+
+  it("creates system log details when only a dashboard run id is available", async () => {
+    vi.stubEnv("JOB_TOOL_RUN_ID", "dashboard-run-456");
+    const create = vi.fn().mockResolvedValue(undefined);
+
+    await writeSystemLog({
+      prisma: {
+        systemLog: { create },
+      } as never,
+      logger: { warn: vi.fn() } as never,
+      entry: {
+        level: "ERROR",
+        scope: "cli",
+        message: "CLI failed.",
+      },
+    });
+
+    expect(create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        detailsJson: JSON.stringify({ dashboardRunId: "dashboard-run-456" }),
+      }),
+    });
   });
 
   it("does not fail the caller if system log persistence fails", async () => {
