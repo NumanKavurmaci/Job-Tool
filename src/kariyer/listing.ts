@@ -33,6 +33,8 @@ type RawKariyerListing = {
 const KARIYER_CARD_SELECTOR = "a[data-test='ad-card-item'][href^='/is-ilani/']";
 const KARIYER_NEXT_PAGE_SELECTOR =
   "nav[aria-label='Pagination'] a[aria-label='Go to next page']";
+const KARIYER_LISTING_HYDRATION_ATTEMPTS = 12;
+const KARIYER_LISTING_HYDRATION_INTERVAL_MS = 500;
 
 const KARIYER_LISTING_SCRIPT = `(() => {
   const clean = (value) => String(value ?? "").replace(/\\s+/g, " ").trim();
@@ -185,7 +187,25 @@ async function navigateToKariyerListing(page: Page, url: string): Promise<string
       context: "Kariyer.net listing navigation",
     },
   );
-  await page.waitForTimeout(1_000);
+  const cardLocator = typeof (page as Page & { locator?: unknown }).locator === "function"
+    ? page.locator(KARIYER_CARD_SELECTOR)
+    : null;
+  if (cardLocator && typeof (cardLocator as { count?: unknown }).count === "function") {
+    for (
+      let attempt = 0;
+      attempt < KARIYER_LISTING_HYDRATION_ATTEMPTS;
+      attempt += 1
+    ) {
+      if ((await cardLocator.count().catch(() => 0)) > 0) {
+        break;
+      }
+      if (attempt < KARIYER_LISTING_HYDRATION_ATTEMPTS - 1) {
+        await page.waitForTimeout(KARIYER_LISTING_HYDRATION_INTERVAL_MS);
+      }
+    }
+  } else {
+    await page.waitForTimeout(1_000);
+  }
 
   const currentUrl = typeof page.url === "function" ? page.url() : parsed.toString();
   const finalUrl = parseKariyerListingUrl(currentUrl);

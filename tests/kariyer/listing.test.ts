@@ -77,6 +77,27 @@ describe("Kariyer.net listing extraction", () => {
     });
   });
 
+  it("waits for client-side listing hydration before reading cards", async () => {
+    let currentUrl = listingUrl;
+    const count = vi.fn()
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(0)
+      .mockResolvedValue(1);
+    const page = {
+      goto: vi.fn(async (url: string) => {
+        currentUrl = url;
+      }),
+      url: vi.fn(() => currentUrl),
+      waitForTimeout: vi.fn(async () => undefined),
+      locator: vi.fn(() => ({ count })),
+      evaluate: vi.fn().mockResolvedValue([rawListing()]),
+    };
+
+    await expect(extractKariyerListings(page as never, listingUrl)).resolves.toHaveLength(1);
+    expect(count).toHaveBeenCalledTimes(3);
+    expect(page.waitForTimeout).toHaveBeenCalledTimes(2);
+  });
+
   it("follows safe cp pagination until the requested unique count is reached", async () => {
     let currentUrl = listingUrl;
     const pageOne = [rawListing({ company: null, badges: ["Hibrit"] })];
