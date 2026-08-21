@@ -50,8 +50,15 @@ const MANUAL_VERIFICATION_PATTERN =
 const RATE_LIMIT_PATTERN =
   /too many requests|çok fazla istek|cok fazla istek|rate limit|istek sınırı|istek siniri|daha sonra tekrar deneyin/iu;
 const LOGIN_PATH_PATTERN = /\/(?:login|giris|uye-girisi|aday-girisi)(?:\/|$)/iu;
-const LOGIN_SELECTOR =
-  "input[type='password'], form[action*='login' i], form[action*='giris' i], form[action*='signin' i], [data-test*='login' i]";
+const APPLICATION_PATH_PATTERN =
+  /\/(?:basvuru|başvuru|application|apply)(?:\/|$)/iu;
+const JOB_DETAIL_PATH_PATTERN = /^\/is-ilani\//iu;
+const AUTH_FORM_SELECTOR =
+  "input[type='password'], form[action*='login' i], form[action*='giris' i], form[action*='signin' i]";
+const AUTH_WALL_TITLE_PATTERN =
+  /^(?:(?:kariyer\.net|kariyer)\s*[-|:]?\s*)?(?:(?:üye|uye|aday)\s+)?(?:girişi|girisi|giriş|giris|login|sign in)\s*$/iu;
+const AUTH_WALL_TEXT_PATTERN =
+  /(?:başvuru|basvuru|devam etmek|hesabınız|hesabiniz|aday hesabı|aday hesabi).{0,80}(?:giriş yap|giris yap|oturum aç|oturum ac)|(?:giriş yap|giris yap|oturum aç|oturum ac).{0,80}(?:gerekiyor|gerekir|zorunlu|başvuru|basvuru|devam)|(?:sign in|log in|login).{0,80}(?:required|to apply|to continue)/iu;
 
 function normalizeDuration(value: number | undefined, fallback: number): number {
   if (!Number.isFinite(value) || value == null || value < 0) {
@@ -181,12 +188,12 @@ async function readPageText(page: Page): Promise<{ title: string; body: string }
   return { title, body: body.slice(0, 20_000) };
 }
 
-async function hasVisibleLoginControl(page: Page): Promise<boolean> {
+async function hasVisibleControl(page: Page, selector: string): Promise<boolean> {
   const optionalPage = page as Page & { locator?: Page["locator"] };
   if (typeof optionalPage.locator !== "function") {
     return false;
   }
-  const rawLoginControl = optionalPage.locator(LOGIN_SELECTOR) as unknown as {
+  const rawLoginControl = optionalPage.locator(selector) as unknown as {
     first?: () => unknown;
     count?: () => Promise<number>;
     isVisible?: () => Promise<boolean>;
@@ -207,10 +214,19 @@ async function hasVisibleLoginControl(page: Page): Promise<boolean> {
   );
 }
 
+function isProtectedKariyerContext(pathname: string, context?: string): boolean {
+  return (
+    APPLICATION_PATH_PATTERN.test(pathname) ||
+    JOB_DETAIL_PATH_PATTERN.test(pathname) ||
+    /\b(?:application|apply|job detail|başvuru|basvuru)\b/iu.test(context ?? "")
+  );
+}
+
 export async function detectKariyerPageState(
   page: Page,
   response?: Response | null,
   now = Date.now(),
+  context?: string,
 ): Promise<KariyerPageStateResult> {
   const currentUrl = getPageUrl(page);
   const safeUrl = redactUrl(currentUrl);
@@ -267,10 +283,17 @@ export async function detectKariyerPageState(
   } catch {
     // The navigation safety layer owns malformed URL failures.
   }
+  const hasAuthForm = await hasVisibleControl(page, AUTH_FORM_SELECTOR);
+  const hasScopedLoginEvidence =
+    isProtectedKariyerContext(pathname, context) &&
+    AUTH_WALL_TEXT_PATTERN.test(pageText);
+  const hasAuthWallTitle = AUTH_WALL_TITLE_PATTERN.test(title.trim());
   if (
     statusCode === 401 ||
     LOGIN_PATH_PATTERN.test(pathname) ||
-    await hasVisibleLoginControl(page)
+    hasAuthForm ||
+    hasAuthWallTitle ||
+    hasScopedLoginEvidence
   ) {
     return {
       state: "login_required",
@@ -279,7 +302,11 @@ export async function detectKariyerPageState(
         ? "http_401"
         : LOGIN_PATH_PATTERN.test(pathname)
           ? "login_url"
-          : "login_control",
+          : hasAuthForm
+            ? "login_form"
+            : hasAuthWallTitle
+              ? "login_title"
+              : "auth_wall_text",
       statusCode,
       retryAfterMs,
     };
@@ -368,7 +395,7 @@ export async function inspectKariyerPageOrThrow(
   response?: Response | null,
   now = Date.now(),
 ): Promise<KariyerPageStateResult> {
-  const result = await detectKariyerPageState(page, response, now);
+  const result = await detectKariyerPageState(page, response, now, context);
   assertKariyerPageReady(result, context);
   return result;
 }
@@ -397,6 +424,7 @@ export async function navigateKariyerPage(
       page,
       response,
       navigationContext.now(),
+      options.context,
     );
     if (result.state !== "rate_limited" || attempt > 0) {
       assertKariyerPageReady(result, options.context);

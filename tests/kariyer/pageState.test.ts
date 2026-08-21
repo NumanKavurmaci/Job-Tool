@@ -12,6 +12,7 @@ function createPage(input: {
   title?: string;
   body?: string;
   loginVisible?: boolean;
+  authFormVisible?: boolean;
   goto?: (url: string) => Promise<unknown>;
 }) {
   return {
@@ -23,10 +24,17 @@ function createPage(input: {
       if (selector === "body") {
         return { innerText: vi.fn(async () => input.body ?? "") };
       }
+      const isAuthFormSelector = selector.includes("input[type='password']");
       return {
         first: () => ({
-          count: vi.fn(async () => input.loginVisible ? 1 : 0),
-          isVisible: vi.fn(async () => Boolean(input.loginVisible)),
+          count: vi.fn(async () =>
+            isAuthFormSelector
+              ? input.authFormVisible ? 1 : 0
+              : input.loginVisible ? 1 : 0),
+          isVisible: vi.fn(async () =>
+            isAuthFormSelector
+              ? Boolean(input.authFormVisible)
+              : Boolean(input.loginVisible)),
         }),
       };
     }),
@@ -48,6 +56,47 @@ describe("Kariyer.net page-state safety", () => {
     await expect(detectKariyerPageState(page as never)).resolves.toMatchObject({
       state: "ok",
       marker: null,
+    });
+  });
+
+  it("allows a public listing page with job cards and a generic login navigation control", async () => {
+    const page = createPage({
+      url: "https://www.kariyer.net/is-ilanlari/yazilim?pst=3193",
+      body: "Yazılım iş ilanları Giriş Yap Backend Developer Frontend Developer",
+      loginVisible: true,
+    });
+
+    await expect(detectKariyerPageState(page as never, response(200) as never))
+      .resolves.toMatchObject({ state: "ok", marker: null });
+  });
+
+  it("detects a real login authwall from its redirect URL", async () => {
+    const page = createPage({
+      url: "https://www.kariyer.net/uye-girisi?returnUrl=%2Fis-ilani%2Facme-123",
+      body: "Devam etmek için giriş yapmanız gerekiyor.",
+      loginVisible: true,
+    });
+
+    await expect(detectKariyerPageState(page as never, response(200) as never))
+      .resolves.toMatchObject({ state: "login_required", marker: "login_url" });
+  });
+
+  it("detects protected application UI from scoped login evidence", async () => {
+    const page = createPage({
+      url: "https://www.kariyer.net/is-ilani/acme-backend-developer-4536815",
+      body: "Bu ilana başvuru yapmak için giriş yapmanız gerekiyor.",
+    });
+
+    await expect(
+      detectKariyerPageState(
+        page as never,
+        response(200) as never,
+        0,
+        "Kariyer.net application entry",
+      ),
+    ).resolves.toMatchObject({
+      state: "login_required",
+      marker: "auth_wall_text",
     });
   });
 
