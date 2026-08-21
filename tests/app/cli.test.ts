@@ -280,6 +280,37 @@ describe("app cli", () => {
     });
   });
 
+  it("accepts LinkedIn jobs/search URLs for batch dry runs while preserving their query", () => {
+    const url =
+      "https://www.linkedin.com/jobs/search/?currentJobId=4453632216&geoId=102105699&keywords=yaz%C4%B1l%C4%B1m&origin=JOB_SEARCH_PAGE_SEARCH_BUTTON&refresh=true";
+
+    expect(
+      parseCliArgs([
+        "apply-batch",
+        url,
+        "--count",
+        "1",
+        "--dry-run",
+        "--scoring",
+        "ai",
+      ]),
+    ).toMatchObject({
+      mode: "apply-batch",
+      url,
+      count: 1,
+      dryRun: true,
+      scoringMode: "ai",
+    });
+    expect(
+      parseCliArgs(["explore-batch", url, "--count", "1", "--scoring", "ai"]),
+    ).toMatchObject({
+      mode: "explore-batch",
+      url,
+      count: 1,
+      scoringMode: "ai",
+    });
+  });
+
   it("rejects missing or invalid URLs for explicit apply commands", () => {
     expect(() => parseCliArgs(["external-apply"])).toThrow("--url is required for external-apply.");
     expect(() => parseCliArgs(["apply-batch", "https://www.linkedin.com/jobs/view/1"])).toThrow(

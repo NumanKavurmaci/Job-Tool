@@ -18,6 +18,11 @@ describe("app constants", () => {
         "https://www.linkedin.com/jobs/search-results/?keywords=full-time%20Software%20Engineer%20or%20Software%20Specialist%2C%20remote&origin=PREFERENCES_LANDING&originToLandingJobPostings=4443235445%2C4444570774%2C4444155287&geoId=102105699",
       ),
     ).toBe(true);
+    expect(
+      module.isLinkedInBatchUrl(
+        "https://www.linkedin.com/jobs/search/?currentJobId=4453632216&geoId=102105699&keywords=yaz%C4%B1l%C4%B1m&origin=JOB_SEARCH_PAGE_SEARCH_BUTTON&refresh=true",
+      ),
+    ).toBe(true);
     expect(module.isLinkedInBatchUrl("https://example.com/jobs/collections/recommended")).toBe(
       false,
     );

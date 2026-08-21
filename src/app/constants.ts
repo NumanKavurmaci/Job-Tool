@@ -24,7 +24,10 @@ export function isLinkedInBatchUrl(url: string): boolean {
     const isLinkedInHost =
       /linkedin\.com$/i.test(parsed.hostname) || /\.linkedin\.com$/i.test(parsed.hostname);
 
-    return isLinkedInHost && /^\/jobs\/(collections|search-results)(\/|$)/i.test(parsed.pathname);
+    return (
+      isLinkedInHost &&
+      /^\/jobs\/(collections|search-results|search)(\/|$)/i.test(parsed.pathname)
+    );
   } catch {
     return false;
   }
