@@ -26,6 +26,7 @@ import {
 import type {
   EasyApplyAnsweredQuestion,
   EasyApplyBatchEvent,
+  EasyApplyBatchRunResult,
   EasyApplyDriver,
   EasyApplyExternalApplicationHandoff,
   EasyApplyRunResult,
@@ -70,6 +71,54 @@ function isAlreadyAppliedBatchJob(job: {
   evaluation: { alreadyApplied?: boolean };
 }): boolean {
   return job.evaluation.alreadyApplied === true;
+}
+
+function reconcileBatchResultAfterExternalHandoffs(
+  batchResult: EasyApplyBatchRunResult,
+): EasyApplyBatchRunResult {
+  const hasExternalHandoff = batchResult.jobs.some(
+    (job) => job.result?.externalApplication != null,
+  );
+  if (batchResult.status === "stopped_no_jobs" || !hasExternalHandoff) {
+    return batchResult;
+  }
+
+  const approvedJobs = batchResult.jobs.filter((job) => job.evaluation.shouldApply);
+  const incompleteApprovedJobs = approvedJobs.filter((job) => {
+    const result = job.result;
+    if (!result) {
+      return true;
+    }
+    if (result.status === "submitted" || result.status === "ready_to_submit") {
+      return false;
+    }
+    return !(
+      result.status === "stopped_external_apply" &&
+      result.externalApplication?.status === "completed"
+    );
+  });
+
+  if (
+    batchResult.attemptedCount >= batchResult.requestedCount &&
+    incompleteApprovedJobs.length === 0
+  ) {
+    batchResult.status = "completed";
+    batchResult.stopReason =
+      `Processed ${batchResult.attemptedCount} LinkedIn apply job(s), including completed external handoffs.`;
+    return batchResult;
+  }
+
+  batchResult.status = "partial";
+  if (incompleteApprovedJobs.length > 0) {
+    const failedRecoveries = incompleteApprovedJobs.filter(
+      (job) => job.result?.recovery?.attempted && !job.result.recovery.succeeded,
+    ).length;
+    batchResult.stopReason =
+      `Processed ${batchResult.attemptedCount} approved LinkedIn apply job(s), but ` +
+      `${incompleteApprovedJobs.length} attempt(s) stopped before completion` +
+      `${failedRecoveries > 0 ? ` and ${failedRecoveries} recovery attempt(s) failed` : ""}.`;
+  }
+  return batchResult;
 }
 
 function isBatchDryRunArgs(
@@ -643,7 +692,7 @@ async function runLinkedInDryRunFlow(
               }
             }
 
-            return batchResult;
+            return reconcileBatchResultAfterExternalHandoffs(batchResult);
           }
 
           let singleResult = await deps.runEasyApplyDryRun(sharedInput);
@@ -1145,7 +1194,7 @@ async function runLinkedInBatchFlow(
             }
           }
 
-          return batchResult;
+          return reconcileBatchResultAfterExternalHandoffs(batchResult);
         } finally {
           await evaluationPage?.close().catch(() => undefined);
         }

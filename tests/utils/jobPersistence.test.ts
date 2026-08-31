@@ -196,6 +196,7 @@ describe("job persistence", () => {
 
   it("upserts explore recommendations independently from application decisions", async () => {
     const args = createArgs();
+    vi.stubEnv("JOB_TOOL_RUN_ID", "dashboard-run-123");
 
     const result = await persistJobRecommendationRecord({
       prisma: args.prisma as never,
@@ -218,6 +219,10 @@ describe("job persistence", () => {
         score: 82,
         decision: "APPLY",
         recommendationStatus: "RECOMMENDED",
+        detailsJson: JSON.stringify({
+          scoreThreshold: 40,
+          dashboardRunId: "dashboard-run-123",
+        }),
       }),
       create: expect.objectContaining({
         jobPostingId: "job_1",
@@ -225,7 +230,12 @@ describe("job persistence", () => {
         score: 82,
         decision: "APPLY",
         recommendationStatus: "RECOMMENDED",
+        detailsJson: JSON.stringify({
+          scoreThreshold: 40,
+          dashboardRunId: "dashboard-run-123",
+        }),
       }),
     });
+    vi.unstubAllEnvs();
   });
 });

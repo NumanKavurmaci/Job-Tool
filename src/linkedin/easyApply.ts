@@ -2,6 +2,7 @@ import type { CandidateProfile } from "../candidate/types.js";
 import type { InputQuestion } from "../questions/types.js";
 import type { ResolvedAnswer } from "../answers/types.js";
 import {
+  AppError,
   getErrorMessage,
   serializeError,
   type SerializableError,
@@ -182,10 +183,19 @@ export interface EasyApplyBatchRunResult {
   stopReason: string;
 }
 
+export interface EasyApplyProcessingDriverLease {
+  driver: EasyApplyDriver;
+  dispose(): Promise<void>;
+}
+
 export interface EasyApplyDriver {
   open(url: string): Promise<void>;
   openCollection(url: string): Promise<void>;
   ensureAuthenticated(url: string): Promise<void>;
+  createProcessingDriver?(url: string): Promise<EasyApplyProcessingDriverLease>;
+  resetAfterProcessingTimeout?(
+    input?: EasyApplyProcessingTimeoutResetInput,
+  ): Promise<void>;
   isEasyApplyAvailable(): Promise<boolean>;
   isExternalApplyAvailable?(): Promise<boolean>;
   getExternalApplyUrl?(): Promise<string | null>;
@@ -233,7 +243,17 @@ export interface EasyApplyBatchRunInput {
     candidateProfile: CandidateProfile;
   }) => Promise<ResolvedAnswer>;
   maxSteps?: number;
+  jobProcessingTimeoutMs?: number;
+  externalApplyInspectionTimeoutMs?: number;
+  collectionContextTimeoutMs?: number;
+  maxPages?: number;
+  maxConsecutiveNoProgressPages?: number;
   observeBatchEvent?: (event: EasyApplyBatchEvent) => Promise<void> | void;
+}
+
+export interface EasyApplyProcessingTimeoutResetInput {
+  waitForTimedOutOperations: () => Promise<void>;
+  signal?: AbortSignal;
 }
 
 export type EasyApplyBatchEvent =
@@ -310,6 +330,199 @@ interface StepExecutionResult {
 }
 
 type SubmitMode = "dry-run" | "submit";
+
+const DEFAULT_JOB_PROCESSING_TIMEOUT_MS = 120_000;
+const DEFAULT_EXTERNAL_APPLY_INSPECTION_TIMEOUT_MS = 5_000;
+const DEFAULT_PROCESSING_TIMEOUT_RESET_MS = 15_000;
+const DEFAULT_COLLECTION_RESTORE_TIMEOUT_MS = 75_000;
+const DEFAULT_COLLECTION_RECOVERY_TIMEOUT_MS = 195_000;
+const DEFAULT_BATCH_MAX_PAGES = 100;
+const DEFAULT_BATCH_MAX_CONSECUTIVE_NO_PROGRESS_PAGES = 3;
+
+class ApprovedJobProcessingTimeoutError extends AppError {
+  constructor(
+    readonly jobUrl: string,
+    readonly timeoutMs: number,
+    readonly waitForTimedOutOperations: () => Promise<void>,
+  ) {
+    super({
+      message: `Approved LinkedIn job processing timed out after ${timeoutMs}ms for ${jobUrl}.`,
+      phase: "linkedin_easy_apply",
+      code: "LINKEDIN_APPROVED_JOB_PROCESSING_TIMEOUT",
+      details: { jobUrl, timeoutMs },
+    });
+    this.name = "ApprovedJobProcessingTimeoutError";
+  }
+}
+
+class ExternalApplyInspectionTimeoutError extends AppError {
+  constructor(
+    readonly jobUrl: string,
+    readonly timeoutMs: number,
+    readonly waitForTimedOutOperations: () => Promise<void>,
+  ) {
+    super({
+      message:
+        `LinkedIn external application inspection timed out after ${timeoutMs}ms for ${jobUrl}.`,
+      phase: "linkedin_easy_apply",
+      code: "LINKEDIN_EXTERNAL_APPLY_INSPECTION_TIMEOUT",
+      details: { jobUrl, timeoutMs },
+    });
+    this.name = "ExternalApplyInspectionTimeoutError";
+  }
+}
+
+class CollectionContextOperationTimeoutError extends AppError {
+  constructor(
+    readonly operation: "recovery" | "reset" | "restore",
+    readonly jobUrl: string,
+    readonly timeoutMs: number,
+  ) {
+    super({
+      message:
+        `LinkedIn collection context ${operation} timed out after ${timeoutMs}ms for ${jobUrl}.`,
+      phase: "linkedin_easy_apply",
+      code: "LINKEDIN_COLLECTION_CONTEXT_TIMEOUT",
+      details: { operation, jobUrl, timeoutMs },
+    });
+    this.name = "CollectionContextOperationTimeoutError";
+  }
+}
+
+function readPositiveInteger(
+  value: number | undefined,
+  fallback: number,
+): number {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) {
+    return fallback;
+  }
+  return Math.max(1, Math.floor(value));
+}
+
+function withTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  createError: () => Error,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      reject(createError());
+    }, timeoutMs);
+
+    operation.then(
+      (value) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+function getAbortReason(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : new Error("Approved LinkedIn job processing was aborted.");
+}
+
+function createAbortGuardedDriver(
+  driver: EasyApplyDriver,
+  signal: AbortSignal,
+): {
+  driver: EasyApplyDriver;
+  waitForInFlightCalls: () => Promise<void>;
+} {
+  const inFlightCalls = new Set<Promise<unknown>>();
+  const guardedDriver = new Proxy(driver, {
+    get(target, property) {
+      const value = Reflect.get(target, property, target);
+      if (typeof value !== "function") {
+        return value;
+      }
+
+      return (...args: unknown[]) => {
+        if (signal.aborted) {
+          return Promise.reject(getAbortReason(signal));
+        }
+
+        const operation = Promise.resolve()
+          .then(() => Reflect.apply(value, target, args))
+          .then((result) => {
+            if (signal.aborted) {
+              throw getAbortReason(signal);
+            }
+            return result;
+          });
+        inFlightCalls.add(operation);
+        void operation.then(
+          () => inFlightCalls.delete(operation),
+          () => inFlightCalls.delete(operation),
+        );
+        return operation;
+      };
+    },
+  });
+
+  return {
+    driver: guardedDriver,
+    waitForInFlightCalls: async () => {
+      await Promise.allSettled([...inFlightCalls]);
+    },
+  };
+}
+
+async function runBoundedCollectionContextOperation<T>(
+  input: EasyApplyBatchRunInput,
+  jobUrl: string,
+  operation: "recovery" | "reset" | "restore",
+  run: (driver: EasyApplyDriver, signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const timeoutMs = readPositiveInteger(
+    input.collectionContextTimeoutMs,
+    operation === "restore"
+      ? DEFAULT_COLLECTION_RESTORE_TIMEOUT_MS
+      : operation === "reset"
+        ? DEFAULT_PROCESSING_TIMEOUT_RESET_MS
+        : DEFAULT_COLLECTION_RECOVERY_TIMEOUT_MS,
+  );
+  const abortController = new AbortController();
+  const guardedDriver = createAbortGuardedDriver(
+    input.driver,
+    abortController.signal,
+  ).driver;
+
+  return withTimeout(
+    Promise.resolve().then(() => run(guardedDriver, abortController.signal)),
+    timeoutMs,
+    () => {
+      const timeoutError = new CollectionContextOperationTimeoutError(
+        operation,
+        jobUrl,
+        timeoutMs,
+      );
+      // A later-settling navigation may finish internally, but it cannot start
+      // another driver call through this operation after the timeout boundary.
+      abortController.abort(timeoutError);
+      return timeoutError;
+    },
+  );
+}
 
 export function resolveLinkedInExternalApplyUrl(
   value: string | null | undefined,
@@ -422,6 +635,12 @@ function buildJobProcessingFailure(
     url,
     error: formatted.serialized,
     ...(recovery ? { recovery } : {}),
+    ...(error instanceof ApprovedJobProcessingTimeoutError
+      ? {
+          failureReasonCode: "linkedin.approved_job_processing_timeout",
+          retryable: true,
+        }
+      : {}),
   };
 }
 
@@ -496,20 +715,172 @@ async function collectVisibleBatchJobs(
   }));
 }
 
+function isExternalApplicationEvaluation(
+  evaluation: EasyApplyJobEvaluation,
+): boolean {
+  return evaluation.diagnostics?.applicationType?.trim().toLowerCase() === "external";
+}
+
+function buildUnverifiedExternalApplyResult(args: {
+  url: string;
+  stopReason: string;
+  failureReasonCode: string;
+  error?: unknown;
+  recovery?: EasyApplyRunResult["recovery"];
+}): EasyApplyRunResult {
+  const formattedError = args.error === undefined
+    ? null
+    : formatErrorForJobProcessing(args.error);
+  return {
+    status: "stopped_unknown_action",
+    steps: [],
+    stopReason: formattedError
+      ? `${args.stopReason} ${formattedError.summary}`
+      : args.stopReason,
+    url: args.url,
+    failureReasonCode: args.failureReasonCode,
+    retryable: true,
+    ...(formattedError ? { error: formattedError.serialized } : {}),
+    ...(args.recovery ? { recovery: args.recovery } : {}),
+  };
+}
+
+async function processExternalApprovedBatchJob(
+  input: EasyApplyBatchRunInput,
+  url: string,
+  prepareJobPage = false,
+): Promise<EasyApplyRunResult> {
+  const timeoutMs = readPositiveInteger(
+    prepareJobPage
+      ? input.jobProcessingTimeoutMs
+      : input.externalApplyInspectionTimeoutMs,
+    prepareJobPage
+      ? DEFAULT_JOB_PROCESSING_TIMEOUT_MS
+      : DEFAULT_EXTERNAL_APPLY_INSPECTION_TIMEOUT_MS,
+  );
+  const abortController = new AbortController();
+  const guardedDriver = createAbortGuardedDriver(
+    input.driver,
+    abortController.signal,
+  );
+
+  try {
+    return await withTimeout(
+      (async () => {
+        if (prepareJobPage) {
+          await guardedDriver.driver.ensureAuthenticated(url);
+        }
+        const externalApplyAvailable =
+          (await guardedDriver.driver.isExternalApplyAvailable?.()) === true;
+        if (!externalApplyAvailable) {
+          return buildUnverifiedExternalApplyResult({
+            url,
+            stopReason:
+              "The evaluation classified this job as external, but no external application control could be verified on the inspected LinkedIn job page.",
+            failureReasonCode: "linkedin.external_apply_control_unverified",
+          });
+        }
+
+        const externalDetection =
+          (await guardedDriver.driver.getExternalApplyDetection?.()) ?? null;
+        const rawExternalApplyUrl =
+          (await guardedDriver.driver.getExternalApplyUrl?.()) ?? null;
+        const externalApplyUrl = resolveLinkedInExternalApplyUrl(rawExternalApplyUrl);
+        if (!externalDetection || externalDetection.signals.length === 0) {
+          return buildUnverifiedExternalApplyResult({
+            url,
+            stopReason:
+              "The external application control was visible, but its detection evidence could not be verified safely.",
+            failureReasonCode: "linkedin.external_apply_signal_unverified",
+          });
+        }
+        if (!externalApplyUrl) {
+          return buildUnverifiedExternalApplyResult({
+            url,
+            stopReason:
+              "The external application control was verified, but its destination URL was missing or unsafe.",
+            failureReasonCode: "linkedin.external_apply_target_unverified",
+          });
+        }
+
+        return {
+          status: "stopped_external_apply" as const,
+          steps: [],
+          stopReason: "This LinkedIn job redirects to an external application page.",
+          url,
+          externalApplyUrl,
+          externalDetection,
+        };
+      })(),
+      timeoutMs,
+      () => {
+        const timeoutError = new ExternalApplyInspectionTimeoutError(
+          url,
+          timeoutMs,
+          guardedDriver.waitForInFlightCalls,
+        );
+        abortController.abort(timeoutError);
+        return timeoutError;
+      },
+    );
+  } catch (error) {
+    if (error instanceof ExternalApplyInspectionTimeoutError) {
+      throw error;
+    }
+    return buildUnverifiedExternalApplyResult({
+      url,
+      stopReason:
+        "Could not safely finish external application inspection on the current LinkedIn job page.",
+      failureReasonCode: "linkedin.external_apply_inspection_failed",
+      error,
+    });
+  }
+}
+
 async function processApprovedBatchJob(
   input: EasyApplyBatchRunInput,
   url: string,
+  evaluation: EasyApplyJobEvaluation,
   submitMode: SubmitMode,
+  isolatedProcessingDriver = false,
 ): Promise<EasyApplyRunResult> {
-  return runEasyApplyInternal(
-    {
-      driver: input.driver,
-      url,
-      candidateProfile: input.candidateProfile,
-      resolveAnswer: input.resolveAnswer,
-      ...(input.maxSteps ? { maxSteps: input.maxSteps } : {}),
+  if (isExternalApplicationEvaluation(evaluation)) {
+    return processExternalApprovedBatchJob(input, url, isolatedProcessingDriver);
+  }
+
+  const timeoutMs = readPositiveInteger(
+    input.jobProcessingTimeoutMs,
+    DEFAULT_JOB_PROCESSING_TIMEOUT_MS,
+  );
+  const abortController = new AbortController();
+  const guardedDriver = createAbortGuardedDriver(
+    input.driver,
+    abortController.signal,
+  );
+  return withTimeout(
+    runEasyApplyInternal(
+      {
+        driver: guardedDriver.driver,
+        url,
+        candidateProfile: input.candidateProfile,
+        resolveAnswer: input.resolveAnswer,
+        ...(input.maxSteps ? { maxSteps: input.maxSteps } : {}),
+      },
+      submitMode,
+    ),
+    timeoutMs,
+    () => {
+      const timeoutError = new ApprovedJobProcessingTimeoutError(
+        url,
+        timeoutMs,
+        guardedDriver.waitForInFlightCalls,
+      );
+      // Recovery uses the original driver to navigate back to the collection.
+      // The aborted proxy prevents the timed-out coroutine from issuing any
+      // later driver calls if an LLM/browser promise settles after recovery.
+      abortController.abort(timeoutError);
+      return timeoutError;
     },
-    submitMode,
   );
 }
 
@@ -533,7 +904,41 @@ async function restoreCollectionContextAfterApprovedJob(
   input: EasyApplyBatchRunInput,
   jobUrl: string,
 ): Promise<void> {
-  await input.driver.openCollection(buildCollectionJobUrl(input.url, jobUrl));
+  await runBoundedCollectionContextOperation(
+    input,
+    jobUrl,
+    "restore",
+    (driver) => driver.openCollection(buildCollectionJobUrl(input.url, jobUrl)),
+  );
+}
+
+async function recoverCollectionAfterIsolatedJobFailure(
+  input: EasyApplyBatchRunInput,
+  failedJobUrl: string,
+): Promise<NonNullable<EasyApplyRunResult["recovery"]>> {
+  try {
+    await runBoundedCollectionContextOperation(
+      input,
+      failedJobUrl,
+      "recovery",
+      (driver) => driver.openCollection(buildCollectionJobUrl(input.url, failedJobUrl)),
+    );
+    return {
+      attempted: true,
+      succeeded: true,
+      message:
+        `Recovered batch context after isolated processing failed on ${failedJobUrl}. ` +
+        "The collection page remained separate from the failed application attempt.",
+    };
+  } catch (recoveryError) {
+    return {
+      attempted: true,
+      succeeded: false,
+      message:
+        `Failed to recover the collection after isolated processing failed on ${failedJobUrl}: ` +
+        getErrorMessage(recoveryError),
+    };
+  }
 }
 
 async function recoverBatchAfterJobFailure(
@@ -541,8 +946,15 @@ async function recoverBatchAfterJobFailure(
   failedJobUrl: string,
 ): Promise<NonNullable<EasyApplyRunResult["recovery"]>> {
   try {
-    await input.driver.ensureAuthenticated(input.url);
-    await input.driver.openCollection(input.url);
+    await runBoundedCollectionContextOperation(
+      input,
+      failedJobUrl,
+      "recovery",
+      async (driver) => {
+        await driver.ensureAuthenticated(input.url);
+        await driver.openCollection(input.url);
+      },
+    );
     return {
       attempted: true,
       succeeded: true,
@@ -898,23 +1310,23 @@ async function runEasyApplyInternal(
     }
 
     if (step.report.action === "submit") {
-      if (submitMode === "dry-run") {
-        return {
-          status: "ready_to_submit",
-          steps,
-          stopReason:
-            "Reached the final submit step. Dry run stops before submission.",
-          url: input.url,
-          ...(latestSiteFeedback ? { siteFeedback: latestSiteFeedback } : {}),
-        };
-      }
-
       if (step.hasRequiredManualReview) {
         return {
           status: "stopped_manual_review",
           steps,
           stopReason:
             "A required Easy Apply question needs manual review before submitting.",
+          url: input.url,
+          ...(latestSiteFeedback ? { siteFeedback: latestSiteFeedback } : {}),
+        };
+      }
+
+      if (submitMode === "dry-run") {
+        return {
+          status: "ready_to_submit",
+          steps,
+          stopReason:
+            "Reached the final submit step. Dry run stops before submission.",
           url: input.url,
           ...(latestSiteFeedback ? { siteFeedback: latestSiteFeedback } : {}),
         };
@@ -1005,12 +1417,19 @@ export async function runEasyApplyBatchInternal(
   submitMode: SubmitMode,
 ): Promise<EasyApplyBatchRunResult> {
   const requestedCount = Math.max(1, Math.floor(input.targetCount));
+  const maxPages = readPositiveInteger(input.maxPages, DEFAULT_BATCH_MAX_PAGES);
+  const maxConsecutiveNoProgressPages = readPositiveInteger(
+    input.maxConsecutiveNoProgressPages,
+    DEFAULT_BATCH_MAX_CONSECUTIVE_NO_PROGRESS_PAGES,
+  );
   const seenUrls = new Set<string>();
   const jobs: EasyApplyBatchJobResult[] = [];
   let pagesVisited = 0;
   let skippedCount = 0;
   let attemptedCount = 0;
   let recoveryFailureCount = 0;
+  let consecutiveNoProgressPages = 0;
+  let boundedStopReason: string | null = null;
 
   await input.driver.ensureAuthenticated(input.url);
   await input.driver.openCollection(input.url);
@@ -1022,6 +1441,7 @@ export async function runEasyApplyBatchInternal(
   });
 
   while (attemptedCount < requestedCount) {
+    const seenCountBeforePage = seenUrls.size;
     const visibleJobs = await collectVisibleBatchJobs(input.driver);
 
     for (const job of visibleJobs) {
@@ -1112,6 +1532,16 @@ export async function runEasyApplyBatchInternal(
 
       const entry: EasyApplyBatchJobResult = { url, evaluation };
       jobs.push(entry);
+      let recoveredAfterProcessingFailure = false;
+      let processingLease: EasyApplyProcessingDriverLease | null = null;
+      let processingLeaseDisposed = false;
+      const disposeProcessingLease = async (): Promise<void> => {
+        if (!processingLease || processingLeaseDisposed) {
+          return;
+        }
+        await processingLease.dispose();
+        processingLeaseDisposed = true;
+      };
 
       try {
         await input.observeBatchEvent?.({
@@ -1122,8 +1552,21 @@ export async function runEasyApplyBatchInternal(
           attemptIndex: attemptedCount + 1,
           evaluation,
         });
-        entry.result = await processApprovedBatchJob(input, url, submitMode);
+        processingLease =
+          (await input.driver.createProcessingDriver?.(url)) ?? null;
+        const processingInput = processingLease
+          ? { ...input, driver: processingLease.driver }
+          : input;
+        entry.result = await processApprovedBatchJob(
+          processingInput,
+          url,
+          evaluation,
+          submitMode,
+          processingLease != null,
+        );
+        await disposeProcessingLease();
       } catch (error) {
+        await disposeProcessingLease().catch(() => undefined);
         const serializedError = serializeError(error);
         await input.observeBatchEvent?.({
           type: "job_processing_failed",
@@ -1134,7 +1577,37 @@ export async function runEasyApplyBatchInternal(
           evaluation,
           error: serializedError,
         });
-        const recovery = await recoverBatchAfterJobFailure(input, url);
+        let recovery: NonNullable<EasyApplyRunResult["recovery"]> | null = null;
+        if (
+          (error instanceof ApprovedJobProcessingTimeoutError ||
+            error instanceof ExternalApplyInspectionTimeoutError) &&
+          !processingLease &&
+          input.driver.resetAfterProcessingTimeout
+        ) {
+          try {
+            await runBoundedCollectionContextOperation(
+              input,
+              url,
+              "reset",
+              (driver, signal) => driver.resetAfterProcessingTimeout?.({
+                waitForTimedOutOperations: error.waitForTimedOutOperations,
+                signal,
+              }) ?? Promise.resolve(),
+            );
+          } catch (resetError) {
+            recovery = {
+              attempted: false,
+              succeeded: false,
+              message:
+                `Failed to reset the timed-out LinkedIn page for ${url}: ` +
+                `${getErrorMessage(resetError)} Recovery was not attempted because ` +
+                "the driver context could not be safely reused.",
+            };
+          }
+        }
+        recovery ??= processingLease
+          ? await recoverCollectionAfterIsolatedJobFailure(input, url)
+          : await recoverBatchAfterJobFailure(input, url);
         await input.observeBatchEvent?.({
           type: "job_processing_recovered",
           collectionUrl: input.url,
@@ -1144,10 +1617,26 @@ export async function runEasyApplyBatchInternal(
           recovered: recovery.succeeded,
           message: recovery.message,
         });
-        entry.result = buildJobProcessingFailure(url, error, recovery);
-        if (!(recovery?.succeeded ?? false)) {
-          recoveryFailureCount += 1;
+        entry.result = error instanceof ExternalApplyInspectionTimeoutError
+          ? buildUnverifiedExternalApplyResult({
+              url,
+              stopReason:
+                "External application inspection timed out before the current LinkedIn job page could be verified safely.",
+              failureReasonCode: "linkedin.external_apply_inspection_timeout",
+              error,
+              recovery,
+            })
+          : buildJobProcessingFailure(url, error, recovery);
+        recoveredAfterProcessingFailure = recovery.succeeded;
+        if (!recovery.succeeded) {
+          if (recovery.attempted) {
+            recoveryFailureCount += 1;
+          }
+          boundedStopReason =
+            `${recovery.message} Stopped the LinkedIn batch because the driver context could not be safely reused.`;
         }
+      } finally {
+        await disposeProcessingLease().catch(() => undefined);
       }
       await input.observeBatchEvent?.({
         type: "job_processing_finished",
@@ -1158,15 +1647,71 @@ export async function runEasyApplyBatchInternal(
         evaluation,
         result: entry.result,
       });
-      await restoreCollectionContextAfterApprovedJob(input, url).catch(() => undefined);
-
       attemptedCount += 1;
+
+      if (boundedStopReason) {
+        break;
+      }
+
+      // A successful failure-recovery already reopened the base collection.
+      // Restoring currentJobId again is redundant and can start a second,
+      // unbounded navigation on the same page after a processing timeout.
+      if (!recoveredAfterProcessingFailure) {
+        try {
+          await restoreCollectionContextAfterApprovedJob(input, url);
+        } catch (restoreError) {
+          const restoreMessage = getErrorMessage(restoreError);
+          if (restoreError instanceof CollectionContextOperationTimeoutError) {
+            boundedStopReason =
+              `Stopped the LinkedIn batch because ${restoreMessage} ` +
+              "The driver context could not be safely reused.";
+            break;
+          }
+
+          const recovery = await recoverBatchAfterJobFailure(input, url);
+          await input.observeBatchEvent?.({
+            type: "job_processing_recovered",
+            collectionUrl: input.url,
+            jobUrl: url,
+            pageNumber: pagesVisited,
+            attemptIndex: attemptedCount,
+            recovered: recovery.succeeded,
+            message:
+              `Collection restore failed (${restoreMessage}). ${recovery.message}`,
+          });
+          if (!recovery.succeeded) {
+            recoveryFailureCount += 1;
+            boundedStopReason =
+              `Collection restore failed for ${url}: ${restoreMessage}. ${recovery.message} ` +
+              "Stopped the LinkedIn batch because the driver context could not be safely reused.";
+            break;
+          }
+        }
+      }
+
       if (attemptedCount >= requestedCount) {
         break;
       }
     }
 
-    if (attemptedCount >= requestedCount) {
+    if (boundedStopReason || attemptedCount >= requestedCount) {
+      break;
+    }
+
+    const discoveredNewJobs = seenUrls.size > seenCountBeforePage;
+    consecutiveNoProgressPages = discoveredNewJobs
+      ? 0
+      : consecutiveNoProgressPages + 1;
+
+    if (pagesVisited >= maxPages) {
+      boundedStopReason =
+        `Stopped LinkedIn pagination after the configured maximum of ${maxPages} page(s).`;
+      break;
+    }
+
+    if (consecutiveNoProgressPages >= maxConsecutiveNoProgressPages) {
+      boundedStopReason =
+        `Stopped LinkedIn pagination after ${consecutiveNoProgressPages} consecutive page(s) produced no new unique jobs.`;
       break;
     }
 
@@ -1193,24 +1738,32 @@ export async function runEasyApplyBatchInternal(
       skippedCount: 0,
       pagesVisited,
       jobs: [],
-      stopReason:
+      stopReason: boundedStopReason ??
         "No LinkedIn Easy Apply jobs were discovered from the collection page.",
     };
   }
 
-  const status = attemptedCount >= requestedCount ? "completed" : "partial";
   const approvedJobs = jobs.filter((job) => job.evaluation.shouldApply);
-  const incompleteApprovedJobs = approvedJobs.filter((job) =>
-    job.result != null &&
-    job.result.status !== "submitted" &&
-    job.result.status !== "ready_to_submit"
+  const incompleteApprovedJobs = approvedJobs.filter(
+    (job) =>
+      job.result == null ||
+      (job.result.status !== "submitted" &&
+        job.result.status !== "ready_to_submit"),
   );
+  const status =
+    attemptedCount >= requestedCount &&
+    incompleteApprovedJobs.length === 0 &&
+    boundedStopReason === null
+      ? "completed"
+      : "partial";
+  const incompleteStopReason = incompleteApprovedJobs.length > 0
+    ? `Processed ${attemptedCount} approved LinkedIn apply job(s), but ${incompleteApprovedJobs.length} attempt(s) stopped before completion${recoveryFailureCount > 0 ? ` and ${recoveryFailureCount} recovery attempt(s) failed` : ""}.`
+    : null;
   const stopReason =
     status === "completed"
       ? `Processed ${attemptedCount} LinkedIn apply job(s).`
-      : incompleteApprovedJobs.length > 0
-        ? `Processed ${attemptedCount} approved LinkedIn apply job(s), but ${incompleteApprovedJobs.length} attempt(s) stopped before completion${recoveryFailureCount > 0 ? ` and ${recoveryFailureCount} recovery attempt(s) failed` : ""}.`
-        : `Only found and processed ${attemptedCount} matching LinkedIn apply job(s) before pagination ended.`;
+      : [incompleteStopReason, boundedStopReason].filter(Boolean).join(" ") ||
+        `Only found and processed ${attemptedCount} matching LinkedIn apply job(s) before pagination ended.`;
 
   return {
     status,

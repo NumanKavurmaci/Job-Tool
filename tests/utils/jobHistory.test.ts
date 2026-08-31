@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildDuplicateReviewReason,
   getLatestJobReview,
@@ -9,6 +9,14 @@ import {
 } from "../../src/utils/jobHistory.js";
 
 describe("jobHistory", () => {
+  beforeEach(() => {
+    vi.stubEnv("JOB_TOOL_RUN_ID", "");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("persists job review history entries", async () => {
     const create = vi.fn().mockResolvedValue(undefined);
     const warn = vi.fn();
@@ -47,6 +55,58 @@ describe("jobHistory", () => {
       },
     });
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("merges the dashboard run id into review details", async () => {
+    vi.stubEnv("JOB_TOOL_RUN_ID", "dashboard-run-123");
+    const create = vi.fn().mockResolvedValue(undefined);
+
+    await recordJobReviewHistory({
+      prisma: {
+        jobReviewHistory: { create },
+      } as never,
+      logger: { warn: vi.fn() } as never,
+      entry: {
+        jobUrl: "https://example.com/jobs/1",
+        source: "apply-batch",
+        status: "EVALUATED",
+        reasons: ["Strong fit."],
+        details: { dashboardRunId: "caller-value", provider: "kariyer" },
+      },
+    });
+
+    expect(create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        detailsJson: JSON.stringify({
+          dashboardRunId: "dashboard-run-123",
+          provider: "kariyer",
+        }),
+      }),
+    });
+  });
+
+  it("creates review details when only a dashboard run id is available", async () => {
+    vi.stubEnv("JOB_TOOL_RUN_ID", "dashboard-run-456");
+    const create = vi.fn().mockResolvedValue(undefined);
+
+    await recordJobReviewHistory({
+      prisma: {
+        jobReviewHistory: { create },
+      } as never,
+      logger: { warn: vi.fn() } as never,
+      entry: {
+        jobUrl: "https://example.com/jobs/2",
+        source: "score",
+        status: "EVALUATED",
+        reasons: ["Evaluated."],
+      },
+    });
+
+    expect(create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        detailsJson: JSON.stringify({ dashboardRunId: "dashboard-run-456" }),
+      }),
+    });
   });
 
   it("does not fail the caller if job review history persistence fails", async () => {

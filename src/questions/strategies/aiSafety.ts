@@ -57,6 +57,7 @@ export function isPotentialSensitiveQuestion(question: InputQuestion): boolean {
     .join(" ")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[ıİ]/g, "i")
     .toLocaleLowerCase();
 
   return /\b(consent|agree|terms|privacy|gdpr|kvkk|marketing|sms|newsletter|talent\s*pool|demographic|disability|veteran|gender|ethnicity|race|sexual\s*orientation|salary|compensation|sponsorship|work\s*authorization|acik\s*riza|kisisel\s*veri|maas|ucret|calisma\s*izni)\b/i.test(

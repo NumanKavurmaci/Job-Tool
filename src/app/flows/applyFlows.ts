@@ -10,6 +10,7 @@ import {
 } from "../../reactjobs/listing.js";
 import { isAshbyListingUrl } from "../../ashby/listing.js";
 import { isKariyerListingUrl } from "../../kariyer/listing.js";
+import { findKariyerPageStateError } from "../../kariyer/pageState.js";
 import { KARIYER_BROWSER_SESSION_OPTIONS } from "../constants.js";
 import {
   runExternalApplyDryRunFlow,
@@ -23,6 +24,7 @@ import {
 
 type ApplyArgs = Extract<CliArgs, { mode: "apply" }>;
 type ApplyBatchArgs = Extract<CliArgs, { mode: "apply-batch" }>;
+type BatchJobEvaluation = Awaited<ReturnType<ReturnType<AppDeps["createBatchJobEvaluator"]>>>;
 
 function isLinkedInUrl(url: string) {
   return /linkedin\.com\//i.test(url);
@@ -41,6 +43,43 @@ function mapExternalApplicationToHistoryStatus(args: {
   }
 
   return "FAILED";
+}
+
+async function persistFailedApprovedApplication(args: {
+  jobUrl: string;
+  applyUrl?: string;
+  evaluation: BatchJobEvaluation | undefined;
+  threshold: number;
+  error: unknown;
+  deps: AppDeps;
+}) {
+  if (!args.evaluation?.shouldApply) {
+    return;
+  }
+
+  const errorMessage = args.error instanceof Error ? args.error.message : String(args.error);
+  const summary = `Application was not submitted: ${errorMessage}`;
+  await persistJobHistory(
+    {
+      jobUrl: args.jobUrl,
+      source: "apply-batch",
+      status: "FAILED",
+      score: args.evaluation.score,
+      threshold: args.threshold,
+      decision: args.evaluation.finalDecision,
+      policyAllowed: args.evaluation.policyAllowed,
+      reasons: [summary],
+      summary,
+      details: {
+        shouldApply: true,
+        finalDecision: args.evaluation.finalDecision,
+        applyUrl: args.applyUrl ?? args.jobUrl,
+        applicationFailed: true,
+        error: errorMessage,
+      },
+    },
+    args.deps,
+  );
 }
 
 async function resolveExternalApplyUrl(
@@ -69,25 +108,20 @@ async function runExternalApplyFromSource(
     resumePath: args.resumePath,
     dryRun: Boolean(args.dryRun),
   };
+  const isKariyerSource = isKariyerNetJobUrl(args.url);
+  const originContext = {
+    originalJobUrl: args.url,
+    ...(isKariyerSource
+      ? {
+          sessionOptions: KARIYER_BROWSER_SESSION_OPTIONS,
+          initialActionSelector: "button[data-test='apply-button']",
+          kariyerNavigationContext: deps.createKariyerNavigationContext(),
+        }
+      : {}),
+  };
   const result = args.dryRun
-    ? await runExternalApplyDryRunFlow(externalArgs, deps, {
-        originalJobUrl: args.url,
-        ...(isKariyerNetJobUrl(args.url)
-          ? {
-              sessionOptions: KARIYER_BROWSER_SESSION_OPTIONS,
-              initialActionSelector: "button[data-test='apply-button']",
-            }
-          : {}),
-      })
-    : await runExternalApplyFlow(externalArgs, deps, {
-        originalJobUrl: args.url,
-        ...(isKariyerNetJobUrl(args.url)
-          ? {
-              sessionOptions: KARIYER_BROWSER_SESSION_OPTIONS,
-              initialActionSelector: "button[data-test='apply-button']",
-            }
-          : {}),
-      });
+    ? await runExternalApplyDryRunFlow(externalArgs, deps, originContext)
+    : await runExternalApplyFlow(externalArgs, deps, originContext);
 
   return {
     ...result,
@@ -101,90 +135,129 @@ async function runKariyerApplyBatchFlow(
   deps: AppDeps,
 ) {
   const scoringProfile = await deps.loadCandidateProfile();
-  const listingBatch = await deps.withPage(
+  const batchExecution = await deps.withPage(
     KARIYER_BROWSER_SESSION_OPTIONS,
-    (page) => deps.extractKariyerListingsBatch(page, args.url, args.count),
-  );
-  const listings = listingBatch.listings.slice(0, args.count);
-  const preloadedReviews = await getLatestJobReviewsByUrl({
-    prisma: deps.prisma,
-    jobUrls: listings.map((listing) => listing.url),
-    logger: deps.logger,
-  });
-  const evaluateJob = deps.createBatchJobEvaluator({
-    disableAiEvaluation: args.disableAiEvaluation,
-    scoreThreshold: args.scoreThreshold,
-    scoringMode: args.scoringMode,
-    source: "apply-batch",
-    systemScope: "kariyer.batch",
-    recommendationPolicy: "apply-only",
-    scoringProfile,
-    preloadedReviews,
-    deps,
-  });
+    async (page) => {
+      const navigationContext = deps.createKariyerNavigationContext();
+      const listingBatch = await deps.extractKariyerListingsBatch(
+        page,
+        args.url,
+        args.count,
+        navigationContext,
+      );
+      const listings = listingBatch.listings.slice(0, args.count);
+      const preloadedReviews = await getLatestJobReviewsByUrl({
+        prisma: deps.prisma,
+        jobUrls: listings.map((listing) => listing.url),
+        logger: deps.logger,
+      });
+      const evaluateJob = deps.createBatchJobEvaluator({
+        disableAiEvaluation: args.disableAiEvaluation,
+        scoreThreshold: args.scoreThreshold,
+        scoringMode: args.scoringMode,
+        source: "apply-batch",
+        systemScope: "kariyer.batch",
+        recommendationPolicy: "apply-only",
+        scoringProfile,
+        evaluationPage: page,
+        jobExtractionOptions: {
+          kariyerNavigationContext: navigationContext,
+        },
+        preloadedReviews,
+        deps,
+      });
 
-  const jobs = [];
-  for (const listing of listings) {
-    try {
-      const evaluation = await evaluateJob(listing.url);
-      if (!evaluation.shouldApply) {
-        jobs.push({ ...listing, status: "skipped" as const, evaluation });
-        continue;
+      const jobs = [];
+      let terminalPageState: {
+        code: string;
+        message: string;
+        pageState: string;
+      } | null = null;
+      for (const listing of listings) {
+        let evaluation: BatchJobEvaluation | undefined;
+        try {
+          evaluation = await evaluateJob(listing.url);
+          if (!evaluation.shouldApply) {
+            jobs.push({ ...listing, status: "skipped" as const, evaluation });
+            continue;
+          }
+
+          const externalArgs = {
+            mode: "external-apply" as const,
+            url: listing.url,
+            resumePath: args.resumePath,
+            dryRun: Boolean(args.dryRun),
+          };
+          const originContext = {
+            originalJobUrl: listing.url,
+            sessionOptions: KARIYER_BROWSER_SESSION_OPTIONS,
+            initialActionSelector: "button[data-test='apply-button']",
+            existingPage: page,
+            kariyerNavigationContext: navigationContext,
+          };
+          const application = args.dryRun
+            ? await runExternalApplyDryRunFlow(externalArgs, deps, originContext)
+            : await runExternalApplyFlow(externalArgs, deps, originContext);
+          await persistJobHistory(
+            {
+              jobUrl: listing.url,
+              source: "apply-batch",
+              status: mapExternalApplicationToHistoryStatus({
+                dryRun: Boolean(args.dryRun),
+                finalStage: application.finalStage,
+              }),
+              score: evaluation.score,
+              threshold: args.scoreThreshold,
+              decision: evaluation.finalDecision,
+              policyAllowed: evaluation.policyAllowed,
+              reasons: [application.stopReason],
+              summary: application.stopReason,
+              details: {
+                shouldApply: evaluation.shouldApply,
+                finalDecision: evaluation.finalDecision,
+                applyUrl: listing.url,
+                externalFinalStage: application.finalStage,
+              },
+            },
+            deps,
+          );
+
+          jobs.push({
+            ...listing,
+            status: "processed" as const,
+            evaluation,
+            applyUrl: listing.url,
+            application,
+          });
+        } catch (error) {
+          await persistFailedApprovedApplication({
+            jobUrl: listing.url,
+            evaluation,
+            threshold: args.scoreThreshold,
+            error,
+            deps,
+          });
+          jobs.push({
+            ...listing,
+            status: "failed" as const,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          const pageStateError = findKariyerPageStateError(error);
+          if (pageStateError) {
+            terminalPageState = {
+              code: pageStateError.code,
+              message: pageStateError.message,
+              pageState: pageStateError.pageState,
+            };
+            break;
+          }
+        }
       }
 
-      const externalArgs = {
-        mode: "external-apply" as const,
-        url: listing.url,
-        resumePath: args.resumePath,
-        dryRun: Boolean(args.dryRun),
-      };
-      const originContext = {
-        originalJobUrl: listing.url,
-        sessionOptions: KARIYER_BROWSER_SESSION_OPTIONS,
-        initialActionSelector: "button[data-test='apply-button']",
-      };
-      const application = args.dryRun
-        ? await runExternalApplyDryRunFlow(externalArgs, deps, originContext)
-        : await runExternalApplyFlow(externalArgs, deps, originContext);
-      await persistJobHistory(
-        {
-          jobUrl: listing.url,
-          source: "apply-batch",
-          status: mapExternalApplicationToHistoryStatus({
-            dryRun: Boolean(args.dryRun),
-            finalStage: application.finalStage,
-          }),
-          score: evaluation.score,
-          threshold: args.scoreThreshold,
-          decision: evaluation.finalDecision,
-          policyAllowed: evaluation.policyAllowed,
-          reasons: [application.stopReason],
-          summary: application.stopReason,
-          details: {
-            shouldApply: evaluation.shouldApply,
-            finalDecision: evaluation.finalDecision,
-            applyUrl: listing.url,
-            externalFinalStage: application.finalStage,
-          },
-        },
-        deps,
-      );
-
-      jobs.push({
-        ...listing,
-        status: "processed" as const,
-        evaluation,
-        applyUrl: listing.url,
-        application,
-      });
-    } catch (error) {
-      jobs.push({
-        ...listing,
-        status: "failed" as const,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
+      return { listingBatch, jobs, terminalPageState };
+    },
+  );
+  const { listingBatch, jobs, terminalPageState } = batchExecution;
 
   const attemptedCount = jobs.filter((job) => job.status === "processed").length;
   const skippedCount = jobs.filter((job) => job.status === "skipped").length;
@@ -201,10 +274,17 @@ async function runKariyerApplyBatchFlow(
       skippedCount,
       failedCount,
       pagesVisited: listingBatch.pagesVisited,
-      stopReason:
-        jobs.length === 0
+      stopReason: terminalPageState
+        ? `${terminalPageState.message} No remaining Kariyer.net listings were processed.`
+        : jobs.length === 0
           ? "No Kariyer.net listings were discovered."
           : `Processed ${attemptedCount} Kariyer.net application(s), skipped ${skippedCount}, and failed ${failedCount}.`,
+      ...(terminalPageState
+        ? {
+            stoppedEarly: true,
+            terminalPageState,
+          }
+        : {}),
       jobs,
     },
   };
@@ -246,14 +326,16 @@ async function runReactJobsApplyBatchFlow(
 
     const jobs = [];
     for (const listing of listings) {
+      let evaluation: BatchJobEvaluation | undefined;
+      let applyUrl: string | undefined;
       try {
-        const evaluation = await evaluateJob(listing.url);
+        evaluation = await evaluateJob(listing.url);
         if (!evaluation.shouldApply) {
           jobs.push({ ...listing, status: "skipped" as const, evaluation });
           continue;
         }
 
-        const applyUrl = await resolveExternalApplyUrl(page, listing.url, deps);
+        applyUrl = await resolveExternalApplyUrl(page, listing.url, deps);
         const externalArgs = {
           mode: "external-apply" as const,
           url: applyUrl,
@@ -299,6 +381,14 @@ async function runReactJobsApplyBatchFlow(
           application,
         });
       } catch (error) {
+        await persistFailedApprovedApplication({
+          jobUrl: listing.url,
+          ...(applyUrl ? { applyUrl } : {}),
+          evaluation,
+          threshold: args.scoreThreshold,
+          error,
+          deps,
+        });
         jobs.push({
           ...listing,
           status: "failed" as const,
@@ -372,8 +462,9 @@ async function runAshbyApplyBatchFlow(
 
     const jobs = [];
     for (const listing of listings) {
+      let evaluation: BatchJobEvaluation | undefined;
       try {
-        const evaluation = await evaluateJob(listing.url);
+        evaluation = await evaluateJob(listing.url);
         if (!evaluation.shouldApply) {
           jobs.push({ ...listing, status: "skipped" as const, evaluation });
           continue;
@@ -424,6 +515,13 @@ async function runAshbyApplyBatchFlow(
           application,
         });
       } catch (error) {
+        await persistFailedApprovedApplication({
+          jobUrl: listing.url,
+          evaluation,
+          threshold: args.scoreThreshold,
+          error,
+          deps,
+        });
         jobs.push({
           ...listing,
           status: "failed" as const,

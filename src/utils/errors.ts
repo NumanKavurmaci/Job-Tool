@@ -14,6 +14,7 @@ export type AppErrorPhase =
   | "resume"
   | "linkedin_auth"
   | "linkedin_easy_apply"
+  | "kariyer"
   | "external_apply"
   | "llm"
   | "database";

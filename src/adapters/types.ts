@@ -1,4 +1,9 @@
 import type { Page } from "@playwright/test";
+import type { KariyerNavigationContext } from "../kariyer/pageState.js";
+
+export interface JobExtractionOptions {
+  kariyerNavigationContext?: KariyerNavigationContext;
+}
 
 export interface ExtractedJobContent {
   rawText: string;
@@ -24,5 +29,9 @@ export interface ExtractedJobContent {
 export interface JobAdapter {
   name: string;
   canHandle(url: string): boolean;
-  extract(page: Page, url: string): Promise<ExtractedJobContent>;
+  extract(
+    page: Page,
+    url: string,
+    options?: JobExtractionOptions,
+  ): Promise<ExtractedJobContent>;
 }

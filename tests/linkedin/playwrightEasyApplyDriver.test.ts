@@ -21,6 +21,143 @@ describe("PlaywrightLinkedInEasyApplyDriver", () => {
     await browser.close();
   });
 
+  it("replaces a timed-out page inside the same browser context", async () => {
+    const context = await browser.newContext();
+    try {
+      const timedOutPage = await context.newPage();
+      const unrelatedBlankPage = await context.newPage();
+      const unrelatedPage = await context.newPage();
+      await unrelatedPage.goto("data:text/html,<title>Unrelated page</title>");
+      const driver = new PlaywrightLinkedInEasyApplyDriver(timedOutPage, {
+        pageResetTimeoutMs: 5_000,
+      });
+      let drainObservedClosedPage = false;
+      let releaseTimedOutOperation!: () => void;
+      const timedOutOperationDrained = new Promise<void>((resolve) => {
+        releaseTimedOutOperation = resolve;
+      });
+
+      const resetPromise = driver.resetAfterProcessingTimeout({
+        waitForTimedOutOperations: async () => {
+          drainObservedClosedPage = timedOutPage.isClosed();
+          await timedOutOperationDrained;
+        },
+      });
+
+      await expect.poll(() => timedOutPage.isClosed()).toBe(true);
+      expect(drainObservedClosedPage).toBe(true);
+      expect(context.pages()).toEqual([unrelatedBlankPage, unrelatedPage]);
+      releaseTimedOutOperation();
+      await resetPromise;
+
+      expect(timedOutPage.isClosed()).toBe(true);
+      // The driver only retires pages it owns. Other pages in the shared
+      // context, including an unrelated blank page, remain untouched.
+      expect(unrelatedBlankPage.isClosed()).toBe(false);
+      expect(unrelatedPage.isClosed()).toBe(false);
+      expect(context.browser()).toBe(browser);
+
+      const replacementPage = context.pages().find((page) =>
+        page !== unrelatedBlankPage &&
+        page !== unrelatedPage &&
+        page !== timedOutPage
+      );
+      expect(replacementPage).toBeDefined();
+      await replacementPage!.setContent(linkedInPreReviewModalHtml);
+      await expect(driver.collectStepState()).resolves.toMatchObject({
+        modalTitle: "Apply to Crossing Hurdles",
+        primaryAction: "review",
+      });
+    } finally {
+      await context.close();
+    }
+  });
+
+  it("bounds page reset when the timed-out driver operation does not drain", async () => {
+    const context = await browser.newContext();
+    try {
+      const timedOutPage = await context.newPage();
+      const driver = new PlaywrightLinkedInEasyApplyDriver(timedOutPage, {
+        pageResetTimeoutMs: 25,
+      });
+
+      await expect(driver.resetAfterProcessingTimeout({
+        waitForTimedOutOperations: () => new Promise<void>(() => undefined),
+      })).rejects.toThrow("did not finish within 25ms");
+
+      expect(timedOutPage.isClosed()).toBe(true);
+      expect(context.pages()).toEqual([]);
+      const probePage = await context.newPage();
+      expect(probePage.isClosed()).toBe(false);
+    } finally {
+      await context.close();
+    }
+  });
+
+  it("does not adopt a replacement after the outer reset deadline aborts", async () => {
+    const context = await browser.newContext();
+    try {
+      const timedOutPage = await context.newPage();
+      const driver = new PlaywrightLinkedInEasyApplyDriver(timedOutPage, {
+        pageResetTimeoutMs: 5_000,
+      });
+      const abortController = new AbortController();
+      let releaseTimedOutOperation!: () => void;
+      const timedOutOperation = new Promise<void>((resolve) => {
+        releaseTimedOutOperation = resolve;
+      });
+
+      const resetPromise = driver.resetAfterProcessingTimeout({
+        waitForTimedOutOperations: () => timedOutOperation,
+        signal: abortController.signal,
+      });
+      await expect.poll(() => timedOutPage.isClosed()).toBe(true);
+      abortController.abort(new Error("outer reset deadline expired"));
+      releaseTimedOutOperation();
+
+      await expect(resetPromise).rejects.toThrow("outer reset deadline expired");
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(context.pages()).toEqual([]);
+      const probePage = await context.newPage();
+      expect(probePage.isClosed()).toBe(false);
+    } finally {
+      await context.close();
+    }
+  });
+
+  it("creates a disposable processing page without taking ownership of the collection page", async () => {
+    const context = await browser.newContext();
+    try {
+      await context.route("https://www.linkedin.com/**", async (route) => {
+        await route.fulfill({
+          contentType: "text/html",
+          body: "<main class='jobs-details'><button aria-label='Easy Apply to Backend Developer'>Easy Apply</button></main>",
+        });
+      });
+      const collectionPage = await context.newPage();
+      const unrelatedPage = await context.newPage();
+      const collectionDriver = new PlaywrightLinkedInEasyApplyDriver(collectionPage);
+
+      const lease = await collectionDriver.createProcessingDriver(
+        "https://www.linkedin.com/jobs/view/4457000000",
+      );
+
+      expect(context.pages()).toHaveLength(3);
+      const processingPage = context.pages().find(
+        (page) => page !== collectionPage && page !== unrelatedPage,
+      );
+      expect(processingPage?.url()).toBe("about:blank");
+      await lease.driver.open("https://www.linkedin.com/jobs/view/4457000000");
+      await expect(lease.driver.isEasyApplyAvailable()).resolves.toBe(true);
+      await lease.dispose();
+      expect(context.pages()).toEqual([collectionPage, unrelatedPage]);
+      expect(collectionPage.isClosed()).toBe(false);
+      expect(unrelatedPage.isClosed()).toBe(false);
+    } finally {
+      await context.close();
+    }
+  });
+
   it("detects the pre-review modal state from real LinkedIn-like HTML", async () => {
     const page = await browser.newPage();
     await page.setContent(linkedInPreReviewModalHtml);
@@ -405,6 +542,59 @@ describe("PlaywrightLinkedInEasyApplyDriver", () => {
     await page.close();
   });
 
+  it("returns false when the next-page control does not change pagination state", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <ul>
+        <li data-occludable-job-id="4443235445">
+          <a href="https://www.linkedin.com/jobs/view/4443235445/">Software Engineer</a>
+        </li>
+      </ul>
+      <button class="jobs-search-pagination__button--next">Next</button>
+    `);
+
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page, {
+      paginationChangeTimeoutMs: 60,
+      paginationPollIntervalMs: 10,
+    });
+
+    await expect(driver.goToNextResultsPage()).resolves.toBe(false);
+
+    await page.close();
+  });
+
+  it("waits for a changed job-id fingerprint before confirming the next page", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <ul id="results">
+        <li data-occludable-job-id="4443235445">
+          <a href="https://www.linkedin.com/jobs/view/4443235445/">Software Engineer</a>
+        </li>
+      </ul>
+      <button id="next" class="jobs-search-pagination__button--next">Next</button>
+      <script>
+        document.querySelector('#next').addEventListener('click', () => {
+          setTimeout(() => {
+            document.querySelector('#results').innerHTML =
+              '<li data-occludable-job-id="4444570774"><a href="https://www.linkedin.com/jobs/view/4444570774/">Platform Engineer</a></li>';
+          }, 30);
+        });
+      </script>
+    `);
+
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page, {
+      paginationChangeTimeoutMs: 500,
+      paginationPollIntervalMs: 10,
+    });
+
+    await expect(driver.goToNextResultsPage()).resolves.toBe(true);
+    await expect(driver.collectVisibleJobs()).resolves.toEqual([
+      { url: "https://www.linkedin.com/jobs/view/4444570774", alreadyApplied: false },
+    ]);
+
+    await page.close();
+  });
+
   it("continues past the job search safety reminder modal instead of stopping on it", async () => {
     const page = await browser.newPage();
     await page.setContent(linkedInSafetyReminderModalHtml);
@@ -565,6 +755,71 @@ describe("PlaywrightLinkedInEasyApplyDriver", () => {
     );
 
     await page.close();
+  });
+
+  it("reuses a matching job-detail surface without redundant navigation", async () => {
+    const context = await browser.newContext();
+    try {
+      let navigationCount = 0;
+      await context.route("https://www.linkedin.com/**", async (route) => {
+        navigationCount += 1;
+        await route.fulfill({
+          contentType: "text/html",
+          body: `
+            <main class="jobs-details">
+              <button aria-label="Easy Apply to Backend Developer">Easy Apply</button>
+            </main>
+          `,
+        });
+      });
+      const page = await context.newPage();
+      const jobUrl = "https://www.linkedin.com/jobs/view/4453899034/";
+      await page.goto(jobUrl);
+      const driver = new PlaywrightLinkedInEasyApplyDriver(page);
+
+      await expect(driver.inspectJobApplicationState(jobUrl)).resolves.toBe(
+        "apply_available",
+      );
+      await driver.open(jobUrl);
+
+      expect(navigationCount).toBe(1);
+    } finally {
+      await context.close();
+    }
+  });
+
+  it("captures the real HTTPS destination from an href-less external apply button", async () => {
+    const context = await browser.newContext();
+    try {
+      await context.route("https://jobs.example.com/**", async (route) => {
+        await route.fulfill({
+          contentType: "text/html",
+          body: "<main><h1>External application</h1></main>",
+        });
+      });
+      const page = await context.newPage();
+      await page.setContent(`
+        <main>
+          <button
+            id="jobs-apply-button-id"
+            role="link"
+            aria-label="Apply to Example on company website"
+            onclick="window.open('https://jobs.example.com/apply/4456490821', '_blank')"
+          >
+            Apply
+          </button>
+        </main>
+      `);
+
+      const driver = new PlaywrightLinkedInEasyApplyDriver(page);
+
+      await expect(driver.getExternalApplyUrl()).resolves.toBe(
+        "https://jobs.example.com/apply/4456490821",
+      );
+      await driver.dispose();
+    } finally {
+      await context.close();
+    }
   });
 
   it("marks linkedin numeric text inputs as decimal fields and captures inline validation text", async () => {

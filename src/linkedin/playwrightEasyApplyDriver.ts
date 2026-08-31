@@ -1,4 +1,4 @@
-import type { Locator, Page } from "@playwright/test";
+import type { BrowserContext, Locator, Page } from "@playwright/test";
 import { ensureLinkedInAuthenticated } from "../adapters/LinkedInAdapter.js";
 import {
   assertSafeLinkedInNavigationUrl,
@@ -6,8 +6,10 @@ import {
 } from "../security/navigationSafety.js";
 import type {
   EasyApplyDriver,
+  EasyApplyProcessingDriverLease,
   EasyApplyExternalDetection,
   EasyApplyJobApplicationState,
+  EasyApplyProcessingTimeoutResetInput,
   EasyApplyPrimaryAction,
   EasyApplyReviewDiagnostics,
   EasyApplyStepStateSnapshot,
@@ -33,6 +35,15 @@ const LINKEDIN_COLLECTION_STABLE_SCAN_LIMIT = 3;
 const LINKEDIN_COLLECTION_SCROLL_WAIT_MS = 350;
 const LINKEDIN_COLLECTION_HYDRATION_ATTEMPTS = 30;
 const LINKEDIN_COLLECTION_HYDRATION_WAIT_MS = 500;
+const LINKEDIN_PAGINATION_CHANGE_TIMEOUT_MS = 10_000;
+const LINKEDIN_PAGINATION_POLL_INTERVAL_MS = 200;
+const LINKEDIN_ACTIVE_PAGE_SELECTOR = [
+  ".jobs-search-pagination [aria-current='page']",
+  ".jobs-search-pagination [aria-current='true']",
+  ".artdeco-pagination [aria-current='page']",
+  ".artdeco-pagination [aria-current='true']",
+  ".jobs-search-pagination__indicator-button--active",
+].join(", ");
 import { createEmptySiteFeedbackSnapshot, type SiteFeedbackSnapshot } from "../browser/siteFeedback.js";
 import {
   buildLinkedInJobSurfaceSelector,
@@ -303,10 +314,103 @@ async function annotateQuestions(page: Page): Promise<EasyApplyQuestionView[]> {
   ).catch(() => []);
 }
 
+interface PlaywrightLinkedInEasyApplyDriverOptions {
+  paginationChangeTimeoutMs?: number;
+  paginationPollIntervalMs?: number;
+  pageResetTimeoutMs?: number;
+}
+
+interface LinkedInResultsPageFingerprint {
+  url: string;
+  activePage: string | null;
+  jobIds: string[];
+}
+
 export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
   private collectionUrl: string | null = null;
+  private readonly ownedPages = new Set<Page>();
 
-  constructor(private page: Page) {}
+  constructor(
+    private page: Page,
+    private readonly options: PlaywrightLinkedInEasyApplyDriverOptions = {},
+  ) {
+    this.ownedPages.add(page);
+  }
+
+  private normalizePaginationUrl(url: string): string {
+    try {
+      const parsed = new URL(url);
+      parsed.searchParams.delete("currentJobId");
+      parsed.hash = "";
+      return parsed.toString();
+    } catch {
+      return url;
+    }
+  }
+
+  private async readResultsPageFingerprint(): Promise<LinkedInResultsPageFingerprint> {
+    const [jobIds, activePage] = await Promise.all([
+      this.page
+        .locator(LINKEDIN_JOB_CARD_SELECTOR)
+        .evaluateAll((elements) => {
+          const ids = elements.flatMap((element: any) => {
+            const directId =
+              element.getAttribute("data-occludable-job-id") ??
+              element.getAttribute("data-job-id");
+            if (directId && /^\d+$/.test(directId)) {
+              return [directId];
+            }
+
+            const href = element
+              .querySelector("a[href*='/jobs/view/']")
+              ?.getAttribute("href");
+            const jobId = href?.match(/\/jobs\/view\/(\d+)/)?.[1];
+            return jobId ? [jobId] : [];
+          });
+          return [...new Set(ids)].sort();
+        })
+        .catch(() => [] as string[]),
+      this.page
+        .locator(LINKEDIN_ACTIVE_PAGE_SELECTOR)
+        .evaluateAll((elements: any[]) => {
+          const element = elements[0];
+          if (!element) {
+            return null;
+          }
+          return (
+            element.getAttribute("aria-label") ??
+            element.getAttribute("data-test-pagination-page-btn") ??
+            element.textContent ??
+            ""
+          )
+            .replace(/\s+/g, " ")
+            .trim();
+        })
+        .catch(() => null),
+    ]);
+
+    return {
+      url: this.normalizePaginationUrl(this.page.url()),
+      activePage: activePage || null,
+      jobIds,
+    };
+  }
+
+  private hasResultsPageChanged(
+    before: LinkedInResultsPageFingerprint,
+    after: LinkedInResultsPageFingerprint,
+  ): boolean {
+    if (after.url !== before.url) {
+      return true;
+    }
+    if (after.activePage && after.activePage !== before.activePage) {
+      return true;
+    }
+    return (
+      after.jobIds.length > 0 &&
+      after.jobIds.join(",") !== before.jobIds.join(",")
+    );
+  }
 
   // LinkedIn keeps changing the external-apply CTA markup. We first prefer the
   // explicit company-website selectors, then fall back to the generic header
@@ -355,23 +459,54 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
     return url === "" || url === "about:blank";
   }
 
-  private async closeBlankPages(): Promise<void> {
-    const pages = this.page.context().pages().filter((page) => !page.isClosed());
-    for (const page of pages) {
-      if (page === this.page) {
+  private async closeBlankPages(activePage: Page = this.page): Promise<void> {
+    for (const page of [...this.ownedPages]) {
+      if (page.isClosed()) {
+        this.ownedPages.delete(page);
+        continue;
+      }
+      if (page === activePage) {
+        continue;
+      }
+      if (page.context() !== activePage.context()) {
         continue;
       }
       if (!this.isBlankPage(page)) {
         continue;
       }
       await page.close().catch(() => undefined);
+      this.ownedPages.delete(page);
     }
   }
 
-  private async adoptNewestPageAfterClick(): Promise<void> {
+  private async closeOwnedPages(context: BrowserContext): Promise<void> {
+    const pages = [...this.ownedPages].filter(
+      (page) => !page.isClosed() && page.context() === context,
+    );
+    await Promise.all(
+      pages.map(async (page) => {
+        try {
+          await page.close({ runBeforeUnload: false });
+        } catch (error) {
+          if (!page.isClosed()) {
+            throw error;
+          }
+        }
+      }),
+    );
+    for (const page of pages) {
+      this.ownedPages.delete(page);
+    }
+  }
+
+  private async adoptNewestPageAfterClick(
+    pagesBeforeClick: ReadonlySet<Page>,
+  ): Promise<void> {
     const context = this.page.context();
     const activePage = this.page;
-    const pages = context.pages().filter((page) => !page.isClosed());
+    const pages = context.pages().filter(
+      (page) => !page.isClosed() && !pagesBeforeClick.has(page),
+    );
     const newestPage = pages.at(-1);
 
     if (!newestPage || newestPage === activePage) {
@@ -379,6 +514,7 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
       return;
     }
 
+    this.ownedPages.add(newestPage);
     await newestPage.waitForLoadState("domcontentloaded").catch(() => undefined);
     if (this.isBlankPage(newestPage)) {
       await this.closeBlankPages();
@@ -439,10 +575,14 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
 
   private async clickFollowingNewPage(locator: Locator): Promise<void> {
     const originalPage = this.page;
+    const pagesBeforeClick = new Set(
+      this.page.context().pages().filter((page) => !page.isClosed()),
+    );
     const popupPromise = this.page.waitForEvent("popup", { timeout: 500 }).catch(() => null);
     await locator.click();
     const popup = await popupPromise;
     if (popup) {
+      this.ownedPages.add(popup);
       await popup.waitForLoadState("domcontentloaded").catch(() => undefined);
       let popupNavigated = !this.isBlankPage(popup);
       if (!popupNavigated && await this.hasPostClickSurface(originalPage)) {
@@ -471,7 +611,7 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
       await this.closeBlankPages();
       return;
     }
-    await this.adoptNewestPageAfterClick();
+    await this.adoptNewestPageAfterClick(pagesBeforeClick);
     await this.waitForPostClickSurface();
   }
 
@@ -494,11 +634,55 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
     return true;
   }
 
+  async createProcessingDriver(_url: string): Promise<EasyApplyProcessingDriverLease> {
+    const attemptPage = await this.page.context().newPage();
+    const attemptDriver = new PlaywrightLinkedInEasyApplyDriver(
+      attemptPage,
+      this.options,
+    );
+    let disposed = false;
+    const dispose = async (): Promise<void> => {
+      if (disposed) {
+        return;
+      }
+      await attemptDriver.dispose();
+      disposed = true;
+    };
+
+    // The shared browser context carries the authenticated session, while the
+    // blank page keeps all application navigation and timeouts away from the
+    // page that owns collection pagination. The processing flow performs one
+    // authenticated navigation after its timeout boundary has been installed.
+    return { driver: attemptDriver, dispose };
+  }
+
+  async dispose(): Promise<void> {
+    await this.closeOwnedPages(this.page.context());
+  }
+
   async open(url: string): Promise<void> {
-    await safeLinkedInPageGoto(this.page, url, {
-      waitUntil: "domcontentloaded",
-      timeout: 60_000,
-    });
+    let alreadyOnRequestedJob = false;
+    try {
+      const current = assertSafeLinkedInNavigationUrl(
+        this.page.url(),
+        "Current LinkedIn job page URL",
+      );
+      const target = assertSafeLinkedInNavigationUrl(url, "LinkedIn job page URL");
+      const currentJobId = current.pathname.match(/\/jobs\/view\/(\d+)/)?.[1];
+      const targetJobId = target.pathname.match(/\/jobs\/view\/(\d+)/)?.[1];
+      alreadyOnRequestedJob = Boolean(
+        currentJobId && targetJobId && currentJobId === targetJobId,
+      );
+    } catch {
+      alreadyOnRequestedJob = false;
+    }
+
+    if (!alreadyOnRequestedJob) {
+      await safeLinkedInPageGoto(this.page, url, {
+        waitUntil: "domcontentloaded",
+        timeout: 60_000,
+      });
+    }
     await this.waitForLinkedInJobSurface();
   }
 
@@ -510,6 +694,77 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
       .first()
       .waitFor({ state: "attached", timeout: 10_000 })
       .catch(() => undefined);
+  }
+
+  async resetAfterProcessingTimeout(
+    input?: EasyApplyProcessingTimeoutResetInput,
+  ): Promise<void> {
+    const context = this.page.context();
+    const timeoutMs = Math.max(1, Math.floor(this.options.pageResetTimeoutMs ?? 10_000));
+    const timeoutError = new Error(
+      `Timed-out LinkedIn page reset did not finish within ${timeoutMs}ms.`,
+    );
+    let expired = false;
+    const getExpirationError = (): Error =>
+      input?.signal?.reason instanceof Error
+        ? input.signal.reason
+        : timeoutError;
+    const throwIfExpired = (): void => {
+      if (expired || input?.signal?.aborted) {
+        throw getExpirationError();
+      }
+    };
+
+    const resetOperation = (async () => {
+      throwIfExpired();
+      await this.closeOwnedPages(context);
+      throwIfExpired();
+
+      // Closing the poisoned page rejects its pending Playwright operations.
+      // Wait for the abort-guard's tracked call to unwind before exposing a
+      // replacement page through this mutable driver instance.
+      await input?.waitForTimedOutOperations();
+      throwIfExpired();
+
+      // A popup may have been adopted while the poisoned operation was
+      // unwinding. It is driver-owned as well, so retire it before replacement.
+      await this.closeOwnedPages(context);
+      throwIfExpired();
+
+      const replacementPage = await context.newPage();
+      this.ownedPages.add(replacementPage);
+      if (expired || input?.signal?.aborted) {
+        await replacementPage.close({ runBeforeUnload: false }).catch(() => undefined);
+        this.ownedPages.delete(replacementPage);
+        throw getExpirationError();
+      }
+
+      await replacementPage.bringToFront().catch(() => undefined);
+      await this.closeBlankPages(replacementPage);
+      if (expired || input?.signal?.aborted) {
+        await replacementPage.close({ runBeforeUnload: false }).catch(() => undefined);
+        this.ownedPages.delete(replacementPage);
+        throw getExpirationError();
+      }
+      this.page = replacementPage;
+    })();
+
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        expired = true;
+        reject(timeoutError);
+      }, timeoutMs);
+      resetOperation.then(
+        () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      );
+    });
   }
 
   async ensureAuthenticated(url: string): Promise<void> {
@@ -525,6 +780,16 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
     return (await this.resolveExternalApplyTrigger()) !== null;
   }
 
+  private readCapturedExternalApplyUrl(previousUrl: string): string | null {
+    if (this.page.isClosed() || this.isBlankPage(this.page)) {
+      return null;
+    }
+    const currentUrl = this.page.url().trim();
+    return currentUrl && currentUrl !== previousUrl
+      ? currentUrl
+      : null;
+  }
+
   async getExternalApplyUrl(): Promise<string | null> {
     const resolved = await this.resolveExternalApplyTrigger();
     if (!resolved) {
@@ -537,8 +802,17 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
       return href;
     }
 
-    const ariaLabel = await locator.getAttribute("aria-label").catch(() => null);
-    return ariaLabel ? `linkedin-external:${ariaLabel}` : null;
+    const previousUrl = this.page.url();
+    await this.clickFollowingNewPage(locator);
+    let capturedUrl = this.readCapturedExternalApplyUrl(previousUrl);
+    if (capturedUrl) {
+      return capturedUrl;
+    }
+
+    if (await this.continuePastSafetyReminder()) {
+      capturedUrl = this.readCapturedExternalApplyUrl(previousUrl);
+    }
+    return capturedUrl;
   }
 
   async getExternalApplyDetection(): Promise<EasyApplyExternalDetection | null> {
@@ -577,7 +851,11 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
       const isCollectionSurface = /^\/jobs\/(?:search|collections|search-results)(?:\/|$)/i.test(
         currentUrl.pathname,
       );
-      if (isCollectionSurface && currentJobId === jobId) {
+      const currentDetailJobId = currentUrl.pathname.match(/\/jobs\/view\/(\d+)/)?.[1];
+      if (
+        (isCollectionSurface && currentJobId === jobId) ||
+        currentDetailJobId === jobId
+      ) {
         inspectionUrl = currentUrl;
       } else {
         const baseUrl = this.collectionUrl
@@ -913,9 +1191,43 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
       return false;
     }
 
-    await locator.click();
-    await this.page.waitForTimeout(2_000);
-    return true;
+    const before = await this.readResultsPageFingerprint();
+    try {
+      await locator.click();
+    } catch {
+      return false;
+    }
+
+    const timeoutMs = Math.max(
+      1,
+      Math.floor(
+        this.options.paginationChangeTimeoutMs ??
+          LINKEDIN_PAGINATION_CHANGE_TIMEOUT_MS,
+      ),
+    );
+    const pollIntervalMs = Math.max(
+      1,
+      Math.floor(
+        this.options.paginationPollIntervalMs ??
+          LINKEDIN_PAGINATION_POLL_INTERVAL_MS,
+      ),
+    );
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt <= timeoutMs) {
+      const after = await this.readResultsPageFingerprint();
+      if (this.hasResultsPageChanged(before, after)) {
+        return true;
+      }
+
+      const remainingMs = timeoutMs - (Date.now() - startedAt);
+      if (remainingMs <= 0) {
+        break;
+      }
+      await this.page.waitForTimeout(Math.min(pollIntervalMs, remainingMs));
+    }
+
+    return false;
   }
 
   async collectStepState(): Promise<EasyApplyStepStateSnapshot> {

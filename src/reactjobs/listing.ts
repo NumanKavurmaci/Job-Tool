@@ -42,6 +42,8 @@ const REACTJOBS_LISTING_SCRIPT = `(() => {
     .filter((job, index, all) => job.title && all.findIndex((candidate) => candidate.url === job.url) === index);
 })()`;
 
+const MAX_REACTJOBS_LISTING_PAGES = 50;
+
 export function isReactJobsListingUrl(url: string): boolean {
   try {
     const parsed = assertSafeNavigationUrl(url, { context: "ReactJobs listing URL" });
@@ -111,16 +113,20 @@ async function goToNextReactJobsResultsPage(page: Page): Promise<boolean> {
   await nextButton.click();
 
   if (previousPageNumber != null) {
-    await page.waitForFunction(
-      (expectedPage) => {
-        const current = (globalThis as any).document?.querySelector?.("[aria-current='page']");
-        const text = current?.textContent?.trim() ?? "";
-        const parsed = Number.parseInt(text, 10);
-        return Number.isFinite(parsed) && parsed > expectedPage;
-      },
-      previousPageNumber,
-      { timeout: 15_000 },
-    ).catch(() => undefined);
+    try {
+      await page.waitForFunction(
+        (expectedPage) => {
+          const current = (globalThis as any).document?.querySelector?.("[aria-current='page']");
+          const text = current?.textContent?.trim() ?? "";
+          const parsed = Number.parseInt(text, 10);
+          return Number.isFinite(parsed) && parsed > expectedPage;
+        },
+        previousPageNumber,
+        { timeout: 15_000 },
+      );
+    } catch {
+      return false;
+    }
   }
 
   await page.waitForTimeout(1_000);
@@ -138,7 +144,11 @@ export async function extractReactJobsListingsBatch(
   const uniqueListings = new Map<string, ReactJobsListing>();
   let pagesVisited = 0;
 
-  while (uniqueListings.size < targetCount) {
+  while (
+    uniqueListings.size < targetCount &&
+    pagesVisited < MAX_REACTJOBS_LISTING_PAGES
+  ) {
+    const previousListingCount = uniqueListings.size;
     const listings = await page.evaluate(REACTJOBS_LISTING_SCRIPT) as ReactJobsListing[];
     for (const listing of listings) {
       if (!uniqueListings.has(listing.url)) {
@@ -152,6 +162,9 @@ export async function extractReactJobsListingsBatch(
 
     pagesVisited += 1;
     if (uniqueListings.size >= targetCount) {
+      break;
+    }
+    if (pagesVisited > 1 && uniqueListings.size === previousListingCount) {
       break;
     }
 

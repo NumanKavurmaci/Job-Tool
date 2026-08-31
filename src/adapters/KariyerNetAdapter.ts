@@ -1,12 +1,19 @@
 import type { Page } from "@playwright/test";
-import type { ExtractedJobContent, JobAdapter } from "./types.js";
+import type {
+  ExtractedJobContent,
+  JobAdapter,
+  JobExtractionOptions,
+} from "./types.js";
+import {
+  inspectKariyerPageOrThrow,
+  navigateKariyerPage,
+} from "../kariyer/pageState.js";
 import {
   extractBodyText,
   extractSectionText,
   getAttributeBySelectors,
   getCurrentUrl,
   getTextBySelectors,
-  gotoJobPage,
   optionalText,
 } from "./helpers.js";
 
@@ -36,6 +43,10 @@ const APPLIED_STATUS_TEXT_SELECTORS = [
   "[data-test='application-status-item'] [data-test='interaction-label']",
   "[data-test='interaction-label']",
 ] as const;
+
+function isKariyerHostname(hostname: string): boolean {
+  return /^(?:www\.)?kariyer\.net$/i.test(hostname.replace(/\.$/, ""));
+}
 
 export function isKariyerNetJobUrl(url: string): boolean {
   try {
@@ -302,11 +313,33 @@ export class KariyerNetAdapter implements JobAdapter {
     return isKariyerNetJobUrl(url);
   }
 
-  async extract(page: Page, url: string): Promise<ExtractedJobContent> {
+  async extract(
+    page: Page,
+    url: string,
+    options?: JobExtractionOptions,
+  ): Promise<ExtractedJobContent> {
     if (!this.canHandle(url)) {
       throw new Error("KariyerNetAdapter only accepts canonical kariyer.net job-detail URLs.");
     }
-    await gotoJobPage(page, url);
+    await navigateKariyerPage(page, url, {
+      ...(options?.kariyerNavigationContext
+        ? { navigationContext: options.kariyerNavigationContext }
+        : {}),
+      gotoOptions: { waitUntil: "domcontentloaded", timeout: 60_000 },
+      safetyOptions: {
+        requireHttps: true,
+        allowedHostname: isKariyerHostname,
+        context: "Kariyer.net job detail navigation",
+      },
+      context: "Kariyer.net job detail navigation",
+    });
+    await page.waitForTimeout(2_000);
+    await inspectKariyerPageOrThrow(
+      page,
+      "Kariyer.net job detail hydration",
+      undefined,
+      options?.kariyerNavigationContext?.now(),
+    );
 
     const currentUrl = await getCurrentUrl(page);
     const structured = await getKariyerStructuredData(page);
