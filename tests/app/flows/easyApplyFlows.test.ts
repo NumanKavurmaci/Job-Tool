@@ -394,8 +394,14 @@ describe("easy apply flows", () => {
 
     expect(result.easyApply).toMatchObject({
       status: "completed",
-      stopReason: "Processed 1 LinkedIn apply job(s), including completed external handoffs.",
+      stopReason:
+        "Completed 1 requested LinkedIn application(s) after 1 approved attempt(s), including external handoffs.",
     });
+    expect(deps.runEasyApplyBatchDryRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        continueExternalApplication: expect.any(Function),
+      }),
+    );
 
     expect(deps.prisma.jobReviewHistory.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -750,6 +756,53 @@ describe("easy apply flows", () => {
       }),
     });
     expect(deps.prisma.systemLog.create).not.toHaveBeenCalled();
+  });
+
+  it("marks a live external handoff as failed when it remains on a form step", async () => {
+    const deps = createDeps();
+    mockWithPage(deps);
+    (deps.loadCandidateMasterProfile as any).mockResolvedValue({
+      fullName: "Jane",
+      sourceMetadata: { resumePath: "./resume.pdf" },
+    });
+    (deps.resolveAnswer as any).mockResolvedValue({ answer: "ok" });
+    const confirmExternalApplicationFinished = vi.fn();
+    (deps.createEasyApplyDriver as any).mockResolvedValue({
+      driver: true,
+      confirmExternalApplicationFinished,
+    });
+    (deps.runEasyApply as any).mockResolvedValue({
+      status: "stopped_external_apply",
+      steps: [],
+      stopReason: "Use company website.",
+      url: "https://www.linkedin.com/jobs/view/2",
+      externalApplyUrl: "https://company.example/apply",
+    });
+    runExternalApplyFlowMock.mockResolvedValue({
+      finalStage: "form_step",
+      stopReason: "The application remained on the same step.",
+      failureReasonCode: "external.required_field_fill_failed",
+      retryable: true,
+      discovery: { platform: "workable" },
+      reportPath: "artifacts/external-apply-runs/failed.json",
+    });
+    (deps.writeRunReport as any).mockResolvedValue("artifacts/easy-apply-runs/failed.json");
+
+    const { runApplyFlow } = await import("../../../src/app/flows/applyFlows.js");
+    const result = await runApplyFlow({
+      mode: "apply",
+      url: "https://www.linkedin.com/jobs/view/2",
+      resumePath: "./resume.pdf",
+      dryRun: false,
+    }, deps);
+
+    expect(result.easyApply.externalApplication).toMatchObject({
+      status: "failed",
+      finalStage: "form_step",
+      failureReasonCode: "external.required_field_fill_failed",
+      retryable: true,
+    });
+    expect(confirmExternalApplicationFinished).not.toHaveBeenCalled();
   });
 
   it("does not hand an unsafe LinkedIn external target to the external apply flow", async () => {

@@ -559,7 +559,42 @@ describe("PlaywrightLinkedInEasyApplyDriver", () => {
     });
 
     await expect(driver.goToNextResultsPage()).resolves.toBe(false);
+    expect(driver.getLastPaginationStopReason()).toEqual({
+      code: "results_unchanged_timeout",
+      message: "The LinkedIn results did not change after the next-page control was clicked.",
+    });
 
+    await page.close();
+  });
+
+  it("explains when LinkedIn exposes no next-page control", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <ul><li data-occludable-job-id="1">Only result</li></ul>
+    `);
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page);
+
+    await expect(driver.goToNextResultsPage()).resolves.toBe(false);
+    expect(driver.getLastPaginationStopReason()).toEqual({
+      code: "next_control_missing",
+      message: "No next-page control was present on the LinkedIn results page.",
+    });
+    await page.close();
+  });
+
+  it("explains when LinkedIn disables the next-page control", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <ul><li data-occludable-job-id="1">Only result</li></ul>
+      <button class="jobs-search-pagination__button--next" disabled>Next</button>
+    `);
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page);
+
+    await expect(driver.goToNextResultsPage()).resolves.toBe(false);
+    expect(driver.getLastPaginationStopReason()).toEqual({
+      code: "next_control_disabled",
+      message: "The LinkedIn next-page control was disabled.",
+    });
     await page.close();
   });
 
@@ -588,6 +623,7 @@ describe("PlaywrightLinkedInEasyApplyDriver", () => {
     });
 
     await expect(driver.goToNextResultsPage()).resolves.toBe(true);
+    expect(driver.getLastPaginationStopReason()).toBeNull();
     await expect(driver.collectVisibleJobs()).resolves.toEqual([
       { url: "https://www.linkedin.com/jobs/view/4444570774", alreadyApplied: false },
     ]);
@@ -754,6 +790,85 @@ describe("PlaywrightLinkedInEasyApplyDriver", () => {
       "https://www.linkedin.com/safety/go/?url=https%3A%2F%2Fjobs%2Elever%2Eco%2Fcommencis%2Fa3be10ef-53ab-4842-b114-ae9f60b43e99&urlhash=kEke&isSdui=true",
     );
 
+    await page.close();
+  });
+
+  it("accepts a generic LinkedIn apply button only with the off-linkedin signal", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <main>
+        <p>Responses managed off LinkedIn</p>
+        <button class="jobs-apply-button" role="link">Apply</button>
+      </main>
+    `);
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page, {
+      externalApplyDetectionTimeoutMs: 0,
+    });
+
+    await expect(driver.isExternalApplyAvailable()).resolves.toBe(true);
+    await expect(driver.getExternalApplyDetection()).resolves.toEqual({
+      source: "header_apply_fallback",
+      signals: [
+        "signal:responses_managed_off_linkedin",
+        "selector:header_apply_fallback",
+      ],
+    });
+    await page.close();
+  });
+
+  it("rejects a generic apply button when no off-linkedin evidence is present", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <main><button class="jobs-apply-button" role="link">Apply</button></main>
+    `);
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page, {
+      externalApplyDetectionTimeoutMs: 0,
+    });
+
+    await expect(driver.isExternalApplyAvailable()).resolves.toBe(false);
+    await expect(driver.getExternalApplyDetection()).resolves.toBeNull();
+    await page.close();
+  });
+
+  it("waits briefly for a delayed external apply control to render", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <main id="job"><p>Responses managed off LinkedIn</p></main>
+      <script>
+        setTimeout(() => {
+          const button = document.createElement('button');
+          button.className = 'jobs-apply-button';
+          button.setAttribute('role', 'link');
+          button.textContent = 'Apply';
+          document.querySelector('#job').appendChild(button);
+        }, 30);
+      </script>
+    `);
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page, {
+      externalApplyDetectionTimeoutMs: 300,
+      externalApplyDetectionPollIntervalMs: 10,
+    });
+
+    await expect(driver.isExternalApplyAvailable()).resolves.toBe(true);
+    await expect(driver.getExternalApplyDetection()).resolves.toMatchObject({
+      source: "header_apply_fallback",
+    });
+    await page.close();
+  });
+
+  it("still detects an explicit company website CTA without the fallback signal", async () => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <button aria-label="Apply to Acme on company website">Apply</button>
+    `);
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page, {
+      externalApplyDetectionTimeoutMs: 0,
+    });
+
+    await expect(driver.isExternalApplyAvailable()).resolves.toBe(true);
+    await expect(driver.getExternalApplyDetection()).resolves.toMatchObject({
+      source: "explicit_company_website_cta",
+    });
     await page.close();
   });
 

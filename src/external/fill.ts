@@ -98,17 +98,32 @@ function buildFieldSelectors(field: ExternalApplicationField): string[] {
   pushUnique(selectors, `[name="${escapeAttributeValue(field.key)}"]`);
 
   if (field.label) {
-    pushUnique(selectors, `input[aria-label="${escapeAttributeValue(field.label)}"]`);
-    pushUnique(selectors, `textarea[aria-label="${escapeAttributeValue(field.label)}"]`);
-    pushUnique(selectors, `select[aria-label="${escapeAttributeValue(field.label)}"]`);
-    pushUnique(selectors, `label:has-text("${escapeAttributeValue(field.label)}")`);
-    pushUnique(selectors, `button:has-text("${escapeAttributeValue(field.label)}")`);
-    pushUnique(selectors, `[role="button"]:has-text("${escapeAttributeValue(field.label)}")`);
-    pushUnique(selectors, `[role="radio"]:has-text("${escapeAttributeValue(field.label)}")`);
-    pushUnique(selectors, `[role="checkbox"]:has-text("${escapeAttributeValue(field.label)}")`);
-    pushUnique(selectors, `[data-testid="${escapeAttributeValue(field.label)}"]`);
+    const escapedLabel = escapeAttributeValue(field.label);
+    pushUnique(selectors, `input[aria-label="${escapedLabel}"]`);
+    pushUnique(selectors, `textarea[aria-label="${escapedLabel}"]`);
+    pushUnique(selectors, `select[aria-label="${escapedLabel}"]`);
+    pushUnique(selectors, `label:has-text("${escapedLabel}") input`);
+    pushUnique(selectors, `label:has-text("${escapedLabel}") textarea`);
+    pushUnique(selectors, `label:has-text("${escapedLabel}") select`);
+    pushUnique(selectors, `label:has-text("${escapedLabel}") + input`);
+    pushUnique(selectors, `label:has-text("${escapedLabel}") + textarea`);
+    pushUnique(selectors, `label:has-text("${escapedLabel}") + select`);
+    pushUnique(selectors, `label:has-text("${escapedLabel}") ~ input`);
+    pushUnique(selectors, `label:has-text("${escapedLabel}") ~ textarea`);
+    pushUnique(selectors, `label:has-text("${escapedLabel}") ~ select`);
+    pushUnique(selectors, `label:has-text("${escapedLabel}") ~ * input`);
+    pushUnique(selectors, `label:has-text("${escapedLabel}") ~ * textarea`);
+    pushUnique(selectors, `label:has-text("${escapedLabel}") ~ * select`);
+    if (["boolean", "single_select", "multi_select"].includes(field.type)) {
+      pushUnique(selectors, `label:has-text("${escapedLabel}")`);
+      pushUnique(selectors, `button:has-text("${escapedLabel}")`);
+      pushUnique(selectors, `[role="button"]:has-text("${escapedLabel}")`);
+      pushUnique(selectors, `[role="radio"]:has-text("${escapedLabel}")`);
+      pushUnique(selectors, `[role="checkbox"]:has-text("${escapedLabel}")`);
+      pushUnique(selectors, `[data-testid="${escapedLabel}"]`);
+    }
     if (field.type === "file") {
-      pushUnique(selectors, `input[type="file"][aria-label="${escapeAttributeValue(field.label)}"]`);
+      pushUnique(selectors, `input[type="file"][aria-label="${escapedLabel}"]`);
     }
   }
 
@@ -148,6 +163,25 @@ async function findFirstLocator(page: Page, selectors: string[]) {
   }
 
   return null;
+}
+
+async function findFieldLocator(page: Page, field: ExternalApplicationField) {
+  const locator = await findFirstLocator(page, buildFieldSelectors(field));
+  if (locator) {
+    return locator;
+  }
+
+  if (typeof (page as Page & { getByLabel?: unknown }).getByLabel !== "function") {
+    return null;
+  }
+  try {
+    const labelled = (page as Page & {
+      getByLabel: (label: string, options?: { exact?: boolean }) => ReturnType<Page["locator"]>;
+    }).getByLabel(field.label, { exact: false }).first();
+    return (await labelled.count()) > 0 ? labelled : null;
+  } catch {
+    return null;
+  }
 }
 
 async function uploadFileViaChooser(
@@ -624,7 +658,7 @@ async function fillSingleField(
     };
   }
 
-  const locator = await findFirstLocator(page, buildFieldSelectors(field));
+  const locator = await findFieldLocator(page, field);
   if (!locator) {
     return {
       fieldKey: field.key,

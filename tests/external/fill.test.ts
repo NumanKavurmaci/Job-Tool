@@ -2677,4 +2677,143 @@ describe("external fill", () => {
     }));
     expect(result.primaryAction).toBe("submit");
   });
+
+  it("fills a text input nested inside its label instead of trying to fill the label element", async () => {
+    const { page, register, actions } = createLocatorRecorder();
+    register(
+      `label:has-text("Phone number")`,
+      `label:has-text("Phone number") input`,
+    );
+
+    const result = await fillExternalApplicationPage({
+      page: page as never,
+      discovery: {
+        sourceUrl: "https://jobs.example.com/apply",
+        finalUrl: "https://jobs.example.com/apply",
+        pageTitle: "Application",
+        platform: "generic",
+        precursorLinks: [],
+        followedPrecursorLink: null,
+        fields: [{
+          key: "synthetic-phone-key",
+          label: "Phone number",
+          type: "phone",
+          required: true,
+          options: [],
+          placeholder: null,
+          helpText: null,
+          accept: null,
+        }],
+      },
+      answerPlan: [{
+        fieldKey: "synthetic-phone-key",
+        fieldLabel: "Phone number",
+        fieldType: "phone",
+        question: { label: "Phone number", inputType: "phone" },
+        answer: "+905551112233",
+        source: "candidate-profile",
+        confidenceLabel: "high",
+      }],
+      candidateProfile,
+    });
+
+    expect(actions).toContainEqual({
+      type: "fill",
+      selector: `label:has-text("Phone number") input`,
+      value: "+905551112233",
+    });
+    expect(actions).not.toContainEqual(expect.objectContaining({
+      type: "fill",
+      selector: `label:has-text("Phone number")`,
+    }));
+    expect(result.fieldResults[0]?.status).toBe("filled");
+  });
+
+  it("finds a text input rendered as a sibling of its visible label", async () => {
+    const { page, register, actions } = createLocatorRecorder();
+    register(`label:has-text("Mobile") ~ * input`);
+
+    const result = await fillExternalApplicationPage({
+      page: page as never,
+      discovery: {
+        sourceUrl: "https://jobs.example.com/apply",
+        finalUrl: "https://jobs.example.com/apply",
+        pageTitle: "Application",
+        platform: "generic",
+        precursorLinks: [],
+        followedPrecursorLink: null,
+        fields: [{
+          key: "generated-mobile",
+          label: "Mobile",
+          type: "phone",
+          required: true,
+          options: [],
+          placeholder: null,
+          helpText: null,
+          accept: null,
+        }],
+      },
+      answerPlan: [{
+        fieldKey: "generated-mobile",
+        fieldLabel: "Mobile",
+        fieldType: "phone",
+        question: { label: "Mobile", inputType: "phone" },
+        answer: "+905551112233",
+        source: "candidate-profile",
+        confidenceLabel: "high",
+      }],
+      candidateProfile,
+    });
+
+    expect(actions).toContainEqual({
+      type: "fill",
+      selector: `label:has-text("Mobile") ~ * input`,
+      value: "+905551112233",
+    });
+    expect(result.fieldResults[0]?.status).toBe("filled");
+  });
+
+  it("fails safely when only a bare label matches a text field", async () => {
+    const { page, register, actions } = createLocatorRecorder();
+    register(`label:has-text("Phone number")`);
+
+    const result = await fillExternalApplicationPage({
+      page: page as never,
+      discovery: {
+        sourceUrl: "https://jobs.example.com/apply",
+        finalUrl: "https://jobs.example.com/apply",
+        pageTitle: "Application",
+        platform: "generic",
+        precursorLinks: [],
+        followedPrecursorLink: null,
+        fields: [{
+          key: "generated-phone",
+          label: "Phone number",
+          type: "short_text",
+          required: true,
+          options: [],
+          placeholder: null,
+          helpText: null,
+          accept: null,
+        }],
+      },
+      answerPlan: [{
+        fieldKey: "generated-phone",
+        fieldLabel: "Phone number",
+        fieldType: "short_text",
+        question: { label: "Phone number", inputType: "short_text" },
+        answer: "+905551112233",
+        source: "candidate-profile",
+        confidenceLabel: "high",
+      }],
+      candidateProfile,
+    });
+
+    expect(actions).toEqual([]);
+    expect(result.fieldResults[0]).toEqual(expect.objectContaining({
+      status: "failed",
+      details: "Could not find a matching form control on the page.",
+    }));
+    expect(result.blockingRequiredFields).toEqual(["Phone number"]);
+  });
 });

@@ -32,7 +32,11 @@ export const formAnswerResponseFormat: JsonSchemaResponseFormat = {
     properties: {
       answer: {
         anyOf: [
-          { type: "string", maxLength: 2_000 },
+          // LM Studio's llama.cpp grammar compiler rejects this schema when the
+          // bounded string is as large as 2,000 characters. Keep the structured
+          // output grammar small enough to compile locally; downstream Zod
+          // validation remains the final safety boundary.
+          { type: "string", maxLength: 500 },
           { type: "boolean" },
           { type: "null" },
         ],

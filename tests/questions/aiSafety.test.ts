@@ -42,7 +42,11 @@ function createProfile(): CandidateProfile {
       startDate: "2026-09-15",
       canStartImmediately: false,
     },
-    references: [{ name: "Manager", linkedinUrl: "https://linkedin.com/in/manager", relationship: "Manager" }],
+    references: [{
+      name: "Manager",
+      linkedinUrl: "https://linkedin.com/in/manager",
+      relationship: "Manager",
+    }],
     willingToRelocate: true,
     remotePreference: "remote-first",
     remoteOnly: false,
@@ -164,11 +168,13 @@ describe("AI form-answer safety", () => {
   });
 
   it("projects the minimal direct evidence for availability, location, and relocation", () => {
-    const profile = createProfile();
-    expect(projectCandidateEvidence(profile, "availability")).toEqual({ availability: profile.availability });
-    expect(projectCandidateEvidence(profile, "location")).toEqual({ location: "Berlin" });
-    expect(projectCandidateEvidence(profile, "relocation")).toEqual({ willingToRelocate: true });
-    expect(projectCandidateEvidence({ ...profile, availability: undefined }, "availability"))
+    const candidate = createProfile();
+    expect(projectCandidateEvidence(candidate, "availability")).toEqual({
+      availability: candidate.availability,
+    });
+    expect(projectCandidateEvidence(candidate, "location")).toEqual({ location: "Berlin" });
+    expect(projectCandidateEvidence(candidate, "relocation")).toEqual({ willingToRelocate: true });
+    expect(projectCandidateEvidence({ ...candidate, availability: undefined }, "availability"))
       .toEqual({ availability: null });
   });
 
@@ -208,9 +214,12 @@ describe("AI form-answer safety", () => {
     expect(Object.keys(evidence)).toEqual(["currentTitle", "summary", "skills", "languages"]);
   });
 
-  it.each([null, undefined, "", "not a URL"])("returns null for absent/invalid source URL %j", (url) => {
-    expect(sanitizeSourceUrl(url)).toBeNull();
-  });
+  it.each([null, undefined, "", "not a URL"])(
+    "returns null for absent/invalid source URL %j",
+    (url) => {
+      expect(sanitizeSourceUrl(url)).toBeNull();
+    },
+  );
 
   it("removes credentials, query parameters, and fragments from source URLs", () => {
     expect(
@@ -229,5 +238,64 @@ describe("AI form-answer safety", () => {
         required: ["answer", "confidence", "notes"],
       },
     });
+  });
+});
+
+describe("formAnswerResponseFormat", () => {
+  it("keeps the answer string bound compatible with the local LM Studio grammar compiler", () => {
+    const schema = formAnswerResponseFormat.schema as {
+      properties: { answer: { anyOf: Array<Record<string, unknown>> } };
+    };
+
+    expect(schema.properties.answer.anyOf).toContainEqual({
+      type: "string",
+      maxLength: 500,
+    });
+  });
+
+  it("does not expose grammar string bounds above the verified local limit", () => {
+    const bounds: number[] = [];
+    const visit = (value: unknown): void => {
+      if (Array.isArray(value)) {
+        value.forEach(visit);
+        return;
+      }
+      if (!value || typeof value !== "object") {
+        return;
+      }
+      for (const [key, nested] of Object.entries(value)) {
+        if (key === "maxLength" && typeof nested === "number") {
+          bounds.push(nested);
+        }
+        visit(nested);
+      }
+    };
+
+    visit(formAnswerResponseFormat.schema);
+    expect(bounds.length).toBeGreaterThan(0);
+    expect(Math.max(...bounds)).toBeLessThanOrEqual(500);
+  });
+
+  it("retains string, boolean, and null answer alternatives", () => {
+    const schema = formAnswerResponseFormat.schema as {
+      properties: { answer: { anyOf: Array<{ type: string }> } };
+    };
+
+    expect(schema.properties.answer.anyOf.map((entry) => entry.type)).toEqual([
+      "string",
+      "boolean",
+      "null",
+    ]);
+  });
+
+  it("keeps strict required output fields", () => {
+    const schema = formAnswerResponseFormat.schema as {
+      additionalProperties: boolean;
+      required: string[];
+    };
+
+    expect(schema.additionalProperties).toBe(false);
+    expect(schema.required).toEqual(["answer", "confidence", "notes"]);
+    expect(formAnswerResponseFormat.strict).toBe(true);
   });
 });

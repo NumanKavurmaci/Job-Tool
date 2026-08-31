@@ -8,6 +8,7 @@ import type {
   EasyApplyDriver,
   EasyApplyProcessingDriverLease,
   EasyApplyExternalDetection,
+  EasyApplyPaginationStopReason,
   EasyApplyJobApplicationState,
   EasyApplyProcessingTimeoutResetInput,
   EasyApplyPrimaryAction,
@@ -95,6 +96,10 @@ const EXTERNAL_HEADER_APPLY_FALLBACK_SELECTOR = [
   "button[aria-label*='Apply on company website']",
   "a[href*='linkedin.com/safety/go']:has-text('Apply')",
   "a[target='_blank'][href*='linkedin.com/safety/go']",
+  "button.jobs-apply-button[role='link']",
+  "a.jobs-apply-button",
+  "button[data-view-name='job-apply-button'][role='link']",
+  "a[data-view-name='job-apply-button']",
 ].join(", ");
 
 const SAFETY_REMINDER_TITLE_SELECTOR = [
@@ -318,6 +323,8 @@ interface PlaywrightLinkedInEasyApplyDriverOptions {
   paginationChangeTimeoutMs?: number;
   paginationPollIntervalMs?: number;
   pageResetTimeoutMs?: number;
+  externalApplyDetectionTimeoutMs?: number;
+  externalApplyDetectionPollIntervalMs?: number;
 }
 
 interface LinkedInResultsPageFingerprint {
@@ -329,6 +336,7 @@ interface LinkedInResultsPageFingerprint {
 export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
   private collectionUrl: string | null = null;
   private readonly ownedPages = new Set<Page>();
+  private lastPaginationStopReason: EasyApplyPaginationStopReason | null = null;
 
   constructor(
     private page: Page,
@@ -777,7 +785,27 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
   }
 
   async isExternalApplyAvailable(): Promise<boolean> {
-    return (await this.resolveExternalApplyTrigger()) !== null;
+    const timeoutMs = Math.max(
+      0,
+      Math.floor(this.options.externalApplyDetectionTimeoutMs ?? 1_000),
+    );
+    const pollIntervalMs = Math.max(
+      1,
+      Math.floor(this.options.externalApplyDetectionPollIntervalMs ?? 100),
+    );
+    const startedAt = Date.now();
+    do {
+      if ((await this.resolveExternalApplyTrigger()) !== null) {
+        return true;
+      }
+      const remainingMs = timeoutMs - (Date.now() - startedAt);
+      if (remainingMs <= 0) {
+        return false;
+      }
+      await this.page.waitForTimeout(Math.min(pollIntervalMs, remainingMs));
+    } while (Date.now() - startedAt <= timeoutMs);
+
+    return false;
   }
 
   private readCapturedExternalApplyUrl(previousUrl: string): string | null {
@@ -1177,6 +1205,7 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
   }
 
   async goToNextResultsPage(): Promise<boolean> {
+    this.lastPaginationStopReason = null;
     const locator = this.page
       .locator(
         "button[aria-label='View next page'], button.jobs-search-pagination__button--next",
@@ -1184,10 +1213,18 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
       .first();
 
     if ((await locator.count()) === 0) {
+      this.lastPaginationStopReason = {
+        code: "next_control_missing",
+        message: "No next-page control was present on the LinkedIn results page.",
+      };
       return false;
     }
 
     if (await locator.isDisabled().catch(() => false)) {
+      this.lastPaginationStopReason = {
+        code: "next_control_disabled",
+        message: "The LinkedIn next-page control was disabled.",
+      };
       return false;
     }
 
@@ -1195,6 +1232,10 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
     try {
       await locator.click();
     } catch {
+      this.lastPaginationStopReason = {
+        code: "next_control_click_failed",
+        message: "The LinkedIn next-page control could not be clicked.",
+      };
       return false;
     }
 
@@ -1227,7 +1268,15 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
       await this.page.waitForTimeout(Math.min(pollIntervalMs, remainingMs));
     }
 
+    this.lastPaginationStopReason = {
+      code: "results_unchanged_timeout",
+      message: "The LinkedIn results did not change after the next-page control was clicked.",
+    };
     return false;
+  }
+
+  getLastPaginationStopReason(): EasyApplyPaginationStopReason | null {
+    return this.lastPaginationStopReason;
   }
 
   async collectStepState(): Promise<EasyApplyStepStateSnapshot> {

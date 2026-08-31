@@ -10,6 +10,7 @@ vi.mock("../../src/questions/strategies/aiCorrection.js", () => ({
 import {
   chooseRadioValue,
   isAutoHandledQuestion,
+  isCompletedEasyApplyResult,
   isManualReviewAnswer,
   isSubmitButtonLabel,
   resolveLinkedInExternalApplyUrl,
@@ -136,6 +137,60 @@ describe("easy apply helpers", () => {
     const lookalikeWrapper =
       "https://linkedin.com.evil.test/safety/go/?url=https%3A%2F%2Fcompany.example%2Fapply";
     expect(resolveLinkedInExternalApplyUrl(lookalikeWrapper)).toBe(lookalikeWrapper);
+  });
+
+  it("counts only terminal submit results as completed applications", () => {
+    const baseExternal = {
+      status: "stopped_external_apply" as const,
+      steps: [],
+      stopReason: "External handoff",
+      url: "https://www.linkedin.com/jobs/view/1",
+    };
+
+    expect(isCompletedEasyApplyResult(undefined)).toBe(false);
+    expect(isCompletedEasyApplyResult({ ...baseExternal })).toBe(false);
+    expect(isCompletedEasyApplyResult({
+      ...baseExternal,
+      externalApplication: {
+        sourceUrl: baseExternal.url,
+        externalApplyUrl: "https://jobs.example/apply",
+        canonicalUrl: "https://jobs.example/apply",
+        runType: "submit",
+        status: "completed",
+        finalStage: "form_step",
+      },
+    })).toBe(false);
+    expect(isCompletedEasyApplyResult({
+      ...baseExternal,
+      externalApplication: {
+        sourceUrl: baseExternal.url,
+        externalApplyUrl: "https://jobs.example/apply",
+        canonicalUrl: "https://jobs.example/apply",
+        runType: "submit",
+        status: "completed",
+        finalStage: "completed",
+      },
+    })).toBe(true);
+  });
+
+  it("treats the final submit step as complete only in dry-run mode", () => {
+    const buildResult = (runType: "dry-run" | "submit") => ({
+      status: "stopped_external_apply" as const,
+      steps: [],
+      stopReason: "External handoff",
+      url: "https://www.linkedin.com/jobs/view/1",
+      externalApplication: {
+        sourceUrl: "https://www.linkedin.com/jobs/view/1",
+        externalApplyUrl: "https://jobs.example/apply",
+        canonicalUrl: "https://jobs.example/apply",
+        runType,
+        status: "completed" as const,
+        finalStage: "final_submit_step",
+      },
+    });
+
+    expect(isCompletedEasyApplyResult(buildResult("dry-run"))).toBe(true);
+    expect(isCompletedEasyApplyResult(buildResult("submit"))).toBe(false);
   });
 });
 
@@ -2902,6 +2957,276 @@ describe("runEasyApplyBatchInternal", () => {
     expect(result.status).toBe("partial");
     expect(result.stopReason).toContain("stopped before completion");
     expect(result.stopReason).toContain("recovery attempt(s) failed");
+  });
+});
+
+describe("batch completion accounting regressions", () => {
+  const approvedEvaluation = {
+    shouldApply: true,
+    finalDecision: "APPLY" as const,
+    score: 90,
+    reason: "Strong fit.",
+    policyAllowed: true,
+  };
+
+  const answerResolver = async () => ({
+    questionType: "contact_info" as const,
+    strategy: "deterministic" as const,
+    answer: "123",
+    confidence: 0.95,
+    confidenceLabel: "high" as const,
+    source: "candidate-profile" as const,
+  });
+
+  it("continues after a failed approved attempt until the successful target is reached", async () => {
+    const driver = {
+      open: vi.fn(),
+      openCollection: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn()
+        .mockRejectedValueOnce(new Error("first modal failed"))
+        .mockResolvedValueOnce(undefined),
+      collectQuestions: vi.fn().mockResolvedValue([]),
+      collectVisibleJobs: vi.fn().mockResolvedValue([
+        { url: "https://www.linkedin.com/jobs/view/101", alreadyApplied: false },
+        { url: "https://www.linkedin.com/jobs/view/102", alreadyApplied: false },
+      ]),
+      goToNextResultsPage: vi.fn().mockResolvedValue(false),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn().mockResolvedValue("submit"),
+      advance: vi.fn(),
+      dismissCompletionModal: vi.fn().mockResolvedValue(true),
+    };
+
+    const result = await runEasyApplyBatchInternal({
+      driver,
+      url: "https://www.linkedin.com/jobs/collections/easy-apply",
+      targetCount: 1,
+      candidateProfile: profile,
+      evaluateJob: async () => approvedEvaluation,
+      resolveAnswer: answerResolver,
+    }, "submit");
+
+    expect(result.status).toBe("completed");
+    expect(result.attemptedCount).toBe(2);
+    expect(result.successfulCount).toBe(1);
+    expect(result.jobs.map((job) => job.result?.status)).toEqual([
+      "stopped_unknown_action",
+      "submitted",
+    ]);
+    expect(result.stopReason).toContain("after 2 approved attempt(s)");
+  });
+
+  it("does not count an external form-step handoff and continues to a completed handoff", async () => {
+    const driver = {
+      open: vi.fn(),
+      openCollection: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(false),
+      isExternalApplyAvailable: vi.fn().mockResolvedValue(true),
+      getExternalApplyDetection: vi.fn().mockResolvedValue({
+        source: "explicit_company_website_cta",
+        signals: ["selector:explicit_company_website_cta"],
+      }),
+      getExternalApplyUrl: vi.fn().mockResolvedValue("https://jobs.example.com/apply"),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn(),
+      collectVisibleJobs: vi.fn().mockResolvedValue([
+        { url: "https://www.linkedin.com/jobs/view/201", alreadyApplied: false },
+        { url: "https://www.linkedin.com/jobs/view/202", alreadyApplied: false },
+      ]),
+      goToNextResultsPage: vi.fn().mockResolvedValue(false),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn(),
+      advance: vi.fn(),
+    };
+    const continueExternalApplication = vi.fn()
+      .mockResolvedValueOnce({
+        sourceUrl: "https://www.linkedin.com/jobs/view/201",
+        externalApplyUrl: "https://jobs.example.com/apply",
+        canonicalUrl: "https://jobs.example.com/apply",
+        runType: "submit",
+        status: "failed",
+        finalStage: "form_step",
+      })
+      .mockResolvedValueOnce({
+        sourceUrl: "https://www.linkedin.com/jobs/view/202",
+        externalApplyUrl: "https://jobs.example.com/apply",
+        canonicalUrl: "https://jobs.example.com/apply",
+        runType: "submit",
+        status: "completed",
+        finalStage: "completed",
+      });
+
+    const result = await runEasyApplyBatchInternal({
+      driver,
+      url: "https://www.linkedin.com/jobs/collections/easy-apply",
+      targetCount: 1,
+      candidateProfile: profile,
+      evaluateJob: async () => ({
+        ...approvedEvaluation,
+        diagnostics: { applicationType: "external" },
+      }),
+      resolveAnswer: answerResolver,
+      continueExternalApplication,
+    }, "submit");
+
+    expect(result.status).toBe("completed");
+    expect(result.attemptedCount).toBe(2);
+    expect(result.successfulCount).toBe(1);
+    expect(continueExternalApplication).toHaveBeenCalledTimes(2);
+    expect(result.jobs[0]?.result?.externalApplication?.finalStage).toBe("form_step");
+    expect(result.jobs[1]?.result?.externalApplication?.finalStage).toBe("completed");
+  });
+
+  it("does not count a submit-mode external final-submit step as submitted", async () => {
+    const paginationEvent = vi.fn();
+    const driver = {
+      open: vi.fn(),
+      openCollection: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(false),
+      isExternalApplyAvailable: vi.fn().mockResolvedValue(true),
+      getExternalApplyDetection: vi.fn().mockResolvedValue({
+        source: "explicit_company_website_cta",
+        signals: ["selector:explicit_company_website_cta"],
+      }),
+      getExternalApplyUrl: vi.fn().mockResolvedValue("https://jobs.example.com/apply"),
+      collectVisibleJobs: vi.fn().mockResolvedValue([
+        { url: "https://www.linkedin.com/jobs/view/301", alreadyApplied: false },
+      ]),
+      goToNextResultsPage: vi.fn().mockResolvedValue(false),
+      getLastPaginationStopReason: vi.fn().mockReturnValue({
+        code: "next_control_disabled",
+        message: "The next control was disabled.",
+      }),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn(),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn(),
+      advance: vi.fn(),
+    };
+
+    const result = await runEasyApplyBatchInternal({
+      driver,
+      url: "https://www.linkedin.com/jobs/collections/easy-apply",
+      targetCount: 1,
+      candidateProfile: profile,
+      evaluateJob: async () => ({
+        ...approvedEvaluation,
+        diagnostics: { applicationType: "external" },
+      }),
+      resolveAnswer: answerResolver,
+      continueExternalApplication: async () => ({
+        sourceUrl: "https://www.linkedin.com/jobs/view/301",
+        externalApplyUrl: "https://jobs.example.com/apply",
+        canonicalUrl: "https://jobs.example.com/apply",
+        runType: "submit",
+        status: "completed",
+        finalStage: "final_submit_step",
+      }),
+      observeBatchEvent: paginationEvent,
+    }, "submit");
+
+    expect(result.status).toBe("partial");
+    expect(result.successfulCount).toBe(0);
+    expect(result.paginationStopReason?.code).toBe("next_control_disabled");
+    expect(paginationEvent).toHaveBeenCalledWith(expect.objectContaining({
+      type: "pagination_stopped",
+      reason: expect.objectContaining({ code: "next_control_disabled" }),
+    }));
+  });
+
+  it("counts a dry-run external final-submit step as a successful readiness check", async () => {
+    const driver = {
+      open: vi.fn(),
+      openCollection: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(false),
+      isExternalApplyAvailable: vi.fn().mockResolvedValue(true),
+      getExternalApplyDetection: vi.fn().mockResolvedValue({
+        source: "explicit_company_website_cta",
+        signals: ["selector:explicit_company_website_cta"],
+      }),
+      getExternalApplyUrl: vi.fn().mockResolvedValue("https://jobs.example.com/apply"),
+      collectVisibleJobs: vi.fn().mockResolvedValue([
+        { url: "https://www.linkedin.com/jobs/view/401", alreadyApplied: false },
+      ]),
+      goToNextResultsPage: vi.fn(),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn(),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn(),
+      advance: vi.fn(),
+    };
+
+    const result = await runEasyApplyBatchInternal({
+      driver,
+      url: "https://www.linkedin.com/jobs/collections/easy-apply",
+      targetCount: 1,
+      candidateProfile: profile,
+      evaluateJob: async () => ({
+        ...approvedEvaluation,
+        diagnostics: { applicationType: "external" },
+      }),
+      resolveAnswer: answerResolver,
+      continueExternalApplication: async () => ({
+        sourceUrl: "https://www.linkedin.com/jobs/view/401",
+        externalApplyUrl: "https://jobs.example.com/apply",
+        canonicalUrl: "https://jobs.example.com/apply",
+        runType: "dry-run",
+        status: "completed",
+        finalStage: "final_submit_step",
+      }),
+    }, "dry-run");
+
+    expect(result.status).toBe("completed");
+    expect(result.successfulCount).toBe(1);
+    expect(driver.goToNextResultsPage).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a structured pagination reason even when no jobs were found", async () => {
+    const events: unknown[] = [];
+    const driver = {
+      open: vi.fn(),
+      openCollection: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      collectVisibleJobs: vi.fn().mockResolvedValue([]),
+      goToNextResultsPage: vi.fn().mockResolvedValue(false),
+      getLastPaginationStopReason: vi.fn().mockReturnValue({
+        code: "next_control_missing",
+        message: "No next-page control was present.",
+      }),
+      isEasyApplyAvailable: vi.fn(),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn(),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn(),
+      advance: vi.fn(),
+    };
+
+    const result = await runEasyApplyBatchInternal({
+      driver,
+      url: "https://www.linkedin.com/jobs/collections/easy-apply",
+      targetCount: 10,
+      candidateProfile: profile,
+      evaluateJob: async () => approvedEvaluation,
+      resolveAnswer: answerResolver,
+      observeBatchEvent: (event) => events.push(event),
+    }, "submit");
+
+    expect(result.status).toBe("stopped_no_jobs");
+    expect(result.successfulCount).toBe(0);
+    expect(result.paginationStopReason).toEqual({
+      code: "next_control_missing",
+      message: "No next-page control was present.",
+    });
+    expect(result.stopReason).toContain("No LinkedIn Easy Apply jobs");
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "pagination_stopped",
+      reason: expect.objectContaining({ code: "next_control_missing" }),
+    }));
   });
 });
 

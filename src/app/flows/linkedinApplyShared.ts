@@ -32,7 +32,10 @@ import type {
   EasyApplyRunResult,
   EasyApplyStepReport,
 } from "../../linkedin/easyApply.js";
-import { resolveLinkedInExternalApplyUrl } from "../../linkedin/easyApply.js";
+import {
+  isCompletedEasyApplyResult,
+  resolveLinkedInExternalApplyUrl,
+} from "../../linkedin/easyApply.js";
 import { assertSafeNavigationUrl } from "../../security/navigationSafety.js";
 import {
   runExternalApplyDryRunFlow,
@@ -84,27 +87,20 @@ function reconcileBatchResultAfterExternalHandoffs(
   }
 
   const approvedJobs = batchResult.jobs.filter((job) => job.evaluation.shouldApply);
-  const incompleteApprovedJobs = approvedJobs.filter((job) => {
-    const result = job.result;
-    if (!result) {
-      return true;
-    }
-    if (result.status === "submitted" || result.status === "ready_to_submit") {
-      return false;
-    }
-    return !(
-      result.status === "stopped_external_apply" &&
-      result.externalApplication?.status === "completed"
-    );
-  });
+  const incompleteApprovedJobs = approvedJobs.filter(
+    (job) => !isCompletedEasyApplyResult(job.result),
+  );
+  const successfulCount = approvedJobs.length - incompleteApprovedJobs.length;
+  batchResult.successfulCount = successfulCount;
 
   if (
-    batchResult.attemptedCount >= batchResult.requestedCount &&
-    incompleteApprovedJobs.length === 0
+    successfulCount >= batchResult.requestedCount &&
+    batchResult.paginationStopReason == null
   ) {
     batchResult.status = "completed";
     batchResult.stopReason =
-      `Processed ${batchResult.attemptedCount} LinkedIn apply job(s), including completed external handoffs.`;
+      `Completed ${successfulCount} requested LinkedIn application(s) after ` +
+      `${batchResult.attemptedCount} approved attempt(s), including external handoffs.`;
     return batchResult;
   }
 
@@ -114,7 +110,8 @@ function reconcileBatchResultAfterExternalHandoffs(
       (job) => job.result?.recovery?.attempted && !job.result.recovery.succeeded,
     ).length;
     batchResult.stopReason =
-      `Processed ${batchResult.attemptedCount} approved LinkedIn apply job(s), but ` +
+      `Completed ${successfulCount} of ${batchResult.requestedCount} requested LinkedIn ` +
+      `application(s) after ${batchResult.attemptedCount} approved attempt(s); ` +
       `${incompleteApprovedJobs.length} attempt(s) stopped before completion` +
       `${failedRecoveries > 0 ? ` and ${failedRecoveries} recovery attempt(s) failed` : ""}.`;
   }
@@ -293,12 +290,17 @@ async function continueExternalApplyFromLinkedIn(args: {
             originalJobUrl: args.easyApplyResult.url,
           });
 
+    const handoffCompleted = handoffRunType === "submit"
+      ? externalResult.finalStage === "completed"
+      : externalResult.finalStage === "completed" ||
+        externalResult.finalStage === "final_submit_step";
+
     const handoff: EasyApplyExternalApplicationHandoff = {
       sourceUrl: args.easyApplyResult.url,
       externalApplyUrl: rawExternalApplyUrl,
       canonicalUrl,
       runType: handoffRunType,
-      status: "completed",
+      status: handoffCompleted ? "completed" : "failed",
       finalStage: externalResult.finalStage,
       stopReason: externalResult.stopReason,
       failureReasonCode: externalResult.failureReasonCode,
@@ -598,6 +600,33 @@ function createBatchEventObserver(args: {
           args.deps,
         );
         return;
+      case "pagination_stopped":
+        args.deps.logger.warn(
+          {
+            event: "linkedin.batch.pagination_stopped",
+            collectionUrl: event.collectionUrl,
+            pageNumber: event.pageNumber,
+            reasonCode: event.reason.code,
+            reason: event.reason.message,
+          },
+          "LinkedIn batch pagination stopped",
+        );
+        await persistSystemEvent(
+          {
+            level: "WARN",
+            scope: "linkedin.batch",
+            message: "LinkedIn batch pagination stopped before reaching its target.",
+            runType: args.runType,
+            jobUrl: event.collectionUrl,
+            details: {
+              pageNumber: event.pageNumber,
+              reasonCode: event.reason.code,
+              reason: event.reason.message,
+            },
+          },
+          args.deps,
+        );
+        return;
     }
   };
 }
@@ -648,6 +677,18 @@ async function runLinkedInDryRunFlow(
           evaluateJob,
           resolveAnswer: resolveCandidateAnswer,
           observeBatchEvent,
+          ...(options.enableExternalApplyHandoff && isBatchRun
+            ? {
+                continueExternalApplication: (easyApplyResult: EasyApplyRunResult) =>
+                  continueExternalApplyFromLinkedIn({
+                    runType,
+                    resumePath: args.resumePath,
+                    easyApplyResult,
+                    driver,
+                    deps,
+                  }),
+              }
+            : {}),
         };
 
         try {
@@ -675,7 +716,10 @@ async function runLinkedInDryRunFlow(
                 continue;
               }
 
-              if (options.enableExternalApplyHandoff) {
+              if (
+                options.enableExternalApplyHandoff &&
+                !job.result.externalApplication
+              ) {
                 const externalApplication = await continueExternalApplyFromLinkedIn({
                   runType,
                   resumePath: args.resumePath,
@@ -1157,6 +1201,20 @@ async function runLinkedInBatchFlow(
             evaluateJob,
             resolveAnswer: resolveCandidateAnswer,
             observeBatchEvent,
+            ...(options.enableExternalApplyHandoff
+              ? {
+                  continueExternalApplication: (
+                    easyApplyResult: EasyApplyRunResult,
+                  ) =>
+                    continueExternalApplyFromLinkedIn({
+                      runType,
+                      resumePath: args.resumePath,
+                      easyApplyResult,
+                      driver,
+                      deps,
+                    }),
+                }
+              : {}),
           });
 
           for (const job of batchResult.jobs) {
@@ -1177,7 +1235,10 @@ async function runLinkedInBatchFlow(
               continue;
             }
 
-            if (options.enableExternalApplyHandoff) {
+            if (
+              options.enableExternalApplyHandoff &&
+              !job.result.externalApplication
+            ) {
               const externalApplication = await continueExternalApplyFromLinkedIn({
                 runType,
                 resumePath: args.resumePath,

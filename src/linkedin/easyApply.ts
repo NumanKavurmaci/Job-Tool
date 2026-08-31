@@ -181,6 +181,20 @@ export interface EasyApplyBatchRunResult {
   pagesVisited: number;
   jobs: EasyApplyBatchJobResult[];
   stopReason: string;
+  successfulCount?: number;
+  paginationStopReason?: EasyApplyPaginationStopReason;
+}
+
+export type EasyApplyPaginationStopReasonCode =
+  | "next_control_missing"
+  | "next_control_disabled"
+  | "next_control_click_failed"
+  | "results_unchanged_timeout"
+  | "driver_could_not_advance";
+
+export interface EasyApplyPaginationStopReason {
+  code: EasyApplyPaginationStopReasonCode;
+  message: string;
 }
 
 export interface EasyApplyProcessingDriverLease {
@@ -207,6 +221,7 @@ export interface EasyApplyDriver {
   collectVisibleJobs?(): Promise<EasyApplyCollectionJob[]>;
   collectVisibleJobUrls?(): Promise<string[]>;
   goToNextResultsPage(): Promise<boolean>;
+  getLastPaginationStopReason?(): EasyApplyPaginationStopReason | null;
   collectStepState?(): Promise<EasyApplyStepStateSnapshot>;
   collectReviewDiagnostics?(): Promise<EasyApplyReviewDiagnostics>;
   collectUnknownActionDiagnostics?(): Promise<EasyApplyUnknownActionDiagnostics>;
@@ -248,6 +263,9 @@ export interface EasyApplyBatchRunInput {
   collectionContextTimeoutMs?: number;
   maxPages?: number;
   maxConsecutiveNoProgressPages?: number;
+  continueExternalApplication?: (
+    result: EasyApplyRunResult,
+  ) => Promise<EasyApplyExternalApplicationHandoff | null>;
   observeBatchEvent?: (event: EasyApplyBatchEvent) => Promise<void> | void;
 }
 
@@ -315,6 +333,12 @@ export type EasyApplyBatchEvent =
       type: "page_advanced";
       collectionUrl: string;
       pageNumber: number;
+    }
+  | {
+      type: "pagination_stopped";
+      collectionUrl: string;
+      pageNumber: number;
+      reason: EasyApplyPaginationStopReason;
     };
 
 interface PreparedStepQuestionResult {
@@ -719,6 +743,29 @@ function isExternalApplicationEvaluation(
   evaluation: EasyApplyJobEvaluation,
 ): boolean {
   return evaluation.diagnostics?.applicationType?.trim().toLowerCase() === "external";
+}
+
+export function isCompletedEasyApplyResult(
+  result: EasyApplyRunResult | undefined,
+): boolean {
+  if (!result) {
+    return false;
+  }
+  if (result.status === "submitted" || result.status === "ready_to_submit") {
+    return true;
+  }
+  if (result.status !== "stopped_external_apply") {
+    return false;
+  }
+
+  const handoff = result.externalApplication;
+  if (!handoff || handoff.status !== "completed") {
+    return false;
+  }
+  if (handoff.runType === "submit") {
+    return handoff.finalStage === "completed";
+  }
+  return handoff.finalStage === "completed" || handoff.finalStage === "final_submit_step";
 }
 
 function buildUnverifiedExternalApplyResult(args: {
@@ -1427,9 +1474,11 @@ export async function runEasyApplyBatchInternal(
   let pagesVisited = 0;
   let skippedCount = 0;
   let attemptedCount = 0;
+  let successfulCount = 0;
   let recoveryFailureCount = 0;
   let consecutiveNoProgressPages = 0;
   let boundedStopReason: string | null = null;
+  let paginationStopReason: EasyApplyPaginationStopReason | null = null;
 
   await input.driver.ensureAuthenticated(input.url);
   await input.driver.openCollection(input.url);
@@ -1440,7 +1489,7 @@ export async function runEasyApplyBatchInternal(
     pageNumber: pagesVisited,
   });
 
-  while (attemptedCount < requestedCount) {
+  while (successfulCount < requestedCount) {
     const seenCountBeforePage = seenUrls.size;
     const visibleJobs = await collectVisibleBatchJobs(input.driver);
 
@@ -1564,6 +1613,20 @@ export async function runEasyApplyBatchInternal(
           submitMode,
           processingLease != null,
         );
+        if (
+          entry.result.status === "stopped_external_apply" &&
+          input.continueExternalApplication
+        ) {
+          const externalApplication = await input.continueExternalApplication(
+            entry.result,
+          );
+          if (externalApplication) {
+            entry.result = {
+              ...entry.result,
+              externalApplication,
+            };
+          }
+        }
         await disposeProcessingLease();
       } catch (error) {
         await disposeProcessingLease().catch(() => undefined);
@@ -1648,6 +1711,9 @@ export async function runEasyApplyBatchInternal(
         result: entry.result,
       });
       attemptedCount += 1;
+      if (isCompletedEasyApplyResult(entry.result)) {
+        successfulCount += 1;
+      }
 
       if (boundedStopReason) {
         break;
@@ -1689,12 +1755,12 @@ export async function runEasyApplyBatchInternal(
         }
       }
 
-      if (attemptedCount >= requestedCount) {
+      if (successfulCount >= requestedCount) {
         break;
       }
     }
 
-    if (boundedStopReason || attemptedCount >= requestedCount) {
+    if (boundedStopReason || successfulCount >= requestedCount) {
       break;
     }
 
@@ -1717,6 +1783,18 @@ export async function runEasyApplyBatchInternal(
 
     const advanced = await input.driver.goToNextResultsPage();
     if (!advanced) {
+      paginationStopReason = input.driver.getLastPaginationStopReason?.() ?? {
+        code: "driver_could_not_advance",
+        message: "The LinkedIn results driver could not advance to another page.",
+      };
+      boundedStopReason =
+        `Stopped LinkedIn pagination on page ${pagesVisited}: ${paginationStopReason.message}`;
+      await input.observeBatchEvent?.({
+        type: "pagination_stopped",
+        collectionUrl: input.url,
+        pageNumber: pagesVisited,
+        reason: paginationStopReason,
+      });
       break;
     }
 
@@ -1734,47 +1812,49 @@ export async function runEasyApplyBatchInternal(
       collectionUrl: input.url,
       requestedCount,
       attemptedCount: 0,
+      successfulCount: 0,
       evaluatedCount: 0,
       skippedCount: 0,
       pagesVisited,
       jobs: [],
-      stopReason: boundedStopReason ??
+      stopReason: [
         "No LinkedIn Easy Apply jobs were discovered from the collection page.",
+        boundedStopReason,
+      ].filter(Boolean).join(" "),
+      ...(paginationStopReason ? { paginationStopReason } : {}),
     };
   }
 
   const approvedJobs = jobs.filter((job) => job.evaluation.shouldApply);
   const incompleteApprovedJobs = approvedJobs.filter(
-    (job) =>
-      job.result == null ||
-      (job.result.status !== "submitted" &&
-        job.result.status !== "ready_to_submit"),
+    (job) => !isCompletedEasyApplyResult(job.result),
   );
   const status =
-    attemptedCount >= requestedCount &&
-    incompleteApprovedJobs.length === 0 &&
+    successfulCount >= requestedCount &&
     boundedStopReason === null
       ? "completed"
       : "partial";
   const incompleteStopReason = incompleteApprovedJobs.length > 0
-    ? `Processed ${attemptedCount} approved LinkedIn apply job(s), but ${incompleteApprovedJobs.length} attempt(s) stopped before completion${recoveryFailureCount > 0 ? ` and ${recoveryFailureCount} recovery attempt(s) failed` : ""}.`
+    ? `Completed ${successfulCount} of ${requestedCount} requested LinkedIn application(s) after ${attemptedCount} approved attempt(s); ${incompleteApprovedJobs.length} attempt(s) stopped before completion${recoveryFailureCount > 0 ? ` and ${recoveryFailureCount} recovery attempt(s) failed` : ""}.`
     : null;
   const stopReason =
     status === "completed"
-      ? `Processed ${attemptedCount} LinkedIn apply job(s).`
+      ? `Completed ${successfulCount} requested LinkedIn application(s) after ${attemptedCount} approved attempt(s).`
       : [incompleteStopReason, boundedStopReason].filter(Boolean).join(" ") ||
-        `Only found and processed ${attemptedCount} matching LinkedIn apply job(s) before pagination ended.`;
+        `Completed ${successfulCount} of ${requestedCount} requested LinkedIn application(s) after ${attemptedCount} approved attempt(s) before pagination ended.`;
 
   return {
     status,
     collectionUrl: input.url,
     requestedCount,
     attemptedCount,
+    successfulCount,
     evaluatedCount: jobs.length,
     skippedCount,
     pagesVisited,
     jobs,
     stopReason,
+    ...(paginationStopReason ? { paginationStopReason } : {}),
   };
 }
 

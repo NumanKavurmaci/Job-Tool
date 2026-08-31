@@ -607,7 +607,43 @@ async function runExternalApplyCore({
       };
       const seenStepSignatures = new Set<string>();
 
-      for (let stepIndex = 1; stepIndex <= MAX_EXTERNAL_APPLICATION_STEPS; stepIndex += 1) {
+      if (discovery.authWall) {
+        latestPageTextSample = truncate(await extractExternalPageText(page), 2500);
+        finalStage = "auth_required";
+        stopReason = buildStopReason({
+          submit,
+          discovery,
+          finalStage,
+          filledCount: 0,
+          blockingRequiredFields: [],
+        });
+        failureMetadata = {
+          failureReasonCode: "external.auth_required",
+          retryable: true,
+          missingProfileData: [],
+          rootCauseHints: [
+            "Authenticate in the persistent browser session before retrying this external application.",
+          ],
+        };
+        await persistExternalApplyCheckpoint({
+          deps,
+          runType,
+          sourceUrl: args.url,
+          stepIndex: 1,
+          phase: "discovered",
+          discovery,
+          steps,
+          answerPlan: allAnswerPlans,
+          pageTextSample: latestPageTextSample,
+          cookiePromptAcceptances,
+        });
+      }
+
+      for (
+        let stepIndex = 1;
+        !discovery.authWall && stepIndex <= MAX_EXTERNAL_APPLICATION_STEPS;
+        stepIndex += 1
+      ) {
         seenStepSignatures.add(buildExternalStepSignature(discovery));
         const currentPageText = await extractExternalPageText(page);
         latestPageTextSample = truncate(currentPageText, 2500);

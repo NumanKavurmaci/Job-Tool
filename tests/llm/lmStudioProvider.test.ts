@@ -103,6 +103,86 @@ describe("LMStudioProvider", () => {
     );
   });
 
+  it("preserves the LM Studio error body for actionable HTTP diagnostics", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: async () =>
+        '{"error":{"message":"Failed to initialize samplers: failed to parse grammar"}}',
+    }) as typeof fetch;
+
+    const { LMStudioProvider } = await import("../../src/llm/providers/lmStudioProvider.js");
+    const provider = new LMStudioProvider();
+
+    await expect(provider.parseJob({ prompt: "Prompt text" })).rejects.toMatchObject({
+      code: "LLM_PROVIDER_HTTP_ERROR",
+      phase: "llm",
+      details: {
+        provider: "local",
+        status: 400,
+        responseBody: expect.stringContaining("failed to parse grammar"),
+      },
+    });
+    await expect(provider.parseJob({ prompt: "Prompt text" })).rejects.toThrow(
+      "failed to parse grammar",
+    );
+  });
+
+  it("falls back to the status-only error when the HTTP body is empty", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      text: async () => "   ",
+    }) as typeof fetch;
+
+    const { LMStudioProvider } = await import("../../src/llm/providers/lmStudioProvider.js");
+    const provider = new LMStudioProvider();
+
+    await expect(provider.parseJob({ prompt: "Prompt text" })).rejects.toMatchObject({
+      message: "LM Studio request failed with status 503.",
+      details: { provider: "local", status: 503 },
+    });
+  });
+
+  it("falls back to the status-only error when reading the HTTP body fails", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 502,
+      text: async () => {
+        throw new Error("body stream closed");
+      },
+    }) as typeof fetch;
+
+    const { LMStudioProvider } = await import("../../src/llm/providers/lmStudioProvider.js");
+    const provider = new LMStudioProvider();
+
+    await expect(provider.parseJob({ prompt: "Prompt text" })).rejects.toMatchObject({
+      message: "LM Studio request failed with status 502.",
+      details: { provider: "local", status: 502 },
+    });
+  });
+
+  it("bounds provider error bodies before attaching them to application errors", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: async () => "x".repeat(5_000),
+    }) as typeof fetch;
+
+    const { LMStudioProvider } = await import("../../src/llm/providers/lmStudioProvider.js");
+    const provider = new LMStudioProvider();
+
+    try {
+      await provider.parseJob({ prompt: "Prompt text" });
+      throw new Error("Expected provider.parseJob to fail");
+    } catch (error) {
+      expect(error).toMatchObject({
+        code: "LLM_PROVIDER_HTTP_ERROR",
+        details: { responseBody: "x".repeat(2_000) },
+      });
+    }
+  });
+
   it("checks local server availability with the models endpoint", async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,

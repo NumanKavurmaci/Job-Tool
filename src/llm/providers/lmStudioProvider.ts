@@ -10,6 +10,20 @@ type LmStudioResponse = {
   }>;
 };
 
+const MAX_PROVIDER_ERROR_BODY_LENGTH = 2_000;
+
+async function readProviderErrorBody(response: Response): Promise<string | null> {
+  try {
+    const body = (await response.text()).trim();
+    if (!body) {
+      return null;
+    }
+    return body.slice(0, MAX_PROVIDER_ERROR_BODY_LENGTH);
+  } catch {
+    return null;
+  }
+}
+
 export async function checkLocalLlmConnection(
   baseUrl = env.LOCAL_LLM_BASE_URL ?? "",
   timeoutMs = Math.min(env.LOCAL_LLM_TIMEOUT_MS, 5_000),
@@ -126,11 +140,18 @@ export class LMStudioProvider implements LlmProvider {
     }
 
     if (!response.ok) {
+      const responseBody = await readProviderErrorBody(response);
       throw new AppError({
-        message: `LM Studio request failed with status ${response.status}.`,
+        message: responseBody
+          ? `LM Studio request failed with status ${response.status}: ${responseBody}`
+          : `LM Studio request failed with status ${response.status}.`,
         phase: "llm",
         code: "LLM_PROVIDER_HTTP_ERROR",
-        details: { provider: this.name, status: response.status },
+        details: {
+          provider: this.name,
+          status: response.status,
+          ...(responseBody ? { responseBody } : {}),
+        },
       });
     }
 

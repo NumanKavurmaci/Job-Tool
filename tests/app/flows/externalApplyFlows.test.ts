@@ -406,7 +406,19 @@ describe("external apply flows", () => {
     );
 
     expect(result.discovery.authWall).toBe(true);
+    expect(result.finalStage).toBe("auth_required");
+    expect(result.failureReasonCode).toBe("external.auth_required");
+    expect(result.retryable).toBe(true);
+    expect(result.steps).toEqual([]);
     expect(result.stopReason).toContain("require login");
+    expect(result.rootCauseHints).toContain(
+      "Authenticate in the persistent browser session before retrying this external application.",
+    );
+    expect(deps.completePrompt).not.toHaveBeenCalled();
+    expect(deps.prisma.preparedAnswerSet.create).not.toHaveBeenCalled();
+    expect(deps.writeRunReport).toHaveBeenCalledWith(expect.objectContaining({
+      prefix: "external-apply-dry-run-checkpoint-step-1-discovered",
+    }));
   });
 
   it("classifies stale Workable application URLs as non-retryable job-not-found results", async () => {
