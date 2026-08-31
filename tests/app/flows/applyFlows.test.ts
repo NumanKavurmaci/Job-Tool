@@ -526,6 +526,15 @@ describe("apply flows", () => {
       attemptedCount: 0,
       failedCount: 1,
     });
+    expect(deps.prisma.jobReviewHistory.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        jobUrl: detailUrl,
+        source: "apply-batch",
+        status: "FAILED",
+        decision: "APPLY",
+        summary: expect.stringContaining("Application was not submitted:"),
+      }),
+    });
   });
 
   it("runs ReactJobs batches through the live external driver", async () => {

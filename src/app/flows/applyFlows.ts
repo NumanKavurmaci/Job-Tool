@@ -24,6 +24,7 @@ import {
 
 type ApplyArgs = Extract<CliArgs, { mode: "apply" }>;
 type ApplyBatchArgs = Extract<CliArgs, { mode: "apply-batch" }>;
+type BatchJobEvaluation = Awaited<ReturnType<ReturnType<AppDeps["createBatchJobEvaluator"]>>>;
 
 function isLinkedInUrl(url: string) {
   return /linkedin\.com\//i.test(url);
@@ -42,6 +43,43 @@ function mapExternalApplicationToHistoryStatus(args: {
   }
 
   return "FAILED";
+}
+
+async function persistFailedApprovedApplication(args: {
+  jobUrl: string;
+  applyUrl?: string;
+  evaluation: BatchJobEvaluation | undefined;
+  threshold: number;
+  error: unknown;
+  deps: AppDeps;
+}) {
+  if (!args.evaluation?.shouldApply) {
+    return;
+  }
+
+  const errorMessage = args.error instanceof Error ? args.error.message : String(args.error);
+  const summary = `Application was not submitted: ${errorMessage}`;
+  await persistJobHistory(
+    {
+      jobUrl: args.jobUrl,
+      source: "apply-batch",
+      status: "FAILED",
+      score: args.evaluation.score,
+      threshold: args.threshold,
+      decision: args.evaluation.finalDecision,
+      policyAllowed: args.evaluation.policyAllowed,
+      reasons: [summary],
+      summary,
+      details: {
+        shouldApply: true,
+        finalDecision: args.evaluation.finalDecision,
+        applyUrl: args.applyUrl ?? args.jobUrl,
+        applicationFailed: true,
+        error: errorMessage,
+      },
+    },
+    args.deps,
+  );
 }
 
 async function resolveExternalApplyUrl(
@@ -136,8 +174,9 @@ async function runKariyerApplyBatchFlow(
         pageState: string;
       } | null = null;
       for (const listing of listings) {
+        let evaluation: BatchJobEvaluation | undefined;
         try {
-          const evaluation = await evaluateJob(listing.url);
+          evaluation = await evaluateJob(listing.url);
           if (!evaluation.shouldApply) {
             jobs.push({ ...listing, status: "skipped" as const, evaluation });
             continue;
@@ -191,6 +230,13 @@ async function runKariyerApplyBatchFlow(
             application,
           });
         } catch (error) {
+          await persistFailedApprovedApplication({
+            jobUrl: listing.url,
+            evaluation,
+            threshold: args.scoreThreshold,
+            error,
+            deps,
+          });
           jobs.push({
             ...listing,
             status: "failed" as const,
@@ -280,14 +326,16 @@ async function runReactJobsApplyBatchFlow(
 
     const jobs = [];
     for (const listing of listings) {
+      let evaluation: BatchJobEvaluation | undefined;
+      let applyUrl: string | undefined;
       try {
-        const evaluation = await evaluateJob(listing.url);
+        evaluation = await evaluateJob(listing.url);
         if (!evaluation.shouldApply) {
           jobs.push({ ...listing, status: "skipped" as const, evaluation });
           continue;
         }
 
-        const applyUrl = await resolveExternalApplyUrl(page, listing.url, deps);
+        applyUrl = await resolveExternalApplyUrl(page, listing.url, deps);
         const externalArgs = {
           mode: "external-apply" as const,
           url: applyUrl,
@@ -333,6 +381,14 @@ async function runReactJobsApplyBatchFlow(
           application,
         });
       } catch (error) {
+        await persistFailedApprovedApplication({
+          jobUrl: listing.url,
+          ...(applyUrl ? { applyUrl } : {}),
+          evaluation,
+          threshold: args.scoreThreshold,
+          error,
+          deps,
+        });
         jobs.push({
           ...listing,
           status: "failed" as const,
@@ -406,8 +462,9 @@ async function runAshbyApplyBatchFlow(
 
     const jobs = [];
     for (const listing of listings) {
+      let evaluation: BatchJobEvaluation | undefined;
       try {
-        const evaluation = await evaluateJob(listing.url);
+        evaluation = await evaluateJob(listing.url);
         if (!evaluation.shouldApply) {
           jobs.push({ ...listing, status: "skipped" as const, evaluation });
           continue;
@@ -458,6 +515,13 @@ async function runAshbyApplyBatchFlow(
           application,
         });
       } catch (error) {
+        await persistFailedApprovedApplication({
+          jobUrl: listing.url,
+          evaluation,
+          threshold: args.scoreThreshold,
+          error,
+          deps,
+        });
         jobs.push({
           ...listing,
           status: "failed" as const,
