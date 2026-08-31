@@ -321,6 +321,13 @@ export async function persistJobRecommendationRecord(args: {
     return null;
   }
 
+  const dashboardRunId = process.env.JOB_TOOL_RUN_ID?.trim();
+  const details = {
+    ...(args.details ?? {}),
+    ...(dashboardRunId ? { dashboardRunId } : {}),
+  };
+  const detailsJson = Object.keys(details).length > 0 ? JSON.stringify(details) : null;
+
   try {
     return await args.prisma.jobRecommendation.upsert({
       where: {
@@ -336,7 +343,7 @@ export async function persistJobRecommendationRecord(args: {
         recommendationStatus:
           args.recommendationStatus ??
           (args.decision === "APPLY" ? "RECOMMENDED" : "NOT_RECOMMENDED"),
-        ...(args.details ? { detailsJson: JSON.stringify(args.details) } : {}),
+        ...(detailsJson ? { detailsJson } : {}),
       },
       create: {
         jobPostingId: args.jobPostingId,
@@ -349,7 +356,7 @@ export async function persistJobRecommendationRecord(args: {
         recommendationStatus:
           args.recommendationStatus ??
           (args.decision === "APPLY" ? "RECOMMENDED" : "NOT_RECOMMENDED"),
-        ...(args.details ? { detailsJson: JSON.stringify(args.details) } : {}),
+        ...(detailsJson ? { detailsJson } : {}),
       },
     });
   } catch (error) {
