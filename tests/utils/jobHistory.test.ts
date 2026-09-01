@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildDuplicateReviewReason,
+  getLatestPersistedJobDecisionReview,
   getLatestJobReview,
   getLatestJobReviewsByUrl,
   recordJobReviewHistory,
@@ -174,6 +175,86 @@ describe("jobHistory", () => {
     );
   });
 
+  it("can fail closed when latest-review verification errors", async () => {
+    const findFirst = vi.fn().mockRejectedValue(new Error("db down"));
+
+    await expect(
+      getLatestJobReview({
+        prisma: {
+          jobReviewHistory: { findFirst },
+        } as never,
+        jobUrl: "https://example.com/jobs/1",
+        throwOnError: true,
+      }),
+    ).rejects.toThrow("db down");
+  });
+
+  it("finds an older LinkedIn URL variant by its posting id", async () => {
+    const review = {
+      id: "review_linkedin",
+      jobUrl:
+        "https://www.linkedin.com/jobs/search/?currentJobId=4461044308&origin=JOB_SEARCH_PAGE",
+      createdAt: new Date("2026-09-01T10:00:00.000Z"),
+    };
+    const findFirst = vi.fn().mockResolvedValue(null);
+    const findMany = vi.fn().mockResolvedValue([review]);
+
+    const result = await getLatestJobReview({
+      prisma: {
+        jobReviewHistory: { findFirst, findMany },
+      } as never,
+      jobUrl:
+        "https://www.linkedin.com/jobs/view/4461044308/?trackingId=abc",
+    });
+
+    expect(result).toBe(review);
+    expect(findMany).toHaveBeenCalledWith({
+      where: { jobUrl: { contains: "4461044308" } },
+      orderBy: [{ createdAt: "desc" }],
+    });
+  });
+
+  it("treats a persisted application decision as a legacy review", async () => {
+    const createdAt = new Date("2026-08-31T10:00:00.000Z");
+    const findUnique = vi.fn().mockResolvedValue({
+      id: "job_legacy",
+      url: "https://www.linkedin.com/jobs/view/4461044308",
+      platform: "linkedin",
+      decisions: [
+        {
+          id: "decision_legacy",
+          score: 71,
+          decision: "APPLY",
+          policyAllowed: true,
+          reasons: JSON.stringify(["Strong fit."]),
+          createdAt,
+        },
+      ],
+    });
+
+    const result = await getLatestPersistedJobDecisionReview({
+      prisma: { jobPosting: { findUnique } } as never,
+      jobUrl:
+        "https://www.linkedin.com/jobs/search/?currentJobId=4461044308",
+    });
+
+    expect(result).toMatchObject({
+      id: "application-decision:decision_legacy",
+      jobPostingId: "job_legacy",
+      status: "EVALUATED",
+      decision: "APPLY",
+      score: 71,
+      createdAt,
+    });
+    expect(findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          url: "https://www.linkedin.com/jobs/view/4461044308",
+        },
+      }),
+    );
+  });
+
   it("fetches latest reviews for many URLs with one query", async () => {
     const newer = {
       id: "review_newer",
@@ -209,12 +290,16 @@ describe("jobHistory", () => {
     expect(findMany).toHaveBeenCalledTimes(1);
     expect(findMany).toHaveBeenCalledWith({
       where: {
-        jobUrl: {
-          in: ["https://example.com/jobs/1", "https://example.com/jobs/2"],
-        },
+        OR: [
+          {
+            jobUrl: {
+              in: ["https://example.com/jobs/1", "https://example.com/jobs/2"],
+            },
+          },
+        ],
         source: "explore-batch",
       },
-      orderBy: [{ jobUrl: "asc" }, { createdAt: "desc" }],
+      orderBy: [{ createdAt: "desc" }],
     });
   });
 

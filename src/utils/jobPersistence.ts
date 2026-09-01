@@ -3,6 +3,7 @@ import type pino from "pino";
 import type { ExtractedJobContent } from "../adapters/types.js";
 import type { NormalizedJob } from "../domain/job.js";
 import type { ParsedJob } from "../parser/parseJobWithLLM.js";
+import { canonicalizeJobPostingUrl } from "./jobIdentity.js";
 
 type PersistencePrisma = {
   firm: {
@@ -170,6 +171,7 @@ export async function refreshJobPostingMetadata(args: {
   url: string;
   extracted: ExtractedJobContent;
 }) {
+  const canonicalUrl = canonicalizeJobPostingUrl(args.url);
   const firm = await syncFirm({
     prisma: args.prisma,
     company: args.extracted.company,
@@ -179,7 +181,7 @@ export async function refreshJobPostingMetadata(args: {
 
   try {
     return await args.prisma.jobPosting.upsert({
-      where: { url: args.url },
+      where: { url: canonicalUrl },
       update: {
         rawText: args.extracted.rawText,
         title: args.extracted.title,
@@ -191,7 +193,7 @@ export async function refreshJobPostingMetadata(args: {
         platform: args.extracted.platform,
       },
       create: {
-        url: args.url,
+        url: canonicalUrl,
         rawText: args.extracted.rawText,
         title: args.extracted.title,
         company: args.extracted.company,
@@ -228,6 +230,7 @@ export async function persistJobAnalysisRecord(args: {
   parseVersion: string;
 }) {
   const company = args.parsed.company ?? args.extracted.company;
+  const canonicalUrl = canonicalizeJobPostingUrl(args.url);
 
   try {
     const firm = await syncFirm({
@@ -238,7 +241,7 @@ export async function persistJobAnalysisRecord(args: {
     });
 
     const jobPosting = await args.prisma.jobPosting.upsert({
-      where: { url: args.url },
+      where: { url: canonicalUrl },
       update: {
         rawText: args.extracted.rawText,
         title: args.parsed.title ?? args.extracted.title,
@@ -253,7 +256,7 @@ export async function persistJobAnalysisRecord(args: {
         parseVersion: args.parseVersion,
       },
       create: {
-        url: args.url,
+        url: canonicalUrl,
         rawText: args.extracted.rawText,
         title: args.parsed.title ?? args.extracted.title,
         company,
@@ -380,6 +383,7 @@ export async function persistDetectedAppliedJobRecord(args: {
   reason: string;
 }) {
   const company = args.extracted.company;
+  const canonicalUrl = canonicalizeJobPostingUrl(args.url);
 
   try {
     const firm = await syncFirm({
@@ -390,7 +394,7 @@ export async function persistDetectedAppliedJobRecord(args: {
     });
 
     const jobPosting = await args.prisma.jobPosting.upsert({
-      where: { url: args.url },
+      where: { url: canonicalUrl },
       update: {
         rawText: args.extracted.rawText,
         title: args.extracted.title,
@@ -402,7 +406,7 @@ export async function persistDetectedAppliedJobRecord(args: {
         platform: args.extracted.platform,
       },
       create: {
-        url: args.url,
+        url: canonicalUrl,
         rawText: args.extracted.rawText,
         title: args.extracted.title,
         company,

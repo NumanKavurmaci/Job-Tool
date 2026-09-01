@@ -1,5 +1,10 @@
 import { AppError, serializeError } from "../../utils/errors.js";
 import {
+  buildDuplicateReviewReason,
+  getLatestPersistedJobDecisionReview,
+  getLatestJobReview,
+} from "../../utils/jobHistory.js";
+import {
   persistJobAnalysisRecord,
   persistJobRecommendationRecord,
 } from "../../utils/jobPersistence.js";
@@ -34,6 +39,96 @@ export async function runJobFlow(
     guaranteedStartEvent,
     deps,
   );
+
+  let latestReview;
+  try {
+    latestReview = await getLatestJobReview({
+      prisma: deps.prisma,
+      jobUrl: url,
+      logger: deps.logger,
+      throwOnError: true,
+    });
+    if (!latestReview) {
+      latestReview = await getLatestPersistedJobDecisionReview({
+        prisma: deps.prisma,
+        jobUrl: url,
+        logger: deps.logger,
+        throwOnError: true,
+      });
+    }
+  } catch (error) {
+    const reason =
+      "Job review history could not be verified, so AI evaluation was blocked.";
+    const result = {
+      mode,
+      historyCheckFailed: true,
+      scoreSkipped: true,
+      finalDecision: "SKIP" as const,
+      finalReasons: [reason],
+    };
+    deps.logger.warn({ url, error }, reason);
+    await persistSystemEvent(
+      {
+        level: "ERROR",
+        scope: "job.analysis",
+        message: reason,
+        runType: mode,
+        jobUrl: url,
+        details: { error: serializeError(error) },
+      },
+      deps,
+    );
+    const reportPath = await persistRunArtifact({
+      category: "job-runs",
+      prefix: `${mode}-history-check-failed`,
+      payload: result,
+      deps,
+    });
+    return { ...result, reportPath };
+  }
+  if (latestReview) {
+    const reason = buildDuplicateReviewReason(latestReview);
+    const result = {
+      mode,
+      alreadyReviewed: true,
+      scoreSkipped: true,
+      finalDecision: latestReview.decision ?? ("SKIP" as const),
+      finalReasons: [reason],
+      previousReview: {
+        status: latestReview.status,
+        score: latestReview.score,
+        decision: latestReview.decision,
+        createdAt: latestReview.createdAt,
+      },
+    };
+
+    deps.logger.info(
+      { url, previousReview: result.previousReview },
+      "Skipping AI evaluation for previously reviewed job",
+    );
+    await persistSystemEvent(
+      {
+        level: "INFO",
+        scope: "job.analysis",
+        message: "Skipped AI evaluation for a previously reviewed job.",
+        runType: mode,
+        jobUrl: url,
+        details: result,
+      },
+      deps,
+    );
+    const reportPath = await persistRunArtifact({
+      category: "job-runs",
+      prefix: `${mode}-already-reviewed`,
+      payload: result,
+      deps,
+    });
+
+    return {
+      ...result,
+      reportPath,
+    };
+  }
 
   const extracted = await deps.withPage(
     resolveJobBrowserSessionOptions(url),

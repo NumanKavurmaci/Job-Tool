@@ -369,7 +369,7 @@ describe("app flow helpers", () => {
     );
   });
 
-  it("handles duplicate reviews without score or policyAllowed by falling back safely", async () => {
+  it("blocks AI when a previous review has no score or policy decision", async () => {
     const deps = createDeps();
     deps.prisma.jobReviewHistory.findFirst.mockResolvedValue({
       createdAt: new Date("2026-03-29T00:00:00.000Z"),
@@ -404,26 +404,91 @@ describe("app flow helpers", () => {
     deps.evaluatePolicy.mockReturnValue({ allowed: true, reasons: [] });
 
     await expect(evaluate("https://example.com/job")).resolves.toMatchObject({
-      shouldApply: true,
-      finalDecision: "APPLY",
-      score: 61,
-      reason: "Score 61 meets the configured threshold of 60.",
+      shouldApply: false,
+      finalDecision: "SKIP",
+      score: 0,
+      reason:
+        "Job was already reviewed on 2026-03-29 with status FAILED, no score.",
       policyAllowed: true,
     });
-    expect(deps.extractJobText).toHaveBeenCalledWith(
-      { fake: true },
-      "https://example.com/job",
-    );
-    expect(deps.formatJobForLLM).toHaveBeenCalledWith(
-      expect.objectContaining({ location: "Remote" }),
-      { omitLocation: true },
-    );
-    expect(deps.parseJob).toHaveBeenCalledWith("prompt", {
-      excludeLocation: true,
-    });
+    expect(deps.extractJobText).not.toHaveBeenCalled();
+    expect(deps.formatJobForLLM).not.toHaveBeenCalled();
+    expect(deps.parseJob).not.toHaveBeenCalled();
+    expect(deps.scoreJob).not.toHaveBeenCalled();
+    expect(deps.scoreJobWithAi).not.toHaveBeenCalled();
   });
 
-  it("re-evaluates jobs that only reached an intermediate evaluated state", async () => {
+  it("blocks AI when only a legacy application decision exists", async () => {
+    const deps = createDeps();
+    deps.prisma.jobReviewHistory.findFirst.mockResolvedValue(null);
+    deps.prisma.jobPosting.findUnique.mockResolvedValue({
+      id: "job_legacy",
+      url: "https://example.com/job",
+      title: "Backend Engineer",
+      company: "Acme",
+      companyLogoUrl: "https://cdn.example.com/acme.png",
+      companyLinkedinUrl: "https://www.linkedin.com/company/acme/",
+      location: "Remote",
+      platform: "greenhouse",
+      decisions: [
+        {
+          id: "decision_legacy",
+          score: 55,
+          decision: "SKIP",
+          policyAllowed: true,
+          reasons: JSON.stringify(["Previously reviewed."]),
+          createdAt: new Date("2026-08-31T10:00:00.000Z"),
+        },
+      ],
+    });
+
+    const evaluate = createBatchJobEvaluator({
+      disableAiEvaluation: false,
+      scoreThreshold: 60,
+      scoringMode: "ai",
+      scoringProfile: {} as any,
+      evaluationPage: { fake: true } as any,
+      deps,
+    });
+
+    await expect(evaluate("https://example.com/job")).resolves.toMatchObject({
+      shouldApply: false,
+      finalDecision: "SKIP",
+      score: 55,
+    });
+    expect(deps.extractJobText).not.toHaveBeenCalled();
+    expect(deps.parseJob).not.toHaveBeenCalled();
+    expect(deps.scoreJobWithAi).not.toHaveBeenCalled();
+  });
+
+  it("fails closed without AI when review history cannot be verified", async () => {
+    const deps = createDeps();
+    deps.prisma.jobReviewHistory.findFirst.mockRejectedValue(
+      new Error("db down"),
+    );
+
+    const evaluate = createBatchJobEvaluator({
+      disableAiEvaluation: false,
+      scoreThreshold: 60,
+      scoringMode: "ai",
+      scoringProfile: {} as any,
+      evaluationPage: { fake: true } as any,
+      deps,
+    });
+
+    await expect(evaluate("https://example.com/job")).resolves.toMatchObject({
+      shouldApply: false,
+      finalDecision: "SKIP",
+      policyAllowed: false,
+      reason:
+        "Job review history could not be verified, so AI evaluation was blocked.",
+    });
+    expect(deps.extractJobText).not.toHaveBeenCalled();
+    expect(deps.parseJob).not.toHaveBeenCalled();
+    expect(deps.scoreJobWithAi).not.toHaveBeenCalled();
+  });
+
+  it("reuses an approved intermediate review without AI evaluation", async () => {
     const deps = createDeps();
     deps.prisma.jobReviewHistory.findFirst.mockResolvedValue({
       createdAt: new Date("2026-03-29T00:00:00.000Z"),
@@ -465,10 +530,15 @@ describe("app flow helpers", () => {
     await expect(evaluate("https://example.com/job")).resolves.toMatchObject({
       shouldApply: true,
       finalDecision: "APPLY",
-      score: 75,
-      reason: "Score 75 meets the configured threshold of 60.",
+      score: 47,
+      reason:
+        "Job was previously approved, so its stored decision will be reused without another AI review.",
       policyAllowed: true,
     });
+    expect(deps.createEasyApplyDriver).not.toHaveBeenCalled();
+    expect(deps.extractJobText).not.toHaveBeenCalled();
+    expect(deps.parseJob).not.toHaveBeenCalled();
+    expect(deps.scoreJob).not.toHaveBeenCalled();
   });
 
   it("retries previously approved jobs when easy apply is still active", async () => {
@@ -501,7 +571,7 @@ describe("app flow helpers", () => {
       finalDecision: "APPLY",
       score: 60,
       reason:
-        "Job was previously approved and Easy Apply is still available, so the application flow will be retried.",
+        "Job was previously approved, so its stored decision will be reused without another AI review.",
       policyAllowed: true,
     });
     expect(deps.extractJobText).not.toHaveBeenCalled();
@@ -510,11 +580,11 @@ describe("app flow helpers", () => {
         url: "https://example.com/job",
         previousStatus: "EVALUATED",
       }),
-      "Retrying previously approved Easy Apply job",
+      "Reusing previously approved job review",
     );
   });
 
-  it("re-evaluates previously approved LinkedIn jobs instead of reusing a stale apply decision", async () => {
+  it("reuses a previously approved LinkedIn job by posting id without AI evaluation", async () => {
     const deps = createDeps();
     deps.prisma.jobReviewHistory.findFirst.mockResolvedValue({
       createdAt: new Date("2026-04-23T19:57:51.195Z"),
@@ -586,24 +656,20 @@ describe("app flow helpers", () => {
     await expect(
       evaluate("https://www.linkedin.com/jobs/view/4397794253"),
     ).resolves.toMatchObject({
-      shouldApply: false,
-      finalDecision: "SKIP",
+      shouldApply: true,
+      finalDecision: "APPLY",
       score: 62,
-      policyAllowed: false,
-      reason: "Hybrid roles are only allowed in configured locations.",
-      diagnostics: expect.objectContaining({
-        location: "Istanbul / Maslak",
-        applicationType: "easy_apply",
-      }),
+      policyAllowed: true,
+      reason:
+        "Job was previously approved, so its stored decision will be reused without another AI review.",
     });
     expect(deps.createEasyApplyDriver).not.toHaveBeenCalled();
-    expect(deps.extractJobText).toHaveBeenCalledWith(
-      { fake: true },
-      "https://www.linkedin.com/jobs/view/4397794253",
-    );
+    expect(deps.extractJobText).not.toHaveBeenCalled();
+    expect(deps.parseJob).not.toHaveBeenCalled();
+    expect(deps.scoreJob).not.toHaveBeenCalled();
   });
 
-  it("re-evaluates duplicate LinkedIn skips instead of trusting stale remote metadata", async () => {
+  it("blocks duplicate LinkedIn skips without AI evaluation", async () => {
     const deps = createDeps();
     deps.prisma.jobReviewHistory.findFirst.mockResolvedValue({
       createdAt: new Date("2026-04-23T19:57:51.195Z"),
@@ -671,11 +737,15 @@ describe("app flow helpers", () => {
     ).resolves.toMatchObject({
       shouldApply: false,
       finalDecision: "SKIP",
-      policyAllowed: false,
-      reason: "Hybrid roles are only allowed in configured locations.",
+      score: 62,
+      policyAllowed: true,
+      reason:
+        "Job was already reviewed on 2026-04-23 with status SKIPPED, score 62, decision SKIP.",
     });
-    expect(deps.extractJobText).toHaveBeenCalledTimes(1);
-    expect(deps.prisma.jobPosting.findUnique).not.toHaveBeenCalled();
+    expect(deps.extractJobText).not.toHaveBeenCalled();
+    expect(deps.parseJob).not.toHaveBeenCalled();
+    expect(deps.scoreJob).not.toHaveBeenCalled();
+    expect(deps.prisma.jobPosting.findUnique).toHaveBeenCalledTimes(1);
   });
 
   it("evaluates a job on the provided evaluation page with optional AI score adjustment", async () => {

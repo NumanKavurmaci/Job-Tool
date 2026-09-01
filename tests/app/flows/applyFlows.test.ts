@@ -186,9 +186,9 @@ describe("apply flows", () => {
     });
     expect(deps.prisma.jobReviewHistory.findMany).toHaveBeenCalledWith({
       where: {
-        jobUrl: { in: [detailUrl] },
+        OR: [{ jobUrl: { in: [detailUrl] } }],
       },
-      orderBy: [{ jobUrl: "asc" }, { createdAt: "desc" }],
+      orderBy: [{ createdAt: "desc" }],
     });
     expect(deps.createBatchJobEvaluator).toHaveBeenCalledWith(
       expect.objectContaining({

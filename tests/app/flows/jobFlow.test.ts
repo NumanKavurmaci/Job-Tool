@@ -37,6 +37,66 @@ function createDeps() {
 }
 
 describe("job flow", () => {
+  it("blocks browser extraction and AI for a previously reviewed job", async () => {
+    const deps = createDeps();
+    deps.prisma.jobReviewHistory.findFirst = vi.fn().mockResolvedValue({
+      id: "review_1",
+      createdAt: new Date("2026-09-01T10:00:00.000Z"),
+      status: "SKIPPED",
+      decision: "SKIP",
+      score: 48,
+      policyAllowed: true,
+    });
+    deps.writeRunReport.mockResolvedValue(
+      "artifacts/job-runs/decide-already-reviewed.json",
+    );
+
+    const result = await runJobFlow(
+      "decide",
+      "https://example.com/job",
+      deps,
+    );
+
+    expect(result).toMatchObject({
+      mode: "decide",
+      alreadyReviewed: true,
+      scoreSkipped: true,
+      finalDecision: "SKIP",
+      reportPath: "artifacts/job-runs/decide-already-reviewed.json",
+    });
+    expect(deps.withPage).not.toHaveBeenCalled();
+    expect(deps.extractJobText).not.toHaveBeenCalled();
+    expect(deps.loadCandidateProfile).not.toHaveBeenCalled();
+    expect(deps.parseJob).not.toHaveBeenCalled();
+    expect(deps.scoreJob).not.toHaveBeenCalled();
+    expect(deps.scoreJobWithAi).not.toHaveBeenCalled();
+  });
+
+  it("fails closed before AI when review history cannot be verified", async () => {
+    const deps = createDeps();
+    deps.prisma.jobReviewHistory.findFirst = vi
+      .fn()
+      .mockRejectedValue(new Error("db down"));
+    deps.writeRunReport.mockResolvedValue(
+      "artifacts/job-runs/decide-history-check-failed.json",
+    );
+
+    const result = await runJobFlow(
+      "decide",
+      "https://example.com/job",
+      deps,
+    );
+
+    expect(result).toMatchObject({
+      historyCheckFailed: true,
+      scoreSkipped: true,
+      finalDecision: "SKIP",
+    });
+    expect(deps.withPage).not.toHaveBeenCalled();
+    expect(deps.parseJob).not.toHaveBeenCalled();
+    expect(deps.scoreJobWithAi).not.toHaveBeenCalled();
+  });
+
   it("uses a plain browser session for non-LinkedIn URLs and persists a policy skip without platform", async () => {
     const deps = createDeps();
     const page = { fake: "page" };

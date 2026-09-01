@@ -162,7 +162,7 @@ export async function runExploreBatchFlow(
     async (page) => {
       const driver = await deps.createEasyApplyDriver(page);
       let evaluationPage: Page | undefined;
-      const preloadedReviews = new Map<string, JobReviewHistory>();
+      const preloadedReviews = new Map<string, JobReviewHistory | null>();
       const sameRunEvaluations = new Map<string, EasyApplyJobEvaluation>();
       let evaluateJob:
         | ((url: string) => Promise<EasyApplyJobEvaluation>)
@@ -234,7 +234,6 @@ export async function runExploreBatchFlow(
               getLatestJobReviewsByUrl({
                 prisma: deps.prisma,
                 jobUrls: candidates.map((job) => job.url),
-                source: "explore-batch",
                 logger: deps.logger,
               }),
             );
@@ -251,7 +250,9 @@ export async function runExploreBatchFlow(
               sameRunEvaluation ??
               (!args.disableAiEvaluation
                 ? buildReusableExploreEvaluation({
-                    review: preloadedReviews.get(job.url) as JobReviewHistory,
+                    ...(preloadedReviews.get(job.url)
+                      ? { review: preloadedReviews.get(job.url)! }
+                      : {}),
                     scoreThreshold: args.scoreThreshold,
                     scoringMode: args.scoringMode,
                     scoringProfileFingerprint,

@@ -86,6 +86,25 @@ function createArgs() {
 }
 
 describe("job persistence", () => {
+  it("stores LinkedIn postings under the canonical posting-id URL", async () => {
+    const args = createArgs();
+    args.url =
+      "https://www.linkedin.com/jobs/search/?currentJobId=4461044308&origin=JOB_SEARCH_PAGE";
+
+    await persistJobAnalysisRecord(args as never);
+
+    expect(args.prisma.jobPosting.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          url: "https://www.linkedin.com/jobs/view/4461044308",
+        },
+        create: expect.objectContaining({
+          url: "https://www.linkedin.com/jobs/view/4461044308",
+        }),
+      }),
+    );
+  });
+
   it("creates or updates a firm snapshot with counts and decision ids", async () => {
     const args = createArgs();
 

@@ -6,6 +6,7 @@ import type { InputQuestion } from "../questions/types.js";
 import type { ScoringMode } from "./cli.js";
 import {
   buildDuplicateReviewReason,
+  getLatestPersistedJobDecisionReview,
   getLatestJobReview,
   type JobReviewHistory,
   shouldRetryPendingApprovedReview,
@@ -69,7 +70,7 @@ export function createBatchJobEvaluator(args: {
   source?: string;
   systemScope?: string;
   recommendationPolicy?: "never" | "apply-only" | "all-evaluated";
-  preloadedReviews?: Map<string, JobReviewHistory>;
+  preloadedReviews?: Map<string, JobReviewHistory | null>;
   timings?: TimingRecorder;
   scoringProfile: Awaited<ReturnType<AppDeps["loadCandidateProfile"]>>;
   evaluationPage?: Page;
@@ -87,7 +88,6 @@ export function createBatchJobEvaluator(args: {
     args.jobExtractionOptions
       ? deps.extractJobText(page, url, args.jobExtractionOptions)
       : deps.extractJobText(page, url);
-  const isLinkedInJobUrl = (url: string) => /linkedin\.com\/jobs\/view\//i.test(url);
   const shouldPersistRecommendation = (finalDecision: "APPLY" | "SKIP" | "MAYBE") => {
     switch (recommendationPolicy) {
       case "all-evaluated":
@@ -99,35 +99,50 @@ export function createBatchJobEvaluator(args: {
     }
   };
 
-  const retryApprovedJobIfStillOpen = async (evaluationPage: Page, url: string) => {
-    const driver = await deps.createEasyApplyDriver(evaluationPage);
-    await driver.ensureAuthenticated(url);
-    await driver.open(url);
-
-    const alreadyApplied = (await driver.isAlreadyApplied?.()) === true;
-    const easyApplyAvailable = await driver.isEasyApplyAvailable();
-
-    return {
-      alreadyApplied,
-      easyApplyAvailable,
-    };
-  };
-
   const evaluateOnPage = async (evaluationPage: Page, url: string) => {
-    const latestReview =
-      args.preloadedReviews
+    let latestReview: JobReviewHistory | null;
+    try {
+      latestReview = args.preloadedReviews?.has(url)
         ? args.preloadedReviews.get(url) ?? null
         : await getLatestJobReview({
             prisma: deps.prisma,
             jobUrl: url,
             logger: deps.logger,
+            throwOnError: true,
           });
-    const requiresFreshLinkedInEvaluation = isLinkedInJobUrl(url);
-
+      if (!latestReview) {
+        latestReview = await getLatestPersistedJobDecisionReview({
+          prisma: deps.prisma,
+          jobUrl: url,
+          logger: deps.logger,
+          throwOnError: true,
+        });
+      }
+    } catch (error) {
+      const reason =
+        "Job review history could not be verified, so AI evaluation was blocked.";
+      deps.logger.warn({ url, error }, reason);
+      await persistSystemEvent(
+        {
+          level: "ERROR",
+          scope: systemScope,
+          message: reason,
+          runType: reviewSource,
+          jobUrl: url,
+        },
+        deps,
+      );
+      return {
+        shouldApply: false,
+        finalDecision: "SKIP" as const,
+        score: 0,
+        reason,
+        policyAllowed: false,
+      };
+    }
     if (
       latestReview &&
-      shouldSkipDuplicateBatchReview(latestReview) &&
-      !requiresFreshLinkedInEvaluation
+      shouldSkipDuplicateBatchReview(latestReview)
     ) {
       const existingJobPosting = deps.prisma.jobPosting.findUnique
         ? await deps.prisma.jobPosting.findUnique({
@@ -182,48 +197,74 @@ export function createBatchJobEvaluator(args: {
 
     if (
       latestReview &&
-      shouldRetryPendingApprovedReview(latestReview) &&
-      !requiresFreshLinkedInEvaluation
+      shouldRetryPendingApprovedReview(latestReview)
     ) {
-      const pendingState = await retryApprovedJobIfStillOpen(evaluationPage, url);
+      const reason =
+        "Job was previously approved, so its stored decision will be reused without another AI review.";
 
-      if (!pendingState.alreadyApplied && pendingState.easyApplyAvailable) {
-        const reason =
-          "Job was previously approved and Easy Apply is still available, so the application flow will be retried.";
-
-        deps.logger.info(
-          {
-            url,
-            previousStatus: latestReview.status,
-            previousDecision: latestReview.decision,
-            previousScore: latestReview.score,
-          },
-          "Retrying previously approved Easy Apply job",
-        );
-        await persistSystemEvent(
+      deps.logger.info(
+        {
+          url,
+          previousStatus: latestReview.status,
+          previousDecision: latestReview.decision,
+          previousScore: latestReview.score,
+        },
+        "Reusing previously approved job review",
+      );
+      await persistSystemEvent(
         {
           level: "INFO",
           scope: systemScope,
-          message: "Retrying previously approved Easy Apply job.",
+          message: "Reused a previously approved job review without AI evaluation.",
           runType: reviewSource,
           jobUrl: url,
           details: {
             previousStatus: latestReview.status,
-              previousDecision: latestReview.decision,
-              easyApplyAvailable: true,
-            },
+            previousDecision: latestReview.decision,
+            previousScore: latestReview.score,
           },
-          deps,
-        );
+        },
+        deps,
+      );
 
-        return {
-          shouldApply: true,
-          finalDecision: "APPLY" as const,
-          score: latestReview.score ?? 0,
-          reason,
-          policyAllowed: latestReview.policyAllowed ?? true,
-        };
-      }
+      return {
+        shouldApply: true,
+        finalDecision: "APPLY" as const,
+        score: latestReview.score ?? 0,
+        reason,
+        policyAllowed: latestReview.policyAllowed ?? true,
+      };
+    }
+
+    if (latestReview) {
+      const reason = buildDuplicateReviewReason(latestReview);
+      deps.logger.warn(
+        { url, reason },
+        "Skipping AI evaluation for previously reviewed job",
+      );
+      await persistSystemEvent(
+        {
+          level: "WARN",
+          scope: systemScope,
+          message: "Skipped AI evaluation for a previously reviewed job.",
+          runType: reviewSource,
+          jobUrl: url,
+          details: {
+            previousStatus: latestReview.status,
+            previousDecision: latestReview.decision,
+            previousScore: latestReview.score,
+          },
+        },
+        deps,
+      );
+
+      return {
+        shouldApply: false,
+        finalDecision: "SKIP" as const,
+        score: latestReview.score ?? 0,
+        reason,
+        policyAllowed: latestReview.policyAllowed ?? true,
+      };
     }
 
     const extracted = await time("job.extractText", () =>
