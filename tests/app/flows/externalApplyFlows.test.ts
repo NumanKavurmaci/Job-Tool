@@ -1065,6 +1065,8 @@ describe("external apply flows", () => {
   });
 
   it("links external prepared answers back to the originating LinkedIn job when provided", async () => {
+    const originalJobUrl =
+      "https://www.linkedin.com/jobs/search/?currentJobId=4358153114&origin=JOB_SEARCH_PAGE";
     const goto = vi.fn();
     const evaluate = vi.fn();
     evaluate
@@ -1133,7 +1135,7 @@ describe("external apply flows", () => {
       },
       deps,
       {
-        originalJobUrl: "https://www.linkedin.com/jobs/view/4358153114",
+        originalJobUrl,
       },
     );
 
@@ -1145,7 +1147,7 @@ describe("external apply flows", () => {
       data: expect.objectContaining({
         jobPostingId: "job_linkedin_1",
         answersJson: expect.stringContaining(
-          '"originalJobUrl":"https://www.linkedin.com/jobs/view/4358153114"',
+          `"originalJobUrl":"${originalJobUrl}"`,
         ),
       }),
     });

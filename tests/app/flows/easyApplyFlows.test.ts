@@ -619,6 +619,8 @@ describe("easy apply flows", () => {
 
   it("persists manually applied single-job dry runs as submitted applications", async () => {
     const deps = createDeps();
+    const jobUrl =
+      "https://www.linkedin.com/jobs/search/?currentJobId=4461044308&origin=JOB_SEARCH_PAGE";
     mockWithPage(deps);
     (deps.loadCandidateMasterProfile as any).mockResolvedValue({
       fullName: "Jane",
@@ -636,7 +638,7 @@ describe("easy apply flows", () => {
       platform: "linkedin",
       applicationType: "easy_apply",
       applyUrl: null,
-      currentUrl: "https://www.linkedin.com/jobs/view/1",
+      currentUrl: jobUrl,
       descriptionText: null,
       requirementsText: null,
       benefitsText: null,
@@ -645,7 +647,7 @@ describe("easy apply flows", () => {
       status: "stopped_not_easy_apply",
       steps: [],
       stopReason: "This LinkedIn job has already been applied to.",
-      url: "https://www.linkedin.com/jobs/view/1",
+      url: jobUrl,
       alreadyApplied: true,
     });
     (deps.writeRunReport as any).mockResolvedValue("artifacts/easy-apply-runs/run.json");
@@ -654,7 +656,7 @@ describe("easy apply flows", () => {
     await runEasyApplyDryRunFlow(
       {
         mode: "easy-apply",
-        url: "https://www.linkedin.com/jobs/view/1",
+        url: jobUrl,
         resumePath: "./resume.pdf",
         dryRun: true,
       },
@@ -668,6 +670,11 @@ describe("easy apply flows", () => {
         policyAllowed: true,
       }),
     });
+    expect(deps.prisma.jobPosting.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { url: "https://www.linkedin.com/jobs/view/4461044308" },
+      }),
+    );
     expect(deps.prisma.jobReviewHistory.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         status: "SUBMITTED",
@@ -844,7 +851,10 @@ describe("easy apply flows", () => {
 
   it("persists survey answers for the live easy-apply flow when questions were answered", async () => {
     const deps = createDeps();
+    const jobUrl =
+      "https://www.linkedin.com/jobs/search/?currentJobId=4461044308&origin=JOB_SEARCH_PAGE";
     mockWithPage(deps);
+    (deps.prisma.jobPosting.findUnique as any).mockResolvedValue({ id: "job_1" });
     (deps.loadCandidateMasterProfile as any).mockResolvedValue({
       fullName: "Jane",
       linkedinUrl: "https://linkedin.com/in/jane",
@@ -879,7 +889,7 @@ describe("easy apply flows", () => {
         ],
       }],
       stopReason: "Reached final submit.",
-      url: "https://www.linkedin.com/jobs/view/1",
+      url: jobUrl,
     });
     (deps.writeRunReport as any).mockResolvedValue("artifacts/easy-apply-runs/live.json");
 
@@ -887,7 +897,7 @@ describe("easy apply flows", () => {
     const result = await runEasyApplyFlow(
       {
         mode: "easy-apply",
-        url: "https://www.linkedin.com/jobs/view/1",
+        url: jobUrl,
         resumePath: "./resume.pdf",
         dryRun: false,
       },
@@ -895,8 +905,13 @@ describe("easy apply flows", () => {
     );
 
     expect(result.preparedAnswerSets).toEqual([{ id: "prepared_1" }]);
+    expect(deps.prisma.jobPosting.findUnique).toHaveBeenCalledWith({
+      where: { url: "https://www.linkedin.com/jobs/view/4461044308" },
+      select: { id: true },
+    });
     expect(deps.prisma.preparedAnswerSet.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
+        jobPostingId: "job_1",
         candidateProfileId: "snapshot_1",
       }),
     });

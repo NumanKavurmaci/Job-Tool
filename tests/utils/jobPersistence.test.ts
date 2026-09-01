@@ -3,6 +3,7 @@ import {
   persistDetectedAppliedJobRecord,
   persistJobAnalysisRecord,
   persistJobRecommendationRecord,
+  refreshJobPostingMetadata,
 } from "../../src/utils/jobPersistence.js";
 
 function createArgs() {
@@ -98,6 +99,44 @@ describe("job persistence", () => {
         where: {
           url: "https://www.linkedin.com/jobs/view/4461044308",
         },
+        create: expect.objectContaining({
+          url: "https://www.linkedin.com/jobs/view/4461044308",
+        }),
+      }),
+    );
+  });
+
+  it("canonicalizes LinkedIn URLs in metadata refreshes and detected applications", async () => {
+    const args = createArgs();
+    const linkedInUrl =
+      "https://www.linkedin.com/jobs/search/?currentJobId=4461044308&origin=JOB_SEARCH_PAGE";
+
+    await refreshJobPostingMetadata({
+      prisma: args.prisma as never,
+      logger: args.logger as never,
+      url: linkedInUrl,
+      extracted: args.extracted,
+    });
+    expect(args.prisma.jobPosting.upsert).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: { url: "https://www.linkedin.com/jobs/view/4461044308" },
+        create: expect.objectContaining({
+          url: "https://www.linkedin.com/jobs/view/4461044308",
+        }),
+      }),
+    );
+
+    args.prisma.jobPosting.upsert.mockClear();
+    await persistDetectedAppliedJobRecord({
+      prisma: args.prisma as never,
+      logger: args.logger as never,
+      url: linkedInUrl,
+      extracted: args.extracted,
+      reason: "Already applied.",
+    });
+    expect(args.prisma.jobPosting.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { url: "https://www.linkedin.com/jobs/view/4461044308" },
         create: expect.objectContaining({
           url: "https://www.linkedin.com/jobs/view/4461044308",
         }),

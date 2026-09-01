@@ -1,4 +1,5 @@
 import type { AppDeps } from "../deps.js";
+import { canonicalizeJobPostingUrl } from "../../utils/jobIdentity.js";
 import type {
   EasyApplyAnsweredQuestion,
   EasyApplyStepReport,
@@ -68,7 +69,7 @@ export async function persistEasyApplySurveyAnswers(args: {
   for (const entry of payloads) {
     const jobPostingId = args.deps.prisma.jobPosting.findUnique
       ? (await args.deps.prisma.jobPosting.findUnique({
-          where: { url: entry.url },
+          where: { url: canonicalizeJobPostingUrl(entry.url) },
           select: { id: true },
         }))?.id ?? null
       : null;

@@ -190,9 +190,16 @@ async function isActionableLocator(locator: Locator): Promise<boolean> {
 async function findFirstActionableLocator(page: Page, selectors: string[]) {
   for (const selector of selectors) {
     try {
-      const locator = page.locator(selector).first();
-      if ((await locator.count()) > 0 && await isActionableLocator(locator)) {
-        return locator;
+      const matches = page.locator(selector);
+      const count = await matches.count();
+      for (let index = 0; index < count; index += 1) {
+        const locator =
+          typeof (matches as Locator & { nth?: unknown }).nth === "function"
+            ? matches.nth(index)
+            : matches.first();
+        if (await isActionableLocator(locator)) {
+          return locator;
+        }
       }
     } catch {
       continue;

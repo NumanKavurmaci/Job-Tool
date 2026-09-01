@@ -63,6 +63,9 @@ function createLocatorRecorder() {
         first() {
           return this;
         },
+        nth() {
+          return this;
+        },
         async count() {
           return presentSelectors.has(selector) ? 1 : 0;
         },
@@ -2380,6 +2383,9 @@ describe("external fill", () => {
       first() {
         return this;
       },
+      nth() {
+        return this;
+      },
       count: vi.fn(async () => 1),
       isVisible: vi.fn(async () => true),
       isEnabled: vi.fn(async () => false),
@@ -2393,6 +2399,37 @@ describe("external fill", () => {
     await expect(getExternalPrimaryAction(page as never)).resolves.toBe("unknown");
     await expect(advanceExternalApplicationPage(page as never, "next")).resolves.toBe(false);
     expect(click).not.toHaveBeenCalled();
+  });
+
+  it("uses an enabled primary action after an earlier disabled match", async () => {
+    const disabledClick = vi.fn();
+    const enabledClick = vi.fn();
+    const matches = [
+      {
+        isVisible: vi.fn(async () => true),
+        isEnabled: vi.fn(async () => false),
+        click: disabledClick,
+      },
+      {
+        isVisible: vi.fn(async () => true),
+        isEnabled: vi.fn(async () => true),
+        click: enabledClick,
+      },
+    ];
+    const page = {
+      locator: vi.fn((selector: string) => ({
+        count: vi.fn(async () =>
+          selector === `button:has-text("Next")` ? matches.length : 0,
+        ),
+        nth: vi.fn((index: number) => matches[index]),
+      })),
+      waitForTimeout: vi.fn(async () => undefined),
+    };
+
+    await expect(getExternalPrimaryAction(page as never)).resolves.toBe("next");
+    await expect(advanceExternalApplicationPage(page as never, "next")).resolves.toBe(true);
+    expect(disabledClick).not.toHaveBeenCalled();
+    expect(enabledClick).toHaveBeenCalledTimes(1);
   });
 
   it("uploads the resume through the live Breezy custom file chooser button", async () => {

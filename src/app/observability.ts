@@ -8,6 +8,7 @@ import {
   recordJobReviewHistory,
   type JobReviewHistoryInput,
 } from "../utils/jobHistory.js";
+import { canonicalizeJobPostingUrl } from "../utils/jobIdentity.js";
 import { writeSystemLog, type SystemLogInput } from "../utils/systemLog.js";
 import type { AppDeps } from "./deps.js";
 
@@ -64,7 +65,7 @@ async function findJobPostingIdByUrl(
   }
 
   const jobPosting = await deps.prisma.jobPosting.findUnique({
-    where: { url: jobUrl },
+    where: { url: canonicalizeJobPostingUrl(jobUrl) },
     select: { id: true },
   });
 

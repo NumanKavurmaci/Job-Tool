@@ -311,6 +311,8 @@ describe("app flow helpers", () => {
 
   it("refreshes missing job metadata before skipping a duplicate review", async () => {
     const deps = createDeps();
+    const jobUrl =
+      "https://www.linkedin.com/jobs/search/?currentJobId=4461044308&origin=JOB_SEARCH_PAGE";
     deps.prisma.jobReviewHistory.findFirst.mockResolvedValue({
       createdAt: new Date("2026-03-29T00:00:00.000Z"),
       status: "SKIPPED",
@@ -335,8 +337,8 @@ describe("app flow helpers", () => {
       location: "Remote",
       platform: "linkedin",
       applicationType: "easy_apply",
-      applyUrl: "https://example.com/apply",
-      currentUrl: "https://example.com/job",
+      applyUrl: jobUrl,
+      currentUrl: jobUrl,
       descriptionText: "desc",
       requirementsText: "req",
       benefitsText: "benefits",
@@ -351,14 +353,24 @@ describe("app flow helpers", () => {
       deps,
     });
 
-    await evaluate("https://example.com/job");
+    await evaluate(jobUrl);
 
     expect(deps.extractJobText).toHaveBeenCalledWith(
       { fake: true },
-      "https://example.com/job",
+      jobUrl,
+    );
+    expect(deps.prisma.jobPosting.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          url: "https://www.linkedin.com/jobs/view/4461044308",
+        },
+      }),
     );
     expect(deps.prisma.jobPosting.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
+        where: {
+          url: "https://www.linkedin.com/jobs/view/4461044308",
+        },
         update: expect.objectContaining({
           title: "Recovered Title",
           companyLogoUrl: "https://cdn.example.com/acme.png",

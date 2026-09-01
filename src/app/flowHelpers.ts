@@ -18,6 +18,7 @@ import {
   persistJobRecommendationRecord,
   refreshJobPostingMetadata,
 } from "../utils/jobPersistence.js";
+import { canonicalizeJobPostingUrl } from "../utils/jobIdentity.js";
 import { PARSE_VERSION, resolveJobEvaluationSessionOptions } from "./constants.js";
 import type { AppDeps } from "./deps.js";
 import {
@@ -146,7 +147,7 @@ export function createBatchJobEvaluator(args: {
     ) {
       const existingJobPosting = deps.prisma.jobPosting.findUnique
         ? await deps.prisma.jobPosting.findUnique({
-            where: { url },
+            where: { url: canonicalizeJobPostingUrl(url) },
             select: {
               id: true,
               title: true,

@@ -161,7 +161,7 @@ export async function getLatestPersistedJobDecisionReview(args: {
 
   try {
     const canonicalUrl = canonicalizeJobPostingUrl(args.jobUrl);
-    let posting = await jobPosting.findUnique({
+    const canonicalPosting = await jobPosting.findUnique({
       where: { url: canonicalUrl },
       include: {
         decisions: {
@@ -172,12 +172,9 @@ export async function getLatestPersistedJobDecisionReview(args: {
     });
 
     const linkedinJobId = getLinkedInJobPostingId(args.jobUrl);
-    if (
-      !posting &&
-      linkedinJobId &&
-      typeof jobPosting.findMany === "function"
-    ) {
-      const candidates = await jobPosting.findMany({
+    const candidates = canonicalPosting ? [canonicalPosting] : [];
+    if (linkedinJobId && typeof jobPosting.findMany === "function") {
+      const aliasPostings = await jobPosting.findMany({
         where: { url: { contains: linkedinJobId } },
         include: {
           decisions: {
@@ -186,13 +183,23 @@ export async function getLatestPersistedJobDecisionReview(args: {
           },
         },
       });
-      posting =
-        candidates.find(
-          (candidate) =>
-            getLinkedInJobPostingId(candidate.url) === linkedinJobId,
-        ) ?? null;
+      for (const candidate of aliasPostings) {
+        if (
+          getLinkedInJobPostingId(candidate.url) === linkedinJobId &&
+          !candidates.some((existing) => existing.id === candidate.id)
+        ) {
+          candidates.push(candidate);
+        }
+      }
     }
 
+    const posting = candidates
+      .filter((candidate) => candidate.decisions[0] != null)
+      .sort(
+        (left, right) =>
+          right.decisions[0]!.createdAt.getTime() -
+          left.decisions[0]!.createdAt.getTime(),
+      )[0];
     const decision = posting?.decisions[0];
     if (!posting || !decision) {
       return null;
@@ -263,7 +270,7 @@ export async function getLatestJobReviewsByUrl(args: {
       },
       orderBy: [{ createdAt: "desc" }],
     });
-    const latestByAlias = new Map<string, JobReviewHistory>();
+    const latestByIdentity = new Map<string, JobReviewHistory>();
     for (const review of reviews) {
       const reviewLinkedInJobId = getLinkedInJobPostingId(review.jobUrl);
       if (
@@ -272,17 +279,16 @@ export async function getLatestJobReviewsByUrl(args: {
       ) {
         continue;
       }
-      for (const alias of getJobPostingUrlAliases(review.jobUrl)) {
-        if (!latestByAlias.has(alias)) {
-          latestByAlias.set(alias, review);
-        }
+      const identity = canonicalizeJobPostingUrl(review.jobUrl);
+      if (!latestByIdentity.has(identity)) {
+        latestByIdentity.set(identity, review);
       }
     }
     const latestByRequestedUrl = new Map<string, JobReviewHistory | null>();
     for (const requestedUrl of requestedUrls) {
-      const review = getJobPostingUrlAliases(requestedUrl)
-        .map((alias) => latestByAlias.get(alias))
-        .find((candidate): candidate is JobReviewHistory => candidate != null);
+      const review = latestByIdentity.get(
+        canonicalizeJobPostingUrl(requestedUrl),
+      );
       latestByRequestedUrl.set(requestedUrl, review ?? null);
     }
     return latestByRequestedUrl;

@@ -1,6 +1,7 @@
 import { performance } from "node:perf_hooks";
 import { AppError, serializeError } from "../../utils/errors.js";
 import { getLatestJobReview } from "../../utils/jobHistory.js";
+import { canonicalizeJobPostingUrl } from "../../utils/jobIdentity.js";
 import {
   jobPostingNeedsMetadataRefresh,
   persistDetectedAppliedJobRecord,
@@ -138,7 +139,7 @@ async function persistDetectedAppliedJob(args: {
 
   const existingJobPosting = args.deps.prisma.jobPosting.findUnique
     ? await args.deps.prisma.jobPosting.findUnique({
-        where: { url: args.url },
+        where: { url: canonicalizeJobPostingUrl(args.url) },
         select: {
           id: true,
           title: true,

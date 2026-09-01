@@ -58,6 +58,28 @@ describe("jobHistory", () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
+  it("persists LinkedIn review history under the canonical posting URL", async () => {
+    const create = vi.fn().mockResolvedValue(undefined);
+
+    await recordJobReviewHistory({
+      prisma: { jobReviewHistory: { create } } as never,
+      logger: { warn: vi.fn() } as never,
+      entry: {
+        jobUrl:
+          "https://www.linkedin.com/jobs/search/?currentJobId=4461044308&origin=JOB_SEARCH_PAGE",
+        source: "apply-batch",
+        status: "EVALUATED",
+        reasons: ["Strong fit."],
+      },
+    });
+
+    expect(create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        jobUrl: "https://www.linkedin.com/jobs/view/4461044308",
+      }),
+    });
+  });
+
   it("merges the dashboard run id into review details", async () => {
     vi.stubEnv("JOB_TOOL_RUN_ID", "dashboard-run-123");
     const create = vi.fn().mockResolvedValue(undefined);
@@ -255,6 +277,64 @@ describe("jobHistory", () => {
     );
   });
 
+  it("uses a legacy LinkedIn posting decision when the canonical row has none", async () => {
+    const createdAt = new Date("2026-08-31T12:00:00.000Z");
+    const canonicalPosting = {
+      id: "job_canonical",
+      url: "https://www.linkedin.com/jobs/view/4461044308",
+      platform: "linkedin",
+      decisions: [],
+    };
+    const legacyPosting = {
+      id: "job_legacy",
+      url:
+        "https://www.linkedin.com/jobs/search/?currentJobId=4461044308&origin=JOB_SEARCH_PAGE",
+      platform: "linkedin",
+      decisions: [
+        {
+          id: "decision_legacy",
+          score: 43,
+          decision: "SKIP",
+          policyAllowed: true,
+          reasons: JSON.stringify(["Previously rejected."]),
+          createdAt,
+        },
+      ],
+    };
+    const findUnique = vi.fn().mockResolvedValue(canonicalPosting);
+    const findMany = vi
+      .fn()
+      .mockResolvedValue([canonicalPosting, legacyPosting]);
+
+    const result = await getLatestPersistedJobDecisionReview({
+      prisma: { jobPosting: { findUnique, findMany } } as never,
+      jobUrl: "https://www.linkedin.com/jobs/view/4461044308",
+    });
+
+    expect(result).toMatchObject({
+      id: "application-decision:decision_legacy",
+      jobPostingId: "job_legacy",
+      status: "SKIPPED",
+      decision: "SKIP",
+      score: 43,
+      createdAt,
+    });
+  });
+
+  it("can fail closed when persisted-decision verification errors", async () => {
+    await expect(
+      getLatestPersistedJobDecisionReview({
+        prisma: {
+          jobPosting: {
+            findUnique: vi.fn().mockRejectedValue(new Error("db down")),
+          },
+        } as never,
+        jobUrl: "https://example.com/jobs/1",
+        throwOnError: true,
+      }),
+    ).rejects.toThrow("db down");
+  });
+
   it("fetches latest reviews for many URLs with one query", async () => {
     const newer = {
       id: "review_newer",
@@ -301,6 +381,70 @@ describe("jobHistory", () => {
       },
       orderBy: [{ createdAt: "desc" }],
     });
+  });
+
+  it("returns the newest LinkedIn review across URL aliases", async () => {
+    const requestedUrl =
+      "https://www.linkedin.com/jobs/search/?currentJobId=4461044308&origin=JOB_SEARCH_PAGE";
+    const newer = {
+      id: "review_newer",
+      jobUrl: "https://www.linkedin.com/jobs/view/4461044308",
+      createdAt: new Date("2026-09-01T12:00:00.000Z"),
+    };
+    const olderExactAlias = {
+      id: "review_older",
+      jobUrl: requestedUrl,
+      createdAt: new Date("2026-09-01T10:00:00.000Z"),
+    };
+    const findMany = vi
+      .fn()
+      .mockResolvedValue([newer, olderExactAlias]);
+
+    const result = await getLatestJobReviewsByUrl({
+      prisma: { jobReviewHistory: { findMany } } as never,
+      jobUrls: [requestedUrl],
+    });
+
+    expect(result.get(requestedUrl)).toBe(newer);
+  });
+
+  it("filters numeric substring collisions from LinkedIn batch lookups", async () => {
+    const requestedUrl = "https://www.linkedin.com/jobs/view/461044308";
+    const unrelated = {
+      id: "review_unrelated",
+      jobUrl: "https://www.linkedin.com/jobs/view/4461044308",
+      createdAt: new Date("2026-09-01T12:00:00.000Z"),
+    };
+    const findMany = vi.fn().mockResolvedValue([unrelated]);
+
+    const result = await getLatestJobReviewsByUrl({
+      prisma: { jobReviewHistory: { findMany } } as never,
+      jobUrls: [requestedUrl],
+    });
+
+    expect(result.get(requestedUrl)).toBeNull();
+  });
+
+  it("logs batch lookup failures and leaves URLs unverified", async () => {
+    const warn = vi.fn();
+    const result = await getLatestJobReviewsByUrl({
+      prisma: {
+        jobReviewHistory: {
+          findMany: vi.fn().mockRejectedValue(new Error("db down")),
+        },
+      } as never,
+      jobUrls: ["https://example.com/jobs/1"],
+      logger: { warn } as never,
+    });
+
+    expect(result.size).toBe(0);
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobUrls: ["https://example.com/jobs/1"],
+        error: "db down",
+      }),
+      "Failed to load latest job review history batch",
+    );
   });
 
   it("builds a human-readable duplicate review reason", () => {

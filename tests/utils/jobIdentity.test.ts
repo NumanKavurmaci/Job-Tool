@@ -30,6 +30,7 @@ describe("job identity", () => {
         "https://linkedin.com.evil.example/jobs/view/4461044308",
       ),
     ).toBeNull();
+    expect(getLinkedInJobPostingId("not a URL")).toBeNull();
   });
 
   it("canonicalizes LinkedIn URLs and retains useful legacy aliases", () => {

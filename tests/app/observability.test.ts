@@ -180,7 +180,8 @@ describe("app observability helpers", () => {
         threshold: 60,
         jobs: [
           {
-            url: "https://example.com/1",
+            url:
+              "https://www.linkedin.com/jobs/search/?currentJobId=4461044308&origin=JOB_SEARCH_PAGE",
             evaluation: {
               shouldApply: true,
               finalDecision: "APPLY",
@@ -211,12 +212,17 @@ describe("app observability helpers", () => {
     );
 
     expect(recordJobReviewHistoryMock).toHaveBeenCalledTimes(3);
+    expect(deps.prisma.jobPosting.findUnique).toHaveBeenNthCalledWith(1, {
+      where: { url: "https://www.linkedin.com/jobs/view/4461044308" },
+      select: { id: true },
+    });
     expect(recordJobReviewHistoryMock).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
         entry: expect.objectContaining({
           jobPostingId: "job_1",
-          jobUrl: "https://example.com/1",
+          jobUrl:
+            "https://www.linkedin.com/jobs/search/?currentJobId=4461044308&origin=JOB_SEARCH_PAGE",
           status: "EVALUATED",
           decision: "APPLY",
         }),
@@ -227,7 +233,8 @@ describe("app observability helpers", () => {
       expect.objectContaining({
         entry: expect.objectContaining({
           jobPostingId: "job_1",
-          jobUrl: "https://example.com/1",
+          jobUrl:
+            "https://www.linkedin.com/jobs/search/?currentJobId=4461044308&origin=JOB_SEARCH_PAGE",
           status: "READY_TO_SUBMIT",
           summary: "Reached final submit.",
         }),

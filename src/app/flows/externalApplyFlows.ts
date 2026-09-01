@@ -1,6 +1,7 @@
 import { performance } from "node:perf_hooks";
 import type { PromptCompletionResult } from "../../llm/completePrompt.js";
 import { AppError, serializeError } from "../../utils/errors.js";
+import { canonicalizeJobPostingUrl } from "../../utils/jobIdentity.js";
 import { loadMasterProfileForArgs } from "../flowHelpers.js";
 import type { CliArgs } from "../cli.js";
 import type { AppDeps } from "../deps.js";
@@ -124,15 +125,19 @@ async function persistExternalApplyAnswers(args: {
 
   const jobPostingId = args.deps.prisma.jobPosting.findUnique
     ? (await args.deps.prisma.jobPosting.findUnique({
-        where: { url: args.originalJobUrl ?? args.sourceUrl },
+        where: {
+          url: canonicalizeJobPostingUrl(
+            args.originalJobUrl ?? args.sourceUrl,
+          ),
+        },
         select: { id: true },
       }))?.id ??
       (await args.deps.prisma.jobPosting.findUnique({
-        where: { url: args.sourceUrl },
+        where: { url: canonicalizeJobPostingUrl(args.sourceUrl) },
         select: { id: true },
       }))?.id ??
       (await args.deps.prisma.jobPosting.findUnique({
-        where: { url: args.finalUrl },
+        where: { url: canonicalizeJobPostingUrl(args.finalUrl) },
         select: { id: true },
       }))?.id ??
       null

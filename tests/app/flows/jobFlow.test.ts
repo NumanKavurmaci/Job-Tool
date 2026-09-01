@@ -72,6 +72,49 @@ describe("job flow", () => {
     expect(deps.scoreJobWithAi).not.toHaveBeenCalled();
   });
 
+  it("blocks browser extraction and AI when only a persisted decision exists", async () => {
+    const deps = createDeps();
+    deps.prisma.jobReviewHistory.findFirst = vi.fn().mockResolvedValue(null);
+    deps.prisma.jobPosting.findUnique = vi.fn().mockResolvedValue({
+      id: "job_legacy",
+      url: "https://example.com/job",
+      platform: "greenhouse",
+      decisions: [
+        {
+          id: "decision_legacy",
+          score: 52,
+          decision: "SKIP",
+          policyAllowed: true,
+          reasons: JSON.stringify(["Previously reviewed."]),
+          createdAt: new Date("2026-08-31T10:00:00.000Z"),
+        },
+      ],
+    });
+    deps.writeRunReport.mockResolvedValue(
+      "artifacts/job-runs/score-already-reviewed.json",
+    );
+
+    const result = await runJobFlow(
+      "score",
+      "https://example.com/job",
+      deps,
+    );
+
+    expect(result).toMatchObject({
+      alreadyReviewed: true,
+      scoreSkipped: true,
+      finalDecision: "SKIP",
+      previousReview: {
+        score: 52,
+        decision: "SKIP",
+      },
+    });
+    expect(deps.withPage).not.toHaveBeenCalled();
+    expect(deps.parseJob).not.toHaveBeenCalled();
+    expect(deps.scoreJob).not.toHaveBeenCalled();
+    expect(deps.scoreJobWithAi).not.toHaveBeenCalled();
+  });
+
   it("fails closed before AI when review history cannot be verified", async () => {
     const deps = createDeps();
     deps.prisma.jobReviewHistory.findFirst = vi
