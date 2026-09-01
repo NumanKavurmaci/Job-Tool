@@ -2374,6 +2374,27 @@ describe("external fill", () => {
     await expect(advanceExternalApplicationPage(empty.page as never, "next")).resolves.toBe(false);
   });
 
+  it("does not classify or click a disabled primary action", async () => {
+    const click = vi.fn();
+    const locator = {
+      first() {
+        return this;
+      },
+      count: vi.fn(async () => 1),
+      isVisible: vi.fn(async () => true),
+      isEnabled: vi.fn(async () => false),
+      click,
+    };
+    const page = {
+      locator: vi.fn(() => locator),
+      waitForTimeout: vi.fn(async () => undefined),
+    };
+
+    await expect(getExternalPrimaryAction(page as never)).resolves.toBe("unknown");
+    await expect(advanceExternalApplicationPage(page as never, "next")).resolves.toBe(false);
+    expect(click).not.toHaveBeenCalled();
+  });
+
   it("uploads the resume through the live Breezy custom file chooser button", async () => {
     const actions: Array<{ type: string; selector: string; value?: string }> = [];
     const setFiles = vi.fn(async () => undefined);

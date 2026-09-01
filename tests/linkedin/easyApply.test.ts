@@ -3080,6 +3080,71 @@ describe("batch completion accounting regressions", () => {
     expect(result.jobs[1]?.result?.externalApplication?.finalStage).toBe("completed");
   });
 
+  it("isolates a rejected external handoff and continues the batch", async () => {
+    const driver = {
+      open: vi.fn(),
+      openCollection: vi.fn(),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(false),
+      isExternalApplyAvailable: vi.fn().mockResolvedValue(true),
+      getExternalApplyDetection: vi.fn().mockResolvedValue({
+        source: "explicit_company_website_cta",
+        signals: ["selector:explicit_company_website_cta"],
+      }),
+      getExternalApplyUrl: vi.fn().mockResolvedValue("https://jobs.example.com/apply"),
+      collectVisibleJobs: vi.fn().mockResolvedValue([
+        { url: "https://www.linkedin.com/jobs/view/211", alreadyApplied: false },
+        { url: "https://www.linkedin.com/jobs/view/212", alreadyApplied: false },
+      ]),
+      goToNextResultsPage: vi.fn().mockResolvedValue(false),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn(),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn(),
+      advance: vi.fn(),
+    };
+    const continueExternalApplication = vi.fn()
+      .mockRejectedValueOnce(new Error("external browser process exited"))
+      .mockResolvedValueOnce({
+        sourceUrl: "https://www.linkedin.com/jobs/view/212",
+        externalApplyUrl: "https://jobs.example.com/apply",
+        canonicalUrl: "https://jobs.example.com/apply",
+        runType: "submit",
+        status: "completed",
+        finalStage: "completed",
+      });
+
+    const result = await runEasyApplyBatchInternal({
+      driver,
+      url: "https://www.linkedin.com/jobs/collections/easy-apply",
+      targetCount: 1,
+      candidateProfile: profile,
+      evaluateJob: async () => ({
+        ...approvedEvaluation,
+        diagnostics: { applicationType: "external" },
+      }),
+      resolveAnswer: answerResolver,
+      continueExternalApplication,
+    }, "submit");
+
+    expect(result.status).toBe("completed");
+    expect(result.attemptedCount).toBe(2);
+    expect(result.successfulCount).toBe(1);
+    expect(continueExternalApplication).toHaveBeenCalledTimes(2);
+    expect(result.jobs[0]?.result).toMatchObject({
+      status: "stopped_external_apply",
+      externalApplication: {
+        status: "failed",
+        failureReasonCode: "external.handoff_exception",
+        retryable: true,
+      },
+    });
+    expect(result.jobs[0]?.result?.externalApplication?.stopReason).toContain(
+      "external browser process exited",
+    );
+    expect(result.jobs[1]?.result?.externalApplication?.status).toBe("completed");
+  });
+
   it("does not count a submit-mode external final-submit step as submitted", async () => {
     const paginationEvent = vi.fn();
     const driver = {

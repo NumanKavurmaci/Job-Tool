@@ -100,6 +100,7 @@ export interface EasyApplyExternalApplicationHandoff {
   missingProfileData?: string[];
   platform?: string;
   reportPath?: string;
+  error?: SerializableError;
 }
 
 export interface EasyApplyExternalDetection {
@@ -665,6 +666,28 @@ function buildJobProcessingFailure(
           retryable: true,
         }
       : {}),
+  };
+}
+
+function buildExternalHandoffFailure(
+  result: EasyApplyRunResult,
+  error: unknown,
+  submitMode: SubmitMode,
+): EasyApplyExternalApplicationHandoff {
+  const formatted = formatErrorForJobProcessing(error);
+  const externalApplyUrl = result.externalApplyUrl ?? result.url;
+  return {
+    sourceUrl: result.url,
+    externalApplyUrl,
+    canonicalUrl: externalApplyUrl,
+    runType: submitMode,
+    status: "failed",
+    stopReason:
+      `External application handoff failed in isolation: ` +
+      `${formatted.summary || getErrorMessage(error)}`,
+    failureReasonCode: "external.handoff_exception",
+    retryable: true,
+    error: formatted.serialized,
   };
 }
 
@@ -1617,9 +1640,21 @@ export async function runEasyApplyBatchInternal(
           entry.result.status === "stopped_external_apply" &&
           input.continueExternalApplication
         ) {
-          const externalApplication = await input.continueExternalApplication(
-            entry.result,
-          );
+          let externalApplication: EasyApplyExternalApplicationHandoff | null;
+          try {
+            externalApplication = await input.continueExternalApplication(
+              entry.result,
+            );
+          } catch (error) {
+            // External sites run outside the LinkedIn collection lifecycle. A
+            // handoff exception belongs to this job and must never trigger
+            // collection recovery or terminate the remaining batch.
+            externalApplication = buildExternalHandoffFailure(
+              entry.result,
+              error,
+              submitMode,
+            );
+          }
           if (externalApplication) {
             entry.result = {
               ...entry.result,
