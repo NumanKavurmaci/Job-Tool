@@ -206,6 +206,7 @@ export interface EasyApplyProcessingDriverLease {
 export interface EasyApplyDriver {
   open(url: string): Promise<void>;
   openCollection(url: string): Promise<void>;
+  getCurrentCollectionUrl?(): string | null;
   ensureAuthenticated(url: string): Promise<void>;
   createProcessingDriver?(url: string): Promise<EasyApplyProcessingDriverLease>;
   resetAfterProcessingTimeout?(
@@ -970,6 +971,27 @@ function buildCollectionJobUrl(collectionUrl: string, jobUrl: string): string {
   }
 }
 
+function buildCurrentCollectionJobUrl(
+  input: EasyApplyBatchRunInput,
+  jobUrl: string,
+): string {
+  const currentCollectionUrl =
+    input.driver.getCurrentCollectionUrl?.() ?? input.url;
+  return buildCollectionJobUrl(currentCollectionUrl, jobUrl);
+}
+
+function getCurrentCollectionPageUrl(input: EasyApplyBatchRunInput): string {
+  const currentCollectionUrl =
+    input.driver.getCurrentCollectionUrl?.() ?? input.url;
+  try {
+    const collection = new URL(currentCollectionUrl);
+    collection.searchParams.delete("currentJobId");
+    return collection.toString();
+  } catch {
+    return input.url;
+  }
+}
+
 async function restoreCollectionContextAfterApprovedJob(
   input: EasyApplyBatchRunInput,
   jobUrl: string,
@@ -978,7 +1000,7 @@ async function restoreCollectionContextAfterApprovedJob(
     input,
     jobUrl,
     "restore",
-    (driver) => driver.openCollection(buildCollectionJobUrl(input.url, jobUrl)),
+    (driver) => driver.openCollection(buildCurrentCollectionJobUrl(input, jobUrl)),
   );
 }
 
@@ -991,7 +1013,9 @@ async function recoverCollectionAfterIsolatedJobFailure(
       input,
       failedJobUrl,
       "recovery",
-      (driver) => driver.openCollection(buildCollectionJobUrl(input.url, failedJobUrl)),
+      (driver) => driver.openCollection(
+        buildCurrentCollectionJobUrl(input, failedJobUrl),
+      ),
     );
     return {
       attempted: true,
@@ -1021,8 +1045,9 @@ async function recoverBatchAfterJobFailure(
       failedJobUrl,
       "recovery",
       async (driver) => {
-        await driver.ensureAuthenticated(input.url);
-        await driver.openCollection(input.url);
+        const recoveryUrl = getCurrentCollectionPageUrl(input);
+        await driver.ensureAuthenticated(recoveryUrl);
+        await driver.openCollection(recoveryUrl);
       },
     );
     return {

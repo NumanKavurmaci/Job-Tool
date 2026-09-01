@@ -2791,6 +2791,74 @@ describe("runEasyApplyBatchInternal", () => {
     expect(driver.goToNextResultsPage).toHaveBeenCalled();
   });
 
+  it("preserves the current pagination offset when restoring collection context", async () => {
+    const baseCollectionUrl =
+      "https://www.linkedin.com/jobs/search/?keywords=engineer";
+    let currentCollectionUrl = baseCollectionUrl;
+    const openCollection = vi.fn(async (url: string) => {
+      currentCollectionUrl = url;
+    });
+    const driver = {
+      open: vi.fn(),
+      openCollection,
+      getCurrentCollectionUrl: vi.fn(() => currentCollectionUrl),
+      ensureAuthenticated: vi.fn(),
+      isEasyApplyAvailable: vi.fn().mockResolvedValue(true),
+      openEasyApply: vi.fn(),
+      collectQuestions: vi.fn().mockResolvedValue([]),
+      collectVisibleJobs: vi
+        .fn()
+        .mockResolvedValueOnce([
+          { url: "https://www.linkedin.com/jobs/view/1", alreadyApplied: false },
+        ])
+        .mockResolvedValueOnce([
+          { url: "https://www.linkedin.com/jobs/view/2", alreadyApplied: false },
+        ]),
+      goToNextResultsPage: vi.fn(async () => {
+        currentCollectionUrl =
+          "https://www.linkedin.com/jobs/search/?keywords=engineer&start=25&currentJobId=2";
+        return true;
+      }),
+      fillAnswer: vi.fn(),
+      getPrimaryAction: vi.fn().mockResolvedValue("submit"),
+      advance: vi.fn(),
+      dismissCompletionModal: vi.fn().mockResolvedValue(true),
+    };
+
+    const result = await runEasyApplyBatchInternal(
+      {
+        driver,
+        url: baseCollectionUrl,
+        targetCount: 2,
+        candidateProfile: profile,
+        evaluateJob: async () => ({
+          shouldApply: true,
+          finalDecision: "APPLY",
+          score: 90,
+          reason: "Strong fit.",
+          policyAllowed: true,
+        }),
+        resolveAnswer: async () => ({
+          questionType: "contact_info",
+          strategy: "deterministic",
+          answer: "123",
+          confidence: 0.95,
+          confidenceLabel: "high",
+          source: "candidate-profile",
+        }),
+      },
+      "dry-run",
+    );
+
+    expect(result.status).toBe("completed");
+    expect(openCollection).toHaveBeenCalledTimes(3);
+    const secondPageRestoreUrl = new URL(
+      openCollection.mock.calls[2]?.[0] ?? "",
+    );
+    expect(secondPageRestoreUrl.searchParams.get("start")).toBe("25");
+    expect(secondPageRestoreUrl.searchParams.get("currentJobId")).toBe("2");
+  });
+
   it("uses dry-run mode to stop at ready_to_submit for approved jobs", async () => {
     const driver = {
       open: vi.fn(),

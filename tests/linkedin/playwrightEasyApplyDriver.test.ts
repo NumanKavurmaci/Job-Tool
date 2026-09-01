@@ -500,6 +500,41 @@ describe("PlaywrightLinkedInEasyApplyDriver", () => {
     await page.close();
   });
 
+  it("waits for a partially hydrated LinkedIn result list to stabilize", async () => {
+    const page = await browser.newPage();
+    await page.route("https://www.linkedin.com/**", async (route) => {
+      await route.fulfill({
+        contentType: "text/html",
+        body: `
+          <main>
+            <ul id="results">
+              <li data-occludable-job-id="4453899034">
+                <a href="/jobs/view/4453899034/">Backend Developer</a>
+              </li>
+            </ul>
+          </main>
+          <script>
+            setTimeout(() => {
+              document.querySelector('#results').insertAdjacentHTML(
+                'beforeend',
+                '<li data-occludable-job-id="4408633820"><a href="/jobs/view/4408633820/">Software Engineer</a></li>',
+              );
+            }, 700);
+          </script>
+        `,
+      });
+    });
+    await page.goto("https://www.linkedin.com/jobs/search/?currentJobId=4453899034");
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page);
+
+    await expect(driver.collectVisibleJobs()).resolves.toEqual([
+      { url: "https://www.linkedin.com/jobs/view/4453899034", alreadyApplied: false },
+      { url: "https://www.linkedin.com/jobs/view/4408633820", alreadyApplied: false },
+    ]);
+
+    await page.close();
+  });
+
   it("scrolls a virtualized LinkedIn result list and accumulates replaced cards", async () => {
     const page = await browser.newPage();
     await page.setContent(`
@@ -537,6 +572,62 @@ describe("PlaywrightLinkedInEasyApplyDriver", () => {
       { url: "https://www.linkedin.com/jobs/view/4444570774", alreadyApplied: true },
       { url: "https://www.linkedin.com/jobs/view/4449010001", alreadyApplied: false },
       { url: "https://www.linkedin.com/jobs/view/4449010002", alreadyApplied: false },
+    ]);
+
+    await page.close();
+  });
+
+  it("rehydrates a lazy pagination footer before declaring the next control missing", async () => {
+    const page = await browser.newPage();
+    await page.route("https://www.linkedin.com/**", async (route) => {
+      await route.fulfill({
+        contentType: "text/html",
+        body: `
+          <div class="jobs-search-results-list" style="height: 100px; overflow-y: auto">
+            <ul id="results" style="margin: 0; padding: 0">
+              <li class="jobs-search-results__list-item" data-occludable-job-id="4443235445" style="height: 240px">
+                <a href="https://www.linkedin.com/jobs/view/4443235445/">Software Engineer</a>
+              </li>
+            </ul>
+          </div>
+          <div id="pagination-host"></div>
+          <script>
+            const list = document.querySelector('.jobs-search-results-list');
+            list.addEventListener('scroll', () => {
+              if (list.scrollTop + list.clientHeight < list.scrollHeight - 1) return;
+              const host = document.querySelector('#pagination-host');
+              if (host.children.length > 0) return;
+              host.innerHTML = '<button aria-label="View next page" type="button">Next</button>';
+              host.querySelector('button').addEventListener('click', () => {
+                history.replaceState(
+                  null,
+                  '',
+                  '/jobs/search/?keywords=engineer&start=25&currentJobId=4444570774',
+                );
+                document.querySelector('#results').innerHTML =
+                  '<li data-occludable-job-id="4444570774" style="height: 240px"><a href="https://www.linkedin.com/jobs/view/4444570774/">Platform Engineer</a></li>';
+              });
+            });
+          </script>
+        `,
+      });
+    });
+    const collectionUrl =
+      "https://www.linkedin.com/jobs/search/?keywords=engineer&currentJobId=4443235445";
+    const driver = new PlaywrightLinkedInEasyApplyDriver(page, {
+      paginationChangeTimeoutMs: 500,
+      paginationPollIntervalMs: 10,
+    });
+    await driver.openCollection(collectionUrl);
+
+    expect(await page.locator("button[aria-label='View next page']").count()).toBe(0);
+    await expect(driver.goToNextResultsPage()).resolves.toBe(true);
+    expect(driver.getLastPaginationStopReason()).toBeNull();
+    expect(
+      new URL(driver.getCurrentCollectionUrl() ?? "").searchParams.get("start"),
+    ).toBe("25");
+    await expect(driver.collectVisibleJobs()).resolves.toEqual([
+      { url: "https://www.linkedin.com/jobs/view/4444570774", alreadyApplied: false },
     ]);
 
     await page.close();

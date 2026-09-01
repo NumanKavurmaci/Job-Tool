@@ -32,12 +32,22 @@ const LINKEDIN_RESULTS_SCROLL_CONTAINER_SELECTOR = [
   ".scaffold-layout__list-container",
 ].join(", ");
 const LINKEDIN_COLLECTION_SCAN_LIMIT = 24;
-const LINKEDIN_COLLECTION_STABLE_SCAN_LIMIT = 3;
+const LINKEDIN_COLLECTION_STABLE_SCAN_LIMIT = 5;
 const LINKEDIN_COLLECTION_SCROLL_WAIT_MS = 350;
 const LINKEDIN_COLLECTION_HYDRATION_ATTEMPTS = 30;
 const LINKEDIN_COLLECTION_HYDRATION_WAIT_MS = 500;
 const LINKEDIN_PAGINATION_CHANGE_TIMEOUT_MS = 10_000;
 const LINKEDIN_PAGINATION_POLL_INTERVAL_MS = 200;
+const LINKEDIN_NEXT_PAGE_SELECTOR = [
+  "button[aria-label='View next page']",
+  "button.jobs-search-pagination__button--next",
+].join(", ");
+const LINKEDIN_PAGINATION_SURFACE_SELECTOR = [
+  ".jobs-search-pagination",
+  ".artdeco-pagination",
+  ".jobs-search-pagination__page-state",
+  LINKEDIN_NEXT_PAGE_SELECTOR,
+].join(", ");
 const LINKEDIN_ACTIVE_PAGE_SELECTOR = [
   ".jobs-search-pagination [aria-current='page']",
   ".jobs-search-pagination [aria-current='true']",
@@ -698,10 +708,14 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
     this.collectionUrl = url;
     await this.open(url);
     await this.page
-      .locator(LINKEDIN_JOB_RESULT_SELECTOR)
+      .locator(LINKEDIN_JOB_CARD_SELECTOR)
       .first()
       .waitFor({ state: "attached", timeout: 10_000 })
       .catch(() => undefined);
+  }
+
+  getCurrentCollectionUrl(): string | null {
+    return this.collectionUrl;
   }
 
   async resetAfterProcessingTimeout(
@@ -1058,8 +1072,17 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
   async collectVisibleJobs() {
     const normalized = new Map<string, { url: string; alreadyApplied: boolean }>();
     let stableScans = 0;
+    const isCollectionSurface =
+      /^https:\/\/(?:[a-z0-9-]+\.)?linkedin\.com\/jobs\/(?:search|collections|search-results)/i
+        .test(this.page.url());
+    // A LinkedIn collection also contains links for the selected job detail pane.
+    // Those links can render before the actual result list and must never be
+    // treated as the complete batch page.
+    const resultSelector = isCollectionSurface
+      ? LINKEDIN_JOB_CARD_SELECTOR
+      : LINKEDIN_JOB_RESULT_SELECTOR;
 
-    if (/^https:\/\/(?:[a-z0-9-]+\.)?linkedin\.com\/jobs\/(?:search|collections)/i.test(this.page.url())) {
+    if (isCollectionSurface) {
       const renderedCards = this.page.locator(LINKEDIN_JOB_CARD_SELECTOR);
       for (
         let attempt = 0;
@@ -1077,7 +1100,7 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
 
     for (let scanIndex = 0; scanIndex < LINKEDIN_COLLECTION_SCAN_LIMIT; scanIndex += 1) {
       const sizeBeforeScan = normalized.size;
-      const cards = await this.page.locator(LINKEDIN_JOB_RESULT_SELECTOR)
+      const cards = await this.page.locator(resultSelector)
         .evaluateAll((elements) =>
           elements.map((element) => {
             const htmlElement = element as any;
@@ -1192,7 +1215,18 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
       ).catch(() => ({ advanced: false, atEnd: true }));
 
       if (!scrollResult.advanced && (scrollResult.atEnd || stableScans > 0)) {
-        break;
+        const paginationAttached = isCollectionSurface
+          ? (await this.page.locator(LINKEDIN_PAGINATION_SURFACE_SELECTOR)
+              .count()
+              .catch(() => 0)) > 0
+          : false;
+        if (
+          !isCollectionSurface ||
+          paginationAttached ||
+          stableScans >= LINKEDIN_COLLECTION_STABLE_SCAN_LIMIT
+        ) {
+          break;
+        }
       }
       if (scrollResult.atEnd && stableScans >= LINKEDIN_COLLECTION_STABLE_SCAN_LIMIT) {
         break;
@@ -1206,11 +1240,14 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
 
   async goToNextResultsPage(): Promise<boolean> {
     this.lastPaginationStopReason = null;
-    const locator = this.page
-      .locator(
-        "button[aria-label='View next page'], button.jobs-search-pagination__button--next",
-      )
-      .first();
+    const locator = this.page.locator(LINKEDIN_NEXT_PAGE_SELECTOR).first();
+
+    if ((await locator.count()) === 0) {
+      // LinkedIn unmounts the pagination footer whenever collection context is
+      // restored with a different currentJobId. Scanning the result list again
+      // scrolls its virtualized container to the bottom and remounts the footer.
+      await this.collectVisibleJobs().catch(() => []);
+    }
 
     if ((await locator.count()) === 0) {
       this.lastPaginationStopReason = {
@@ -1230,6 +1267,7 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
 
     const before = await this.readResultsPageFingerprint();
     try {
+      await locator.scrollIntoViewIfNeeded().catch(() => undefined);
       await locator.click();
     } catch {
       this.lastPaginationStopReason = {
@@ -1258,6 +1296,12 @@ export class PlaywrightLinkedInEasyApplyDriver implements EasyApplyDriver {
     while (Date.now() - startedAt <= timeoutMs) {
       const after = await this.readResultsPageFingerprint();
       if (this.hasResultsPageChanged(before, after)) {
+        if (
+          /^https:\/\/(?:[a-z0-9-]+\.)?linkedin\.com\/jobs\/(?:search|collections|search-results)/i
+            .test(this.page.url())
+        ) {
+          this.collectionUrl = this.page.url();
+        }
         return true;
       }
 
