@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import type { CandidateProfile } from "../candidate/types.js";
 import {
   acceptAllCookiePrompts,
@@ -155,6 +155,43 @@ async function findFirstLocator(page: Page, selectors: string[]) {
     try {
       const locator = page.locator(selector).first();
       if ((await locator.count()) > 0) {
+        return locator;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+async function isActionableLocator(locator: Locator): Promise<boolean> {
+  const candidate = locator as Locator & {
+    isVisible?: () => Promise<boolean>;
+    isEnabled?: () => Promise<boolean>;
+  };
+
+  if (
+    typeof candidate.isVisible === "function" &&
+    !(await candidate.isVisible().catch(() => false))
+  ) {
+    return false;
+  }
+  if (
+    typeof candidate.isEnabled === "function" &&
+    !(await candidate.isEnabled().catch(() => false))
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+async function findFirstActionableLocator(page: Page, selectors: string[]) {
+  for (const selector of selectors) {
+    try {
+      const locator = page.locator(selector).first();
+      if ((await locator.count()) > 0 && await isActionableLocator(locator)) {
         return locator;
       }
     } catch {
@@ -1339,10 +1376,10 @@ export async function getExternalPrimaryAction(page: Page): Promise<ExternalPrim
     `[role="button"]:has-text("${escapeAttributeValue(label)}")`,
   ]);
 
-  if (await findFirstLocator(page, nextSelectors)) {
+  if (await findFirstActionableLocator(page, nextSelectors)) {
     return "next";
   }
-  if (await findFirstLocator(page, submitSelectors)) {
+  if (await findFirstActionableLocator(page, submitSelectors)) {
     return "submit";
   }
 
@@ -1361,7 +1398,7 @@ export async function advanceExternalApplicationPage(
     `input[type="button"][value="${escapeAttributeValue(label)}"]`,
     `[role="button"]:has-text("${escapeAttributeValue(label)}")`,
   ]);
-  const locator = await findFirstLocator(page, selectors);
+  const locator = await findFirstActionableLocator(page, selectors);
   if (!locator) {
     return false;
   }
